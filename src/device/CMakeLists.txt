@@ -26,6 +26,7 @@ add_library(dev OBJECT
     clock_ics9xxx.c
     dell_jumper.c
     hasp.c
+    dongle_photoplay.c
     hwm.c
     hwm_gl518sm.c
     hwm_lm75.c
