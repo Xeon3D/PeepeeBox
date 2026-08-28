@@ -23,6 +23,10 @@ typedef struct lpt_device_s {
     void          (*strobe)(uint8_t old, uint8_t val,void *priv);
     uint8_t       (*read_status)(void *priv);
     uint8_t       (*read_ctrl)(void *priv);
+    /* PeepeeBox: lets a device drive the DATA lines on read.  Stock 86Box always hands
+       back its own write latch, so a dongle that alters the readback (the way a 1-Wire
+       slave corrupts an echo) is invisible.  Set via lpt_set_read_data(). */
+    uint8_t       (*read_data)(void *priv);
     void          (*epp_write_data)(uint8_t is_addr, uint8_t val, void *priv);
     void          (*epp_request_read)(uint8_t is_addr, void *priv);
 
@@ -109,6 +113,7 @@ extern const device_t      lpt_cms_device;
 extern const device_t      lpt_tnd_device;
 
 extern const device_t      lpt_hasp_savquest_device;
+extern const device_t      lpt_dongle_photoplay_device;
 
 extern const device_t      lpt_ditto_device;
 
@@ -156,6 +161,8 @@ extern void *              lpt_attach_ex(int     port,
                                          void    (*epp_request_read)(uint8_t is_addr, void *priv),
                                          void    *priv);
 #define lpt_attach(...) lpt_attach_ex(device_get_instance() - 1, __VA_ARGS__)
+extern void                lpt_set_read_data(int port, uint8_t (*read_data)(void *priv));
+#define lpt_attach_read_data(fn) lpt_set_read_data(device_get_instance() - 1, fn)
 extern void                lpt_devices_close(int soft);
 extern void                lpt_devices_reset(void);
 

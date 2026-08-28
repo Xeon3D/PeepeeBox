@@ -388,8 +388,18 @@ lpt_attach_ex(int     port,
     lpt_devs[port].epp_write_data   = epp_write_data;
     lpt_devs[port].epp_request_read = epp_request_read;
     lpt_devs[port].priv             = priv;
+    lpt_devs[port].read_data        = NULL;
 
     return lpt_ports[port].lpt;
+}
+
+/* PeepeeBox: install a DATA-read handler for an already-attached device.  Kept separate
+   from lpt_attach_ex so no other LPT device needs its call site changed. */
+void
+lpt_set_read_data(int port, uint8_t (*read_data)(void *priv))
+{
+    if ((port >= 0) && (port < PARALLEL_MAX))
+        lpt_devs[port].read_data = read_data;
 }
 
 void
@@ -845,6 +855,9 @@ lpt_read(const uint16_t port, void *priv)
                 /* DTR */
                 ret = (lpt_get_ctrl_raw(dev) & 0x20) ? dev->in_dat : dev->dat;
             }
+            /* PeepeeBox: let an attached device drive the data lines on read. */
+            if (dev->dt && dev->dt->read_data && dev->dt->priv)
+                ret = dev->dt->read_data(dev->dt->priv);
             break;
 
         case 0x0001:
