@@ -1,5 +1,39 @@
-All authors of this emulator are documented in at the top of each file in the source code.
+PeepeeBox is a fork of 86Box.
 
-They own portions of the code, or in cases, the entirety of it.
+The emulator
+------------
 
-resid-fp and slirp folders have their own exceptions.
+Essentially all of the code in this repository is 86Box, and all credit for it
+belongs to the 86Box project and its authors:
+
+    Miran Grča (OBattler), RichardG867, Jasmine Iwanek, TC1995, coldbrewed,
+    Teemu Korhonen (Manaatti), Joakim L. Gilje, Adrien Moulin (elyosh),
+    Daniel Balsom (gloriouscow), Cacodemon345, Fred N. van Kempen (waltje),
+    Tiseno100, reenigne, and others.
+
+With previous core contributions from Sarah Walker, leilei, JohnElliott,
+greatpsycho, and others.
+
+Per-file authorship is documented at the top of each source file, and those
+notices are left intact wherever PeepeeBox has modified a file. They own portions
+of the code, or in cases, the entirety of it.
+
+    https://github.com/86Box/86Box
+
+The ROM images under roms/ are reproduced from the upstream 86Box ROM
+repository and remain the property of their respective copyright owners.
+
+    https://github.com/86Box/roms
+
+The fork
+--------
+
+The Photo Play / I.G.O. protection research, the HASP and DS1982 iButton
+emulation, and the reduction of 86Box to this single machine are by the
+HUEG PP team.
+
+Licence
+-------
+
+PeepeeBox is released under the GNU General Public License version 2 or later,
+the same licence as 86Box. See COPYING.
