@@ -54,6 +54,7 @@ extern "C" {
 #include <86box/nvr.h>
 #include <86box/renderdefs.h>
 #include <86box/lpt.h>
+#include <86box/photoplay.h>
 
 #ifdef USE_VNC
 #    include <86box/vnc.h>
@@ -1392,6 +1393,43 @@ MainWindow::on_actionSettings_triggered()
 
 /* PeepeeBox: the cabinets are offline, but the network card stays selectable --
    it is the one piece of hardware a user might legitimately want to add. */
+/* PeepeeBox: the cabinets had no optical drive, but installation and service
+   media exist, so one can be switched on.  What the drive is is not a choice --
+   see src/photoplay.c -- only whether it is there.  Attaching or removing it
+   changes the emulated hardware, so the machine restarts. */
+/* PeepeeBox: same reasoning as the CD-ROM -- the cabinets had no floppy drive,
+   but 1.44M service and installation disks exist, so one 3.5" drive can be
+   attached as A:. */
+void
+MainWindow::on_actionFloppy_drive_triggered(bool checked)
+{
+    const int currentPause = dopause;
+
+    plat_pause(1);
+    photoplay_set_fdd_enabled(checked);
+    config_changed = 2;
+    config_save();
+    pc_reset_hard();
+    plat_pause(currentPause);
+
+    refreshMediaMenu();
+}
+
+void
+MainWindow::on_actionCDROM_drive_triggered(bool checked)
+{
+    const int currentPause = dopause;
+
+    plat_pause(1);
+    photoplay_set_cdrom_enabled(checked);
+    config_changed = 2;
+    config_save();
+    pc_reset_hard();
+    plat_pause(currentPause);
+
+    refreshMediaMenu();
+}
+
 void
 MainWindow::on_actionNetwork_triggered()
 {
@@ -1836,6 +1874,8 @@ MainWindow::eventFilter(QObject *receiver, QEvent *event)
 void
 MainWindow::refreshMediaMenu()
 {
+    ui->actionCDROM_drive->setChecked(photoplay_cdrom_enabled());
+    ui->actionFloppy_drive->setChecked(photoplay_fdd_enabled());
     mm->refresh(ui->menuMedia);
     status->setSoundMenu(ui->menuSound);
     status->refresh(ui->statusbar);

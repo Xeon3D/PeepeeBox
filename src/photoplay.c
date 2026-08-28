@@ -63,6 +63,9 @@
 #include <86box/lpt.h>
 #include <86box/char.h>
 #include <86box/hdd.h>
+#include <86box/scsi_device.h>
+#include <86box/cdrom.h>
+#include <86box/fdd.h>
 #include <86box/photoplay.h>
 #include "cpu.h"
 
@@ -237,6 +240,86 @@ pp_apply_disk(void)
     pp_profile_log("PP: disk %s, %u/%u/%u\n", fn, hdd[0].tracks, hdd[0].hpc, hdd[0].spt);
 }
 
+/* The optional CD-ROM drive.
+
+   The cabinets shipped without one -- everything ran from the hard disk -- but
+   installation and service media exist, so it is worth being able to attach a
+   drive.  What it is not worth is making it configurable: there is exactly one
+   sensible answer, a generic 52x ATAPI drive as secondary master, which leaves
+   the primary channel to HardDisk.img and is fast enough that nothing waits on
+   it.  So the only choice is whether it is there at all. */
+int
+photoplay_cdrom_enabled(void)
+{
+    return !!config_get_int(PHOTOPLAY_SECTION, "cdrom", 0);
+}
+
+void
+photoplay_set_cdrom_enabled(int enabled)
+{
+    config_set_int(PHOTOPLAY_SECTION, "cdrom", !!enabled);
+}
+
+/* The optional 3.5" floppy drive.
+
+   Like the CD-ROM, the cabinets did not have one and the software never asks
+   for one, but service and installation media exist on 1.44M disks.  The drive
+   is a 3.5" 1.44M as drive A: -- the only kind worth having here -- so again
+   the only choice is whether it is attached. */
+int
+photoplay_fdd_enabled(void)
+{
+    return !!config_get_int(PHOTOPLAY_SECTION, "floppy", 0);
+}
+
+void
+photoplay_set_fdd_enabled(int enabled)
+{
+    config_set_int(PHOTOPLAY_SECTION, "floppy", !!enabled);
+}
+
+static void
+pp_apply_floppy(void)
+{
+    const int enabled = photoplay_fdd_enabled();
+
+    for (int i = 0; i < FDD_NUM; i++) {
+        fdd_set_type(i, 0);
+        fdd_set_turbo(i, 0);
+        fdd_set_check_bpb(i, 1);
+    }
+
+    if (!enabled)
+        return;
+
+    fdd_set_type(0, fdd_get_from_internal_name(PHOTOPLAY_FDD_TYPE));
+    pp_profile_log("PP: floppy drive A: attached, 3.5\" 1.44M\n");
+}
+
+static void
+pp_apply_cdrom(void)
+{
+    const int enabled = photoplay_cdrom_enabled();
+
+    for (int i = 1; i < CDROM_NUM; i++)
+        cdrom[i].bus_type = CDROM_BUS_DISABLED;
+
+    if (!enabled) {
+        cdrom[0].bus_type = CDROM_BUS_DISABLED;
+        return;
+    }
+
+    cdrom[0].bus_type    = CDROM_BUS_ATAPI;
+    cdrom[0].ide_channel = PHOTOPLAY_CDROM_CHAN;
+    cdrom[0].type        = cdrom_get_from_internal_name(PHOTOPLAY_CDROM_TYPE);
+    cdrom[0].speed       = PHOTOPLAY_CDROM_SPEED;
+    cdrom[0].cur_speed   = PHOTOPLAY_CDROM_SPEED;
+    cdrom[0].sound_on    = 1;
+
+    pp_profile_log("PP: CD-ROM attached, generic %dx ATAPI on secondary master\n",
+                   PHOTOPLAY_CDROM_SPEED);
+}
+
 void
 photoplay_apply_profile(void)
 {
@@ -245,6 +328,8 @@ photoplay_apply_profile(void)
     pp_apply_input();
     pp_apply_ports();
     pp_apply_disk();
+    pp_apply_cdrom();
+    pp_apply_floppy();
 
     pp_profile_log("PP: Photo Play profile applied (%s, %s @ %d MHz, %d MB)\n",
                    PHOTOPLAY_MACHINE, PHOTOPLAY_CPU_FAMILY,

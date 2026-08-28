@@ -53,61 +53,12 @@ hdc_log(const char *fmt, ...)
 static const struct {
     const device_t *device;
 } controllers[] = {
-    // clang-format off
+  // clang-format off
     { &device_none                          },
+    /* The SiS 496 provides the IDE; nothing else is on the bus. */
     { &device_internal                      },
-    /* ISA */
-    { &xtide_acculogic_device               },
-    { &st506_xt_dtc5150x_device             },
-    { &st506_xt_xebec_device                },
-    { &xtide_device                         },
-    { &jride_device                         },
-    { &st506_xt_st11_m_device               },
-    { &st506_xt_st11_r_device               },
-    { &xta_st50x_device                     },
-    { &st506_xt_victor_v86p_device          },
-    { &st506_xt_wd1002a_27x_device          },
-    { &st506_xt_wd1002a_wx1_device          },
-    { &st506_xt_wd1004_27x_device           },
-    { &st506_xt_wd1004a_27x_device          },
-    { &st506_xt_wd1004a_wx1_device          },
-    { &xta_wdxt150_device                   },
-    { &st506_xt_wdxt_gen_device             },
-    /* ISA16 */
-    { &ide_isa_device                       },
-    { &ide_isa_2ch_device                   },
-    { &xtide_at_device                      },
-    { &xtide_at_2ch_device                  },
-    { &xtide_at_ps2_device                  },
-    { &xtide_at_ps2_2ch_device              },
-    { &ide_ter_device                       },
-    { &ide_qua_device                       },
-    { &st506_at_wd1003_device               },
-    { &esdi_at_wd1007vse1_device            },
-    /* MCA */
-    { &esdi_ps2_device                      },
-    { &st506_ps2_device                     },  
-    { &esdi_integrated_device               },
-    { &mcide_device                         },
-    /* VLB */
-#if 0
-    { &ide_ali5213_device                   }, /* TODO: to add standalone ADI2 HDC */
-#endif
-    { &ide_cmd640_vlb_device                },
-    { &ide_vlb_device                       },
-    { &ide_vlb_2ch_device                   },
-    { &ide_opti611_vlb_device               },
-    { &ide_w83769f_vlb_device               }, /* TODO: to add implement W83759 IDE controller */
-    /* PCI */
-    { &ide_cmd640_pci_device                },
-    { &ide_cmd646_ter_qua_device            },
-    { &ide_cmd648_ter_qua_device            },
-    { &ide_cmd649_ter_qua_device            },
-    { &ide_pci_device                       },
-    { &ide_pci_2ch_device                   },
-    { &ide_w83769f_pci_device               }, /* PCI variant? TODO: to add implement W83759 IDE controller */
     { NULL                                  }
-    // clang-format on
+  // clang-format on
 };
 
 /* Initialize the 'hdc_current' value based on configured HDC name. */

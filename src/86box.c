@@ -74,8 +74,6 @@
 #include <86box/mouse.h>
 #include <86box/gameport.h>
 #include <86box/fdd.h>
-#include <86box/fdd_audio.h>
-#include <86box/fdc_ext.h>
 #include <86box/hdd.h>
 #include <86box/hdd_audio.h>
 #include <86box/hdc.h>
@@ -228,7 +226,6 @@ char     monitor_edid_path[1024] = { 0 };                         /* (C) Path to
 double   video_gl_input_scale = 1.0;                              /* (C) OpenGL 3.x input scale */
 int      video_gl_input_scale_mode = FULLSCR_SCALE_FULL;          /* (C) OpenGL 3.x input stretch mode */
 int      color_scheme = 0;                                        /* (C) Color scheme of UI (Windows-only) */
-int      fdd_sounds_enabled = 1;                                  /* (C) Floppy drive sounds enabled */
 int      is_new_808x = 0;                                         /* (C) Use the new 808x code. */
 
 int      gdbstub_port = 12345;                                    /* (C) The GDB stub port. */
@@ -1354,9 +1351,6 @@ usage:
         network_init();
         mouse_init();
         cdrom_global_init();
-        rdisk_global_init();
-        mo_global_init();
-        tape_global_init();
 
         /* Load the configuration file. */
         config_load();
@@ -1375,14 +1369,6 @@ usage:
             clear_flash = 0;
         }
 
-        for (uint8_t i = 0; i < FDD_NUM; i++) {
-            if (fn[i] != NULL) {
-                if (strlen(fn[i]) <= 511)
-                    strncpy(floppyfns[i], fn[i], 511);
-                free(fn[i]);
-                fn[i] = NULL;
-            }
-        }
     }
 
     /* Load the desired language */
@@ -1546,13 +1532,6 @@ pc_init_modules(void)
 
     video_init();
 
-    fdd_init();
-    
-    if (fdd_sounds_enabled) {
-        fdd_audio_load_profiles();
-        fdd_audio_init();
-    }
-    
     hdd_audio_load_profiles();
     hdd_audio_init();
 
@@ -1715,12 +1694,6 @@ pc_reset_hard_close(void)
 
     cdrom_close();
 
-    rdisk_close();
-
-    mo_close();
-
-    tape_close();
-
     scsi_disk_close();
 
     closeal();
@@ -1811,10 +1784,6 @@ pc_reset_hard_init(void)
     /* Reset the Hard Disk Controller module. */
     hdc_reset();
 
-    fdc_card_init();
-
-    fdd_reset();
-
     /* Reset HDD audio to pick up any profile changes */
     hdd_audio_reset();
 
@@ -1827,12 +1796,6 @@ pc_reset_hard_init(void)
 
     /* Reset the CD-ROM Controller module. */
     cdrom_interface_reset();
-
-    mo_hard_reset();
-
-    tape_hard_reset();
-
-    rdisk_hard_reset();
 
 
     /* Reset any ISA ROM cards. */
@@ -1940,9 +1903,6 @@ pc_close(UNUSED(thread_t *ptr))
     lpt_devices_close(0);
     serial_devices_close(0);
 
-    for (uint8_t i = 0; i < FDD_NUM; i++)
-        fdd_close(i);
-
 #ifdef ENABLE_808X_LOG
     if (dump_on_exit)
         dumpregs(0);
@@ -1965,12 +1925,6 @@ pc_close(UNUSED(thread_t *ptr))
     sound_cd_thread_end();
 
     cdrom_close();
-
-    rdisk_close();
-
-    mo_close();
-
-    tape_close();
 
     scsi_disk_close();
 

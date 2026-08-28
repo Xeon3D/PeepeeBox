@@ -1124,7 +1124,7 @@ fdd_init(void)
         fdd_load(i, floppyfns[i]);
     }
 
-    if (fdd_sounds_enabled) {
+    if (0 /* PeepeeBox: drive sounds went with the floppy UI */) {
         fdd_audio_init();
     }
 }

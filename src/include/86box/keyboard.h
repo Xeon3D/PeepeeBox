@@ -50,9 +50,12 @@ enum {
     DEV_STATE_MAIN_WANT_EXECUTE_BAT = 7
 };
 
+/* PeepeeBox: these index keyboard_devices[] in device/keyboard.c, so removing
+   the XT keyboard from that table means removing it here too -- otherwise every
+   constant after it points at the wrong device, and asking for a PS/2 keyboard
+   silently gets a PS/55 one. */
 enum {
     KEYBOARD_TYPE_INTERNAL          = 0,
-    KEYBOARD_TYPE_PC_XT,
     KEYBOARD_TYPE_AT,
     KEYBOARD_TYPE_AX,
     KEYBOARD_TYPE_PS2,

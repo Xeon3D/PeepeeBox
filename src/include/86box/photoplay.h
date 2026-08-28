@@ -30,10 +30,29 @@ extern "C" {
 #define PHOTOPLAY_DONGLE      "dongle_photoplay"
 #define PHOTOPLAY_DISK_IMAGE  "HardDisk.img"
 
+/* The cabinets shipped without an optical drive, but service and installation
+   media exist, so one can be switched on.  When it is, it is always the same
+   drive: a generic 52x ATAPI CD-ROM as secondary master.  See photoplay.c. */
+#define PHOTOPLAY_CDROM_TYPE  "86cd"
+#define PHOTOPLAY_CDROM_SPEED 52
+#define PHOTOPLAY_CDROM_CHAN  2                  /* secondary master           */
+#define PHOTOPLAY_FDD_TYPE    "35_2hd"           /* 3.5" 1.44M, the IBM drive  */
+#define PHOTOPLAY_SECTION     "Photo Play"       /* PeepeeBox's own ini section */
+
 /* Overwrite the loaded configuration with the fixed Photo Play machine profile.
    Called at the end of config_load(); see the file comment in photoplay.c for
    why this is enforced at load time rather than left to the config file. */
 extern void photoplay_apply_profile(void);
+
+/* Whether the optional CD-ROM drive is attached.  Toggled from the View menu;
+   persisted in the [Photo Play] section of the config file. */
+extern int  photoplay_cdrom_enabled(void);
+extern void photoplay_set_cdrom_enabled(int enabled);
+
+/* Whether the optional 3.5" floppy drive is attached.  Same deal as the
+   CD-ROM: toggled from the View menu, persisted in [Photo Play]. */
+extern int  photoplay_fdd_enabled(void);
+extern void photoplay_set_fdd_enabled(int enabled);
 
 #ifdef __cplusplus
 }

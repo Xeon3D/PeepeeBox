@@ -134,11 +134,9 @@ target_link_libraries(86Box
     mch
     dev
     mem
-    fdd
     game
     cdrom
-    rdisk
-    mo
+    fdd
     hdd
     net
     print

@@ -2632,10 +2632,10 @@ fdc_reset(void *priv)
        need to use a dual-RPM 5.25" drive - but hey, that finally gets those
        drives some usage as well.
      */
-    fdc_update_drvrate(fdc, 0, 0 /* PeepeeBox: was the IF386SX quirk */);
-    fdc_update_drvrate(fdc, 1, 0 /* PeepeeBox: was the IF386SX quirk */);
-    fdc_update_drvrate(fdc, 2, 0 /* PeepeeBox: was the IF386SX quirk */);
-    fdc_update_drvrate(fdc, 3, 0 /* PeepeeBox: was the IF386SX quirk */);
+    fdc_update_drvrate(fdc, 0, MACHINE_IS(machine_at_if386sx_init));
+    fdc_update_drvrate(fdc, 1, MACHINE_IS(machine_at_if386sx_init));
+    fdc_update_drvrate(fdc, 2, MACHINE_IS(machine_at_if386sx_init));
+    fdc_update_drvrate(fdc, 3, MACHINE_IS(machine_at_if386sx_init));
     fdc_update_drv2en(fdc, 1);
     fdc_update_rates(fdc);
 

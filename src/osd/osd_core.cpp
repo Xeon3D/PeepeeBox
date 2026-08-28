@@ -260,21 +260,9 @@ static void mount_path(const char *path)
     osd_log_push(msg);
     pclog_toggle_suppr();
     switch (current_view) {
-        case VIEW_FILE_FLOPPY:
-            floppy_mount(0, (char *) path, 0);
-            break;
         case VIEW_FILE_CD:
         case VIEW_CD_FOLDER:
             cdrom_mount(0, (char *) path);
-            break;
-        case VIEW_FILE_RDISK:
-            rdisk_mount(0, (char *) path, 0);
-            break;
-        case VIEW_FILE_CART:
-            cartridge_mount(0, (char *) path, 0);
-            break;
-        case VIEW_FILE_MO:
-            mo_mount(0, (char *) path, 0);
             break;
         default:
             pclog_toggle_suppr();
@@ -369,47 +357,11 @@ isFirstCdromAvailable(void)
     return false;
 }
 
-static bool
-isFirstRdiskAvailable(void)
-{
-    const char *name = hdc_get_internal_name(hdc_current[0]);
-    if ((rdisk_drives[0].bus_type == RDISK_BUS_ATAPI) && !((machine_has_flags(machine, MACHINE_IDE_QUAD) > 0) || other_ide_present) && memcmp(name, "ide", 3) && memcmp(name, "xtide", 5) && memcmp(name, "mcide", 5))
-        return false;
-    if ((rdisk_drives[0].bus_type == RDISK_BUS_SCSI) && !((machine_has_flags(machine, MACHINE_SCSI) > 0) || other_scsi_present) && (scsi_card_current[0] == 0) && (scsi_card_current[1] == 0) && (scsi_card_current[2] == 0) && (scsi_card_current[3] == 0))
-        return false;
-    if (rdisk_drives[0].bus_type != 0) {
-        return true;
-    }
-    return false;
-}
-
-static bool
-isFirstMoAvailable(void)
-{
-    const char *name = hdc_get_internal_name(hdc_current[0]);
-    if ((mo_drives[0].bus_type == RDISK_BUS_ATAPI) && !((machine_has_flags(machine, MACHINE_IDE_QUAD) > 0) || other_ide_present) && memcmp(name, "ide", 3) && memcmp(name, "xtide", 5) && memcmp(name, "mcide", 5))
-        return false;
-    if ((mo_drives[0].bus_type == RDISK_BUS_SCSI) && !((machine_has_flags(machine, MACHINE_SCSI) > 0) || other_scsi_present) && (scsi_card_current[0] == 0) && (scsi_card_current[1] == 0) && (scsi_card_current[2] == 0) && (scsi_card_current[3] == 0))
-        return false;
-    if (mo_drives[0].bus_type != 0) {
-        return true;
-    }
-    return false;
-}
-
 static const MenuItem menu_items[] = {
-    { "Load Floppy Image...",      ACT_NONE,         VIEW_FILE_FLOPPY, [] () -> bool { return fdd_get_type(0); }                 },
     { "Load CD-ROM Image...",      ACT_NONE,         VIEW_FILE_CD,     isFirstCdromAvailable                                     },
     { "Mount CD Folder (VISO)...", ACT_NONE,         VIEW_CD_FOLDER,   isFirstCdromAvailable                                     },
-    { "Load Removable Disk...",    ACT_NONE,         VIEW_FILE_RDISK,  isFirstRdiskAvailable                                     },
-    { "Load Cartridge...",         ACT_NONE,         VIEW_FILE_CART,   [] () -> bool { return machine_has_cartridge(machine); }  },
-    { "Load MO Image...",          ACT_NONE,         VIEW_FILE_MO,     isFirstMoAvailable                                        },
     { nullptr, ACT_NONE, VIEW_MENU }, /* separator */
-    { "Eject Floppy",              ACT_EJECT_FLOPPY, VIEW_MENU, [] () -> bool { return fdd_get_type(0) && floppyfns[0][0] != 0; }                        },
     { "Eject CD-ROM",              ACT_EJECT_CD,     VIEW_MENU, [] () -> bool { return isFirstCdromAvailable() && cdrom[0].image_path[0] != 0; }         },
-    { "Eject Removable Disk",      ACT_EJECT_RDISK,  VIEW_MENU, [] () -> bool { return isFirstRdiskAvailable() && rdisk_drives[0].image_path[0] != 0; }  },
-    { "Eject Cartridge",           ACT_EJECT_CART,   VIEW_MENU, [] () -> bool { return machine_has_cartridge(machine) && cart_fns[0][0] != 0; }          },
-    { "Eject MO",                  ACT_EJECT_MO,     VIEW_MENU, [] () -> bool { return isFirstMoAvailable() && mo_drives[0].image_path[0] != 0; }        },
     { nullptr, ACT_NONE, VIEW_MENU }, /* separator */
     { "Show Log",                  ACT_NONE,         VIEW_LOG,  [] () -> bool { return true; }  },
     { nullptr, ACT_NONE, VIEW_MENU }, /* separator */
@@ -496,11 +448,7 @@ static void activate_menu_item(int idx, bool *close_osd)
     const MenuItem &mi = menu_items[idx];
 
     switch (mi.action) {
-        case ACT_EJECT_FLOPPY: floppy_eject(0);    return;
         case ACT_EJECT_CD:     cdrom_eject(0);     return;
-        case ACT_EJECT_RDISK:  rdisk_eject(0);     return;
-        case ACT_EJECT_CART:   cartridge_eject(0); return;
-        case ACT_EJECT_MO:     mo_eject(0);        return;
         case ACT_HARDRESET:    pc_reset_hard();    *close_osd = true; return;
         case ACT_FULLSCREEN:
             if (osd_host.toggle_fullscreen)

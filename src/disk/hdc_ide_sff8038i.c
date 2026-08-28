@@ -493,16 +493,6 @@ sff_reset(void *priv)
             cdrom[i].priv)
             scsi_cdrom_reset((scsi_common_t *) cdrom[i].priv);
     }
-    for (uint8_t i = 0; i < RDISK_NUM; i++) {
-        if ((rdisk_drives[i].bus_type == RDISK_BUS_ATAPI) && (rdisk_drives[i].ide_channel < 4) &&
-            rdisk_drives[i].priv)
-            rdisk_reset((scsi_common_t *) rdisk_drives[i].priv);
-    }
-    for (uint8_t i = 0; i < MO_NUM; i++) {
-        if ((mo_drives[i].bus_type == MO_BUS_ATAPI) && (mo_drives[i].ide_channel < 4) &&
-            mo_drives[i].priv)
-            mo_reset((scsi_common_t *) mo_drives[i].priv);
-    }
 
     sff_bus_master_set_irq(0x00, priv);
     sff_bus_master_set_irq(0x01, priv);

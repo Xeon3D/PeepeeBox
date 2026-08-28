@@ -27,7 +27,6 @@
 #include "cpu.h"
 #include <86box/device.h>
 #include <86box/timer.h>
-#include <86box/cassette.h>
 #include <86box/dma.h>
 #include <86box/io.h>
 #include <86box/nmi.h>
@@ -412,8 +411,6 @@ pit_speaker_timer(int new_out, UNUSED(int old_out), UNUSED(void *priv))
 {
     int l;
 
-    if (cassette != NULL)
-        pc_cas_set_out(cassette, new_out);
 
     speaker_update();
 
@@ -1509,8 +1506,6 @@ pit_speaker_timer(int new_out, UNUSED(int old_out), UNUSED(void *priv))
 {
     int l;
 
-    if (cassette != NULL)
-        pc_cas_set_out(cassette, new_out);
 
     speaker_update();
 

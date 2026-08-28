@@ -23,7 +23,6 @@
 #include <86box/86box.h>
 #include <86box/device.h>
 #include <86box/timer.h>
-#include <86box/cassette.h>
 #include <86box/cartridge.h>
 #include <86box/dma.h>
 #include <86box/pic.h>
@@ -100,10 +99,7 @@ machine_init_ex(int m)
             mem_reset();
         smbase = is_am486dxl ? 0x00060000 : 0x00030000;
 
-        if (cassette_enable)
-            device_add(&cassette_device);
 
-        cart_reset();
 
         /* Prepare some video-related things if we're using internal
            or no video. */

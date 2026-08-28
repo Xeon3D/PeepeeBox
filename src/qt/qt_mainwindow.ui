@@ -114,6 +114,8 @@
     </widget>
     <addaction name="actionSettings"/>
     <addaction name="actionNetwork"/>
+    <addaction name="actionCDROM_drive"/>
+    <addaction name="actionFloppy_drive"/>
     <addaction name="actionUpdate_status_bar_icons"/>
     <addaction name="separator"/>
     <addaction name="actionEnable_Discord_integration"/>
@@ -291,6 +293,8 @@
    <addaction name="separator"/>
    <addaction name="actionSettings"/>
    <addaction name="actionNetwork"/>
+   <addaction name="actionCDROM_drive"/>
+   <addaction name="actionFloppy_drive"/>
    <addaction name="separator"/>
    <addaction name="actionTake_screenshot"/>
    <addaction name="actionCopy_screenshot"/>
@@ -387,6 +391,34 @@
    </property>
    <property name="menuRole">
     <enum>QAction::QuitRole</enum>
+   </property>
+  </action>
+  <action name="actionFloppy_drive">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>&amp;Floppy drive</string>
+   </property>
+   <property name="toolTip">
+    <string>Attach a 3.5&quot; 1.44M floppy drive</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionCDROM_drive">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>CD-&amp;ROM drive</string>
+   </property>
+   <property name="toolTip">
+    <string>Attach a 52x CD-ROM drive</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
    </property>
   </action>
   <action name="actionNetwork">

@@ -21,8 +21,6 @@ add_library(dev OBJECT
     ast_nvr.c
     ast_readout.c
     bugger.c
-    cartridge.c
-    cassette.c
     clock_ics9xxx.c
     dell_jumper.c
     hasp.c

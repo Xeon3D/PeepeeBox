@@ -88,6 +88,8 @@ private slots:
     void on_actionFullscreen_triggered();
     void on_actionSettings_triggered();
     void on_actionNetwork_triggered();
+    void on_actionCDROM_drive_triggered(bool checked);
+    void on_actionFloppy_drive_triggered(bool checked);
     void on_actionExit_triggered();
     void on_actionUpdate_mouse_every_CPU_frame_triggered();
     void on_actionPause_triggered();

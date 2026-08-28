@@ -116,16 +116,6 @@ MediaHistoryManager::maxDevicesSupported(ui::MediaType type)
             return CDROM_NUM;
         case ui::MediaType::Floppy:
             return FDD_NUM;
-        case ui::MediaType::RDisk:
-            return RDISK_NUM;
-        case ui::MediaType::Mo:
-            return MO_NUM;
-        case ui::MediaType::Cassette:
-            return 1;
-        case ui::MediaType::Cartridge:
-            return 2;
-        case ui::MediaType::Tape:
-            return TAPE_NUM;
     }
 }
 
@@ -192,26 +182,11 @@ MediaHistoryManager::initialDeduplication()
                 default:
                     continue;
                     break;
-                case ui::MediaType::Cassette:
-                    current_image = cassette_fname;
-                    break;
-                case ui::MediaType::Cartridge:
-                    current_image = cart_fns[device_index];
-                    break;
                 case ui::MediaType::Floppy:
                     current_image = floppyfns[device_index];
                     break;
                 case ui::MediaType::Optical:
                     current_image = cdrom[device_index].image_path;
-                    break;
-                case ui::MediaType::RDisk:
-                    current_image = rdisk_drives[device_index].image_path;
-                    break;
-                case ui::MediaType::Mo:
-                    current_image = mo_drives[device_index].image_path;
-                    break;
-                case ui::MediaType::Tape:
-                    current_image = tape_drives[device_index].image_path;
                     break;
             }
             deduplicateList(device_history, QVector<QString>(1, current_image));
@@ -236,20 +211,10 @@ MediaHistoryManager::getEmuHistoryVarForType(ui::MediaType type, int index)
     switch (type) {
         default:
             return nullptr;
-        case ui::MediaType::Cassette:
-            return &cassette_image_history[0];
-        case ui::MediaType::Cartridge:
-            return &cart_image_history[index][0];
         case ui::MediaType::Floppy:
             return &fdd_image_history[index][0];
         case ui::MediaType::Optical:
             return &cdrom[index].image_history[0];
-        case ui::MediaType::RDisk:
-            return &rdisk_drives[index].image_history[0];
-        case ui::MediaType::Mo:
-            return &mo_drives[index].image_history[0];
-        case ui::MediaType::Tape:
-            return &tape_drives[index].image_history[0];
     }
 }
 

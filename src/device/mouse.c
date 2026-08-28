@@ -731,6 +731,9 @@ tablet_get_from_internal_name(char *s)
 {
     int c = 0;
 
+    if (s == NULL)   /* PeepeeBox: was an unguarded strcmp() against NULL */
+        return 0;
+
     while (tablet_devices[c].device != NULL) {
         if (!strcmp((char *) tablet_devices[c].device->internal_name, s))
             return c;
