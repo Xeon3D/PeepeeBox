@@ -1400,7 +1400,7 @@ scsi_disk_command(scsi_common_t *sc, const uint8_t *cdb)
                         dev->temp_buffer[idx++] = 68;
                         /* Vendor */
                         ide_padstr8(dev->temp_buffer + idx, 8,
-                                    (dev->drv->vendor) ? dev->drv->vendor : EMU_NAME);
+                                    (dev->drv->vendor) ? dev->drv->vendor : EMU_HW_NAME);
                         idx += 8;
                         /* Product */
                         ide_padstr8(dev->temp_buffer + idx, 40,
@@ -1442,7 +1442,7 @@ scsi_disk_command(scsi_common_t *sc, const uint8_t *cdb)
                 if (dev->drv->model) {
                     /* Vendor */
                     ide_padstr8(dev->temp_buffer + 8, 8,
-                                (dev->drv->vendor) ? dev->drv->vendor : EMU_NAME);
+                                (dev->drv->vendor) ? dev->drv->vendor : EMU_HW_NAME);
                     /* Product */
                     ide_padstr8(dev->temp_buffer + 16, 16, dev->drv->model);
                     /* Revision */
@@ -1450,7 +1450,7 @@ scsi_disk_command(scsi_common_t *sc, const uint8_t *cdb)
                                 (dev->drv->version) ? dev->drv->version : EMU_VERSION_EX);
                 } else {
                     /* Vendor */
-                    ide_padstr8(dev->temp_buffer + 8, 8, EMU_NAME);
+                    ide_padstr8(dev->temp_buffer + 8, 8, EMU_HW_NAME);
                     /* Product */
                     ide_padstr8(dev->temp_buffer + 16, 16, device_identify);
                     /* Revision */

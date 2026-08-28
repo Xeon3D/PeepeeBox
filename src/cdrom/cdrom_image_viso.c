@@ -1054,7 +1054,7 @@ next_dir:
     volume_path[path_len] = '\0';
     const char *basename  = path_get_filename(volume_path);
     if (!basename || !basename[0])
-        basename = EMU_NAME;
+        basename = EMU_HW_NAME;
 
     /* Determine whether or not we're working with 2 volume descriptors
        (as well as 2 directory trees and 4 path tables) for Joliet. */
@@ -1074,14 +1074,14 @@ next_dir:
 
         if (i) {
             uint16_t wtemp[16];
-            viso_convert_utf8(wtemp, EMU_NAME, 16);
+            viso_convert_utf8(wtemp, EMU_HW_NAME, 16);
             viso_write_wstring((uint16_t *) p, wtemp, 16, VISO_CHARSET_A); /* system ID */
             p += 32;
             viso_convert_utf8(wtemp, basename, 16);
             viso_write_wstring((uint16_t *) p, wtemp, 16, VISO_CHARSET_D); /* volume ID */
             p += 32;
         } else {
-            viso_write_string(p, EMU_NAME, 32, VISO_CHARSET_A); /* system ID */
+            viso_write_string(p, EMU_HW_NAME, 32, VISO_CHARSET_A); /* system ID */
             p += 32;
             viso_write_string(p, basename, 32, VISO_CHARSET_D); /* volume ID */
             p += 32;
@@ -1122,7 +1122,7 @@ next_dir:
             p += 128;
             viso_write_wstring((uint16_t *) p, wtemp, 64, VISO_CHARSET_A); /* data preparer ID */
             p += 128;
-            viso_convert_utf8(wtemp, EMU_NAME " " EMU_VERSION " VIRTUAL ISO", 64);
+            viso_convert_utf8(wtemp, EMU_HW_NAME " " EMU_VERSION " VIRTUAL ISO", 64);
             viso_write_wstring((uint16_t *) p, wtemp, 64, VISO_CHARSET_A); /* application ID */
             p += 128;
             wtemp[0] = '\0';
@@ -1141,7 +1141,7 @@ next_dir:
             p += 128;
             viso_write_string(p, "", 128, VISO_CHARSET_A); /* data preparer ID */
             p += 128;
-            viso_write_string(p, EMU_NAME " " EMU_VERSION " VIRTUAL ISO", 128, VISO_CHARSET_A); /* application ID */
+            viso_write_string(p, EMU_HW_NAME " " EMU_VERSION " VIRTUAL ISO", 128, VISO_CHARSET_A); /* application ID */
             p += 128;
             viso_write_string(p, "", copyright_abstract_len, VISO_CHARSET_D); /* copyright file ID */
             p += copyright_abstract_len;
@@ -1236,7 +1236,7 @@ next_dir:
         *p++ = 0x00; /* platform */
         *p++ = 0x00; /* reserved */
         *p++ = 0x00;
-        viso_write_string(p, EMU_NAME, 24, VISO_CHARSET_ANY); /* ID string */
+        viso_write_string(p, EMU_HW_NAME, 24, VISO_CHARSET_ANY); /* ID string */
         p += 24;
         *p++ = 0x00; /* checksum */
         *p++ = 0x00;

@@ -1754,7 +1754,7 @@ rdisk_command(scsi_common_t *sc, const uint8_t *cdb)
                         else if (dev->drv->type >= RDISK_TYPE_ZIP_100)
                             ide_padstr8(dev->buffer + idx, 8, "IOMEGA  ");
                         else
-                            ide_padstr8(dev->buffer + 8, 8, EMU_NAME);          /* Vendor */
+                            ide_padstr8(dev->buffer + 8, 8, EMU_HW_NAME);          /* Vendor */
                         idx += 8;
                         /* Product */
                         if (dev->drv->type == RDISK_TYPE_ZIP_250)
@@ -1829,7 +1829,7 @@ rdisk_command(scsi_common_t *sc, const uint8_t *cdb)
                     ide_padstr8(dev->buffer + 32, 4, "H.72");
                 } else {
                     ide_padstr8(dev->buffer + 8, 8,
-                                EMU_NAME);          /* Vendor */
+                                EMU_HW_NAME);          /* Vendor */
                     ide_padstr8(dev->buffer + 16, 16,
                                 device_identify);      /* Product */
                     ide_padstr8(dev->buffer + 32, 4,
@@ -2227,7 +2227,7 @@ rdisk_generic_identify(const ide_t *ide, const int ide_has_dma, const rdisk_t *r
     char model[40];
 
     memset(model, 0, 40);
-    snprintf(model, 40, "%s %s%02i", EMU_NAME, "86B_RD", rdisk->id);
+    snprintf(model, 40, "%s %s%02i", EMU_HW_NAME, "86B_RD", rdisk->id);
     ide_padstr((char *) (ide->buffer + 23), EMU_VERSION_EX, 8);    /* Firmware */
     ide_padstr((char *) (ide->buffer + 27), model, 40);               /* Model */
 

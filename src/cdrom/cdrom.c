@@ -1235,7 +1235,7 @@ cdrom_get_vendor(const int type)
 void
 cdrom_get_model(const int type, char *name, const int id)
 {
-    if (!strcmp(cdrom_drive_types[type].vendor, EMU_NAME))
+    if (!strcmp(cdrom_drive_types[type].vendor, EMU_HW_NAME))
         sprintf(name, "%s%02i", cdrom_drive_types[type].model, id);
     else
         sprintf(name, "%s", cdrom_drive_types[type].model);
@@ -1356,7 +1356,7 @@ cdrom_get_identify_model(const int type, char *name, const int id)
         s[0] = 0x00;
 
     else if (!strcmp(cdrom_drive_types[type].bios_name, ""))
-        if (!strcmp(cdrom_drive_types[type].vendor, EMU_NAME))
+        if (!strcmp(cdrom_drive_types[type].vendor, EMU_HW_NAME))
              sprintf(name, "%s%02i", elements[1], id);
         else if (!strcmp(cdrom_drive_types[type].vendor, "ASUS"))
             sprintf(name, "%s    %s", elements[0], elements[1]);

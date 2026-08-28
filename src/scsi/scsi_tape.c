@@ -2479,7 +2479,7 @@ tape_command(scsi_common_t *sc, const uint8_t *cdb)
                     ide_padstr8(dev->buffer + 32, 4,
                                 tape_drive_types[dev->drv->type].revision);
                 } else {
-                    ide_padstr8(dev->buffer + 8, 8, EMU_NAME);
+                    ide_padstr8(dev->buffer + 8, 8, EMU_HW_NAME);
                     ide_padstr8(dev->buffer + 16, 16, device_identify);
                     ide_padstr8(dev->buffer + 32, 4, EMU_VERSION_EX);
                 }
@@ -2946,7 +2946,7 @@ tape_identify(const ide_t *ide, const int ide_has_dma)
                    tape_drive_types[tape_drives[dev->id].type].revision, 8);
         ide_padstr((char *) (ide->buffer + 27), model, 40);                                          /* Model */
     } else {
-        snprintf(model, 40, "%s %s%02i", EMU_NAME, "86B_TP", dev->id);
+        snprintf(model, 40, "%s %s%02i", EMU_HW_NAME, "86B_TP", dev->id);
         ide_padstr((char *) (ide->buffer + 23), EMU_VERSION_EX, 8);    /* Firmware */
         ide_padstr((char *) (ide->buffer + 27), model, 40);               /* Model */
     }

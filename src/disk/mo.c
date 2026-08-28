@@ -1697,7 +1697,7 @@ mo_command(scsi_common_t *sc, const uint8_t *cdb)
                                 mo_drive_types[dev->drv->type].revision);    /* Revision */
                 } else {
                     ide_padstr8(dev->buffer + 8, 8,
-                                EMU_NAME);          /* Vendor */
+                                EMU_HW_NAME);          /* Vendor */
                     ide_padstr8(dev->buffer + 16, 16,
                                 device_identify);      /* Product */
                     ide_padstr8(dev->buffer + 32, 4,
@@ -2083,7 +2083,7 @@ mo_do_identify(const ide_t *ide, const int ide_has_dma)
                    mo_drive_types[mo_drives[mo->id].type].revision, 8);
         ide_padstr((char *) (ide->buffer + 27), model, 40);                                          /* Model */
     } else {
-        snprintf(model, 40, "%s %s%02i", EMU_NAME, "86B_MO", mo->id);
+        snprintf(model, 40, "%s %s%02i", EMU_HW_NAME, "86B_MO", mo->id);
         ide_padstr((char *) (ide->buffer + 23), EMU_VERSION_EX, 8);    /* Firmware */
         ide_padstr((char *) (ide->buffer + 27), model, 40);               /* Model */
     }

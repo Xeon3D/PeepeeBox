@@ -22,6 +22,16 @@
 #define EMU_NAME    "@CMAKE_PROJECT_NAME@"
 #define EMU_NAME_W  LSTR(EMU_NAME)
 
+/* PeepeeBox: the emulated SCSI/ATAPI vendor and product strings are guest-visible
+   hardware identity, not branding.  They stay "86Box" so guests see exactly what stock
+   86Box presents -- renaming them would change emulated hardware, and the SCSI vendor
+   field is only 8 bytes wide anyway. */
+#define EMU_HW_NAME "86Box"
+
+/* Upstream project this is forked from, shown in the About dialog. */
+#define EMU_UPSTREAM_NAME "86Box"
+#define EMU_UPSTREAM_SITE "86box.net"
+
 #define EMU_VERSION       "@CMAKE_PROJECT_VERSION@"
 #define EMU_VERSION_W     LSTR(EMU_VERSION)
 #define EMU_VERSION_MAJ   @CMAKE_PROJECT_VERSION_MAJOR@

@@ -171,7 +171,7 @@ spd_write_part_no(char *part_no, char *type, uint16_t size)
         size_unit = 'M';
     }
 
-    return sprintf(part_no, EMU_NAME "-%s-%03d%c", type, size, size_unit);
+    return sprintf(part_no, EMU_HW_NAME "-%s-%03d%c", type, size, size_unit);
 }
 
 void
