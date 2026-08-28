@@ -51,15 +51,6 @@ static const struct {
     // clang-format off
     { &char_none_device },
 
-    { &dss_device },
-    { &lpt_dac_device },
-    { &lpt_dac_stereo_device },
-    { &lpt_dac_ftl_device },
-    { &lpt_dac_soundjr_device },
-    { &lpt_adlipt_device },
-    { &lpt_opl3_device },
-    { &lpt_cms_device },
-    { &lpt_tnd_device },
     { &lpt_prt_text_device },
     { &lpt_prt_escp_device },
     { &lpt_prt_ps_device },

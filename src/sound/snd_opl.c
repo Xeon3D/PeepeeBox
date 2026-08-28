@@ -186,12 +186,7 @@ fm_driver_get_ex(int chip_id, fm_drv_t *drv, int is_48k)
             drv->priv = device_add_inst_params(&esfm_esfmu_device, fm_dev_inst[fm_driver][chip_id]++, flag_48k);
             break;
 
-#ifdef USE_LIBSERIALPORT
-        case FM_OPL2BOARD:
-            *drv      = ymfm_opl2board_drv;
-            drv->priv = device_add_inst_params(&ym_opl2board_device, fm_dev_inst[fm_driver][chip_id]++, flag_48k);  
-            break;
-#endif
+        /* PeepeeBox: the serial-attached OPL2 board is gone. */
 
         default:
             return 0;

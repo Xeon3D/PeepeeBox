@@ -35,10 +35,6 @@ if(NOT DEFINED OPENAL OR OPENAL)
     list(APPEND VCPKG_MANIFEST_FEATURES "openal")
 endif()
 
-if(MUNT_EXTERNAL)
-    list(APPEND VCPKG_MANIFEST_FEATURES "munt")
-endif()
-
 project(PeepeeBox
     VERSION 7.0
     DESCRIPTION "Emulator of x86-based systems"
@@ -122,10 +118,6 @@ include(CompilerFlags)
 option(RELEASE      "Release build"                                              OFF)
 option(DYNAREC      "Dynamic recompiler"                                         ON)
 option(OPENAL       "OpenAL"                                                     ON)
-option(RTMIDI       "RtMidi"                                                     ON)
-option(FLUIDSYNTH   "FluidSynth"                                                 ON)
-option(MUNT         "MUNT"                                                       ON)
-option(SOUNDCANVAS  "Sound Canvas (CLAP)"                                        ON)
 option(VNC          "VNC renderer"                                               OFF)
 option(MINITRACE    "Enable Chrome tracing using the modified minitrace library" OFF)
 option(GDBSTUB      "Enable GDB stub server for debugging"                       OFF)
@@ -191,7 +183,6 @@ cmake_dependent_option(G100           "Matrox Productiva G100"                  
 cmake_dependent_option(ISAMEM_RAMPAGE "AST Rampage"                              ON    "DEV_BRANCH"  OFF)
 cmake_dependent_option(ISAMEM_IAB     "Intel Above Board"                        ON    "DEV_BRANCH"  OFF)
 cmake_dependent_option(ISAMEM_BRAT    "BocaRAM/AT"                               ON    "DEV_BRANCH"  OFF)
-cmake_dependent_option(OPL4ML         "OPL4-ML daughterboard"                    ON    "DEV_BRANCH"  OFF)
 cmake_dependent_option(SIO_DETECT     "Super I/O Detection Helper"               ON    "DEV_BRANCH"  OFF)
 cmake_dependent_option(WACOM          "Wacom Input Devices"                      ON    "DEV_BRANCH"  OFF)
 cmake_dependent_option(XL24           "ATI VGA Wonder XL24 (ATI-28800-6)"        ON    "DEV_BRANCH"  OFF)

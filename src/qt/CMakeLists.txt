@@ -290,9 +290,6 @@ if(EMU_BUILD_NUM)
     )
 endif()
 
-if(RTMIDI)
-    target_compile_definitions(ui PRIVATE USE_RTMIDI)
-endif()
 
 if(WACOM)
     target_compile_definitions(ui PRIVATE USE_WACOM)

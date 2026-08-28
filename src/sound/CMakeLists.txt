@@ -22,50 +22,20 @@ add_library(snd OBJECT
     snd_opl3_nuked.c
     snd_cqm_nuked.c
     snd_opl_ymfm.cpp
-    snd_resid.cpp
     midi.c
     snd_speaker.c
-    snd_lpt_adlipt.c
-    snd_lpt_cms.c
-    snd_lpt_dac.c
-    snd_lpt_dss.c
-    snd_lpt_tndlpt.c
-    snd_pssj.c
-    snd_ac97_codec.c
-    snd_ac97_via.c
-    snd_ps1.c
-    snd_adlib.c
-    snd_adlibgold.c
-    snd_ad1816.c
+    # snd_sb.c is one file covering Sound Blaster, ESS and Aztech.  Only the
+    # ESS ES1688 is reachable, but the file links against all three families'
+    # mixers and codecs, so these come with it.
     snd_ad1848.c
-    snd_audiopci.c
+    snd_cms.c
     snd_azt2316a.c
     snd_azt2320.c
-    snd_cms.c
-    snd_csm.c
-    snd_cmi8x38.c
-    snd_covox.c
-    snd_cs423x.c
-    snd_imfc.cpp
-    snd_gus.c
     snd_sb.c
     snd_sb_dsp.c
     snd_emu8k.c
-    snd_mmb.c
     snd_mpu401.c
-    snd_pas16.c
-    snd_jazz16.c
-    snd_saaym.c
-    snd_sn76489.c
-    snd_ssi2001.c
-    snd_wss.c
-    snd_ym7128.c
-    snd_optimc.c
     snd_opl_esfm.c
-    snd_ps1_midi.c
-    snd_sensation.c
-    snd_ymf701.c
-    snd_ymf71x.c
     sound_util.c
 )
 
@@ -138,86 +108,15 @@ else()
     endif()
 endif()
 
-if(RTMIDI)
-    if(VCPKG_TOOLCHAIN)
-        # vcpkg includes a config file for rtmidi
-        find_package(RtMidi REQUIRED)
-        target_link_libraries(86Box RtMidi::rtmidi)
-    else()
-        find_package(PkgConfig REQUIRED)
-        pkg_check_modules(RTMIDI REQUIRED IMPORTED_TARGET rtmidi)
-        target_link_libraries(86Box PkgConfig::RTMIDI)
+# PeepeeBox: no MIDI hardware in the cabinet -- RtMidi, FluidSynth, MUNT,
 
-        if(WIN32)
-            target_link_libraries(PkgConfig::RTMIDI INTERFACE winmm)
-        endif()
-     endif()
-
-     target_compile_definitions(snd PRIVATE USE_RTMIDI)
-     target_sources(snd PRIVATE midi_rtmidi.cpp)
-endif()
-
-if(FLUIDSYNTH)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(FLUIDSYNTH REQUIRED IMPORTED_TARGET fluidsynth)
-    target_link_libraries(86Box PkgConfig::FLUIDSYNTH)
-    if(STATIC_BUILD)
-        target_link_libraries(86Box -static ${FLUIDSYNTH_STATIC_LIBRARIES} -fopenmp)
-        if(WIN32)
-            add_compile_definitions(FLUIDSYNTH_NOT_A_DLL)
-
-            if(CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64")
-                target_link_libraries(86Box psapi)
-            endif()
-        endif()
-    endif()
-
-    target_compile_definitions(snd PRIVATE USE_FLUIDSYNTH)
-    target_sources(snd PRIVATE midi_fluidsynth.c)
-endif()
-
-if(MUNT)
-    target_compile_definitions(snd PRIVATE USE_MUNT)
-    target_sources(snd PRIVATE midi_mt32.c)
-
-    option(MUNT_EXTERNAL "Link against the system-provided MUNT library" OFF)
-    mark_as_advanced(MUNT_EXTERNAL)
-
-    if(MUNT_EXTERNAL)
-        find_package(PkgConfig REQUIRED)
-        pkg_check_modules(MT32EMU REQUIRED IMPORTED_TARGET mt32emu)
-        target_link_libraries(86Box PkgConfig::MT32EMU)
-    else()
-        add_subdirectory(munt)
-        target_link_libraries(86Box mt32emu)
-    endif()
-endif()
-
-add_subdirectory(ayumi)
-target_link_libraries(86Box ayumi)
+# the Sound Canvas CLAP host and the OPL4-ML daughterboard are all gone.
 
 add_subdirectory(esfmu)
 target_link_libraries(86Box esfmu)
 
 add_subdirectory(ymfm)
 target_link_libraries(86Box ymfm)
-
-if(OPL4ML)
-    target_compile_definitions(snd PRIVATE USE_OPL4ML)
-    target_sources(snd PRIVATE midi_opl4.c midi_opl4_yrw801.c)
-endif()
-
-if(SOUNDCANVAS)
-    target_compile_definitions(snd PRIVATE USE_SOUNDCANVAS)
-    target_sources(snd PRIVATE
-        midi_soundcanvas.c
-        clap/clap_event_list.c
-        clap/clap_host.c
-    )
-    if(NOT WIN32)
-        target_link_libraries(86Box dl)
-    endif()
-endif()
 
 if(SOFTMODEM)
     target_compile_definitions(snd PRIVATE USE_SOFTMODEM)
@@ -248,11 +147,5 @@ if(SERIALPORT_FOUND OR DEFINED LIBSERIALPORT_ROOT)
         include_directories(${SERIALPORT_INCLUDE_DIRS})
         target_link_libraries(86Box ${SERIALPORT_LIBRARIES})
     endif()
-    target_sources(snd PRIVATE
-    snd_opl2board.c
-    snd_opl_opl2board.cpp
-)
 endif()
 
-add_subdirectory(resid-fp)
-target_link_libraries(86Box resid-fp)
