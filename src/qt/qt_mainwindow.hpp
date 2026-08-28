@@ -87,6 +87,7 @@ private slots:
     void on_actionForce_interpretation_triggered();
     void on_actionFullscreen_triggered();
     void on_actionSettings_triggered();
+    void on_actionNetwork_triggered();
     void on_actionExit_triggered();
     void on_actionUpdate_mouse_every_CPU_frame_triggered();
     void on_actionPause_triggered();

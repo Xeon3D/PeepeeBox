@@ -63,8 +63,6 @@
 #include <86box/lpt.h>
 #include <86box/char.h>
 #include <86box/hdd.h>
-#include <86box/thread.h>
-#include <86box/network.h>
 #include <86box/photoplay.h>
 #include "cpu.h"
 
@@ -239,16 +237,6 @@ pp_apply_disk(void)
     pp_profile_log("PP: disk %s, %u/%u/%u\n", fn, hdd[0].tracks, hdd[0].hpc, hdd[0].spt);
 }
 
-/* Nothing else is wired into the cabinet. */
-static void
-pp_apply_nothing_else(void)
-{
-    for (int i = 0; i < NET_CARD_MAX; i++) {
-        net_cards_conf[i].device_num = 0;
-        net_cards_conf[i].net_type   = 0;
-    }
-}
-
 void
 photoplay_apply_profile(void)
 {
@@ -257,7 +245,6 @@ photoplay_apply_profile(void)
     pp_apply_input();
     pp_apply_ports();
     pp_apply_disk();
-    pp_apply_nothing_else();
 
     pp_profile_log("PP: Photo Play profile applied (%s, %s @ %d MHz, %d MB)\n",
                    PHOTOPLAY_MACHINE, PHOTOPLAY_CPU_FAMILY,

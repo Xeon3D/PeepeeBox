@@ -106,6 +106,7 @@ void qt_set_sequence_auto_mnemonic(bool b);
 #include <unordered_map>
 
 #include "qt_deviceconfig.hpp"
+#include "qt_networksettings.hpp"
 #include "qt_about.hpp"
 #include "qt_machinestatus.hpp"
 #include "qt_mediamenu.hpp"
@@ -1396,6 +1397,27 @@ MainWindow::on_actionSettings_triggered()
         config_save();
         pc_reset_hard();
     }
+    plat_pause(currentPause);
+}
+
+/* PeepeeBox: the cabinets are offline, but the network card stays selectable --
+   it is the one piece of hardware a user might legitimately want to add. */
+void
+MainWindow::on_actionNetwork_triggered()
+{
+    const int currentPause = dopause;
+
+    plat_pause(1);
+
+    NetworkSettings dialog(this);
+    dialog.setModal(true);
+    dialog.setWindowModality(Qt::WindowModal);
+    if (dialog.exec() == QDialog::Accepted) {
+        config_changed = 2;
+        config_save();
+        pc_reset_hard();
+    }
+
     plat_pause(currentPause);
 }
 

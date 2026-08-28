@@ -113,6 +113,7 @@
      <addaction name="actionSound_gain"/>
     </widget>
     <addaction name="actionSettings"/>
+    <addaction name="actionNetwork"/>
     <addaction name="actionUpdate_status_bar_icons"/>
     <addaction name="separator"/>
     <addaction name="actionEnable_Discord_integration"/>
@@ -290,6 +291,7 @@
    <addaction name="actionCtrl_Alt_Esc"/>
    <addaction name="separator"/>
    <addaction name="actionSettings"/>
+   <addaction name="actionNetwork"/>
    <addaction name="separator"/>
    <addaction name="actionTake_screenshot"/>
    <addaction name="actionCopy_screenshot"/>
@@ -386,6 +388,17 @@
    </property>
    <property name="menuRole">
     <enum>QAction::QuitRole</enum>
+   </property>
+  </action>
+  <action name="actionNetwork">
+   <property name="text">
+    <string>&amp;Network…</string>
+   </property>
+   <property name="toolTip">
+    <string>Network cards</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
    </property>
   </action>
   <action name="actionSettings">

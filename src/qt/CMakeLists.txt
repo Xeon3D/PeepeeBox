@@ -153,6 +153,11 @@ add_library(ui STATIC
     qt_preferenceskeybindings.hpp
     qt_preferenceskeybindings.ui
 
+    qt_settingsnetwork.cpp
+    qt_settingsnetwork.hpp
+    qt_settingsnetwork.ui
+    qt_networksettings.cpp
+    qt_networksettings.hpp
     qt_settings_completer.cpp
     qt_settings_completer.hpp
 
