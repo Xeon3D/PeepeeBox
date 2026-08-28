@@ -54,6 +54,7 @@
 #include <86box/nvr.h>
 #include <86box/ini.h>
 #include <86box/config.h>
+#include <86box/photoplay.h>
 #include <86box/isamem.h>
 #include <86box/isarom.h>
 #include <86box/isartc.h>
@@ -2829,6 +2830,11 @@ config_load(void)
 
         config_log("VM config loaded.\n\n");
     }
+
+    /* PeepeeBox: overwrite whatever was just loaded with the fixed Photo Play
+       machine profile.  Done here, after parsing, so that a stale or
+       hand-edited 86box.cfg cannot describe a machine that is not a cabinet. */
+    photoplay_apply_profile();
 
     /* Protecet concurrent config_save() calls from the emulation
        thread and UI thread. */

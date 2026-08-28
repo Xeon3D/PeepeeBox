@@ -50,6 +50,7 @@ add_executable(86Box
     nvr_at.c
     nvr_ps2.c
     machine_status.c
+    photoplay.c
 )
 
 # PeepeeBox: name the produced executable after the project.  The CMake *target*
