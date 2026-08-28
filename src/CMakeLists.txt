@@ -52,6 +52,14 @@ add_executable(86Box
     machine_status.c
 )
 
+# PeepeeBox: name the produced executable after the project.  The CMake *target*
+# deliberately keeps its upstream name -- a dozen other CMakeLists.txt files across
+# the tree reference `86Box` in target_link_libraries(), and renaming the target
+# would mean touching every one of them for no gain.  OUTPUT_NAME is what decides
+# the filename, and install()/CPack read it back through $<TARGET_FILE_NAME:86Box>,
+# so this is the single point of control.
+set_target_properties(86Box PROPERTIES OUTPUT_NAME "${CMAKE_PROJECT_NAME}")
+
 if(CMAKE_SYSTEM_NAME MATCHES "Linux")
     add_compile_definitions(_FILE_OFFSET_BITS=64 _LARGEFILE_SOURCE=1 _LARGEFILE64_SOURCE=1)
 endif()
