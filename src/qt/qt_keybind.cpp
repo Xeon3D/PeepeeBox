@@ -16,7 +16,6 @@
  */
 #include "qt_keybind.hpp"
 #include "ui_qt_keybind.h"
-#include "qt_settings.hpp"
 #include "qt_singlekeyseqedit.hpp"
 
 #include <QDebug>

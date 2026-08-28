@@ -18,7 +18,6 @@
 
 #include "qt_deviceconfig.hpp"
 #include "ui_qt_deviceconfig.h"
-#include "qt_settings.hpp"
 
 #include <QDebug>
 #include <QComboBox>
@@ -448,7 +447,7 @@ DeviceConfig::ProcessConfig(void *dc, const void *c, const bool is_dep)
 }
 
 int
-DeviceConfig::ConfigureDevice(const _device_ *device, int instance, Settings *settings)
+DeviceConfig::ConfigureDevice(const _device_ *device, int instance, QWidget *parent)
 {
     const QString blank          = "";
 
@@ -468,7 +467,7 @@ DeviceConfig::ConfigureDevice(const _device_ *device, int instance, Settings *se
 
     bios_rows     = 0;
 
-    DeviceConfig dc(settings);
+    DeviceConfig dc(parent);
     dc.setWindowTitle(tr("%1 Device Configuration").arg(DeviceName(device, device->internal_name, -1)));
 
     device_context_t device_context;

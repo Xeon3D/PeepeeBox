@@ -153,45 +153,6 @@ add_library(ui STATIC
     qt_preferenceskeybindings.hpp
     qt_preferenceskeybindings.ui
 
-    qt_settings.cpp
-    qt_settings.hpp
-    qt_settings.ui
-
-    qt_settingsmachine.cpp
-    qt_settingsmachine.hpp
-    qt_settingsmachine.ui
-    qt_settingsdisplay.cpp
-    qt_settingsdisplay.hpp
-    qt_settingsdisplay.ui
-    qt_settingsinput.cpp
-    qt_settingsinput.hpp
-    qt_settingsinput.ui
-    qt_settingssound.cpp
-    qt_settingssound.hpp
-    qt_settingssound.ui
-    qt_settingsnetwork.cpp
-    qt_settingsnetwork.hpp
-    qt_settingsnetwork.ui
-    qt_settingsports.cpp
-    qt_settingsports.hpp
-    qt_settingsports.ui
-    qt_settingsstoragecontrollers.cpp
-    qt_settingsstoragecontrollers.hpp
-    qt_settingsstoragecontrollers.ui
-    qt_settingsharddisks.cpp
-    qt_settingsharddisks.hpp
-    qt_settingsharddisks.ui
-    qt_settingsfloppycdrom.cpp
-    qt_settingsfloppycdrom.hpp
-    qt_settingsfloppycdrom.ui
-    qt_settingsotherremovable.cpp
-    qt_settingsotherremovable.hpp
-    qt_settingsotherremovable.ui
-    qt_settingsotherperipherals.cpp
-    qt_settingsotherperipherals.hpp
-    qt_settingsotherperipherals.ui
-    qt_settings_bus_tracking.cpp
-    qt_settings_bus_tracking.hpp
     qt_settings_completer.cpp
     qt_settings_completer.hpp
 
@@ -213,12 +174,6 @@ add_library(ui STATIC
     qt_newfloppydialog.cpp
     qt_newfloppydialog.hpp
     qt_newfloppydialog.ui
-    qt_harddiskdialog.cpp
-    qt_harddiskdialog.hpp
-    qt_harddiskdialog.ui
-
-    qt_harddrive_common.cpp
-    qt_harddrive_common.hpp
     qt_models_common.cpp
     qt_models_common.hpp
 

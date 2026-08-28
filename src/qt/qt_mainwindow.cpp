@@ -55,6 +55,7 @@ extern "C" {
 #include <86box/nvr.h>
 #include <86box/acpi.h>
 #include <86box/renderdefs.h>
+#include <86box/lpt.h>
 
 #ifdef USE_VNC
 #    include <86box/vnc.h>
@@ -105,7 +106,7 @@ void qt_set_sequence_auto_mnemonic(bool b);
 #include <memory>
 #include <unordered_map>
 
-#include "qt_settings.hpp"
+#include "qt_deviceconfig.hpp"
 #include "qt_about.hpp"
 #include "qt_machinestatus.hpp"
 #include "qt_mediamenu.hpp"
@@ -187,8 +188,7 @@ static bool
 canProcessUiEventsInCurrentState()
 {
     const bool has_modal_widget  = QApplication::activeModalWidget() != nullptr;
-    const bool has_settings_open = main_window && (main_window->findChild<Settings *>() != nullptr);
-    return !cpu_thread_run || dopause || has_modal_widget || has_settings_open || main_window_blocked;
+    return !cpu_thread_run || dopause || has_modal_widget || main_window_blocked;
 }
 
 static void
@@ -1374,38 +1374,28 @@ MainWindow::emitVmmSignal()
     emit vmmConfigurationChanged();
 }
 
+/* PeepeeBox: what used to open the eleven-page machine settings dialog now opens
+   the dongle's own device configuration.  Every other setting that dialog
+   offered -- machine, CPU, RAM, video, sound, input, ports, drives -- is fixed
+   by the Photo Play profile (see src/photoplay.c) and is not a choice.
+
+   The dongle is the exception, and it genuinely has to stay adjustable: the
+   version banner it reports must match MAIN.SET["Version"] for the image being
+   run, and that differs per image and per territory.  Get it wrong and the game
+   reports "Wrong Version".
+
+   Changing it re-runs the machine, because the banner is baked into the 48-byte
+   block at device init and the guest reads that block once, early. */
 void
 MainWindow::on_actionSettings_triggered()
 {
     const int currentPause = dopause;
-    plat_pause(1);
-    Settings settings(this);
-    settings.setModal(true);
-    settings.setWindowModality(Qt::WindowModal);
-    settings.setWindowFlag(Qt::CustomizeWindowHint, true);
-    settings.setWindowFlag(Qt::WindowTitleHint, true);
-    settings.setWindowFlag(Qt::WindowSystemMenuHint, false);
-    settings.exec();
 
-    switch (settings.result()) {
-        default:
-            break;
-        case QDialog::Accepted:
-            settings.save(0);
-            config_changed = 2;
-            emit vmmConfigurationChanged();
-            pc_reset_hard();
-            video_copy = (video_grayscale || invert_display) ? video_transform_copy : memcpy;
-            config_save();
-            reset_screen_size();
-            device_force_redraw();
-            for (int i = 0; i < MONITORS_NUM; i++) {
-                if (monitors[i].target_buffer)
-                    video_force_resize_set_monitor(1, i);
-            }
-            break;
-        case QDialog::Rejected:
-            break;
+    plat_pause(1);
+    if (DeviceConfig::ConfigureDevice(&lpt_dongle_photoplay_device, 0, this)) {
+        config_changed = 2;
+        config_save();
+        pc_reset_hard();
     }
     plat_pause(currentPause);
 }
@@ -2520,8 +2510,7 @@ MainWindow::on_actionEnable_Discord_integration_triggered(bool checked)
 void
 MainWindow::showSettings()
 {
-    if (findChild<Settings *>() == nullptr)
-        ui->actionSettings->trigger();
+    ui->actionSettings->trigger();
 }
 
 void

@@ -55,6 +55,9 @@ extern "C" {
 #include <86box/gdbstub.h>
 #include <86box/version.h>
 #include <86box/renderdefs.h>
+#include <86box/device.h>
+#include <86box/timer.h>
+#include <86box/lpt.h>
 #ifdef Q_OS_LINUX
 #    define GAMEMODE_AUTO
 #    include "../unix/gamemode/gamemode_client.h"
@@ -78,7 +81,7 @@ extern "C" {
 #include "qt_defs.hpp"
 #include "qt_mainwindow.hpp"
 #include "qt_preferences.hpp"
-#include "qt_settings.hpp"
+#include "qt_deviceconfig.hpp"
 #include "cocoa_mouse.hpp"
 #include "qt_styleoverride.hpp"
 #include "qt_unixmanagerfilter.hpp"
@@ -742,11 +745,10 @@ main(int argc, char *argv[])
             manager_socket.IPCConnect(qgetenv("VMM_86BOX_SOCKET"));
             manager_socket.clientRunningStateChanged(VMManagerProtocol::RunningState::PausedWaiting);
         }
-        Settings settings;
-        if (settings.exec() == QDialog::Accepted) {
-            settings.save(0);
+        /* PeepeeBox: -S used to open the machine settings dialog, which no longer
+           exists.  The dongle is the only thing left to configure. */
+        if (DeviceConfig::ConfigureDevice(&lpt_dongle_photoplay_device))
             config_save();
-        }
         return 0;
     }
 

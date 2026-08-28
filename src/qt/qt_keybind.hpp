@@ -3,8 +3,6 @@
 
 #include <QDialog>
 
-#include "qt_settings.hpp"
-
 extern "C" {
 struct _device_;
 }
@@ -12,8 +10,6 @@ struct _device_;
 namespace Ui {
 class KeyBinder;
 }
-
-class Settings;
 
 class KeyBinder : public QDialog {
     Q_OBJECT

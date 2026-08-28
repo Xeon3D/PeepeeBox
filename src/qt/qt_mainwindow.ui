@@ -394,10 +394,10 @@
      <normaloff>:/menuicons/qt/icons/settings.ico</normaloff>:/menuicons/qt/icons/settings.ico</iconset>
    </property>
    <property name="text">
-    <string>&amp;Settings…</string>
+    <string>&amp;Dongle…</string>
    </property>
    <property name="toolTip">
-    <string>Settings…</string>
+    <string>Photo Play dongle…</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>

@@ -3,7 +3,6 @@
 
 #include <QDialog>
 
-#include "qt_settings.hpp"
 #include "qt_settings_completer.hpp"
 
 extern "C" {
@@ -14,8 +13,6 @@ namespace Ui {
 class DeviceConfig;
 }
 
-class Settings;
-
 class DeviceConfig : public QDialog {
     Q_OBJECT
 
@@ -23,8 +20,11 @@ public:
     explicit DeviceConfig(QWidget *parent = nullptr);
     ~DeviceConfig() override;
 
+    /* PeepeeBox: `parent` was `Settings *settings`, defaulted to the settings
+       dialog singleton.  The dialog is gone; it was only ever used as the
+       QWidget parent, so this takes a plain parent instead. */
     static int     ConfigureDevice(const _device_ *device, int instance = 0,
-                                   Settings *settings = qobject_cast<Settings *>(Settings::settings));
+                                   QWidget *parent = nullptr);
     static QString DeviceName(const _device_ *device, const char *internalName = nullptr, int bus = 0);
 
 private:
