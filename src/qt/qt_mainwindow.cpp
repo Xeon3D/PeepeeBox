@@ -53,7 +53,6 @@ extern "C" {
 #include <86box/timer.h>
 #include <86box/apm.h>
 #include <86box/nvr.h>
-#include <86box/acpi.h>
 #include <86box/renderdefs.h>
 #include <86box/lpt.h>
 
@@ -1829,13 +1828,10 @@ MainWindow::refreshMediaMenu()
     status->setSoundMenu(ui->menuSound);
     status->refresh(ui->statusbar);
     ui->actionMCA_devices->setVisible(machine_has_bus(machine, MACHINE_BUS_MCA));
-    if (acpi_enabled) {
-        ui->actionACPI_Shutdown->setText(tr("ACP&I shutdown"));
-        ui->actionACPI_Shutdown->setToolTip(tr("ACPI shutdown"));
-    } else {
-        ui->actionACPI_Shutdown->setText((confirm_exit && confirm_exit_cmdl) ? tr("Power &off…") : tr("Power &off"));
-        ui->actionACPI_Shutdown->setToolTip(tr("Power off"));
-    }
+    /* PeepeeBox: the 4DPS is a 486 with APM and no ACPI, so this is always
+       a hard power off. */
+    ui->actionACPI_Shutdown->setText((confirm_exit && confirm_exit_cmdl) ? tr("Power &off…") : tr("Power &off"));
+    ui->actionACPI_Shutdown->setToolTip(tr("Power off"));
     ui->actionACPI_Shutdown->setEnabled(true);
     ui_update_force_interpreter();
 
@@ -2704,11 +2700,6 @@ MainWindow::on_actionPen_triggered()
 void
 MainWindow::on_actionACPI_Shutdown_triggered()
 {
-    if (acpi_enabled) {
-        acpi_pwrbut_pressed = 1;
-        return;
-    }
-
     if (confirm_exit && confirm_exit_cmdl) {
         QMessageBox questionbox(QMessageBox::Icon::Warning, EMU_NAME, tr("Powering off the emulated machine may cause data loss. Are you sure you want to continue?"), QMessageBox::Yes | QMessageBox::No, this);
         questionbox.setDefaultButton(QMessageBox::No);

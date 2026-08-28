@@ -35,7 +35,6 @@
 #include <86box/device.h>
 #include <86box/apm.h>
 #include <86box/nvr.h>
-#include <86box/acpi.h>
 #include <86box/plat_unused.h>
 
 enum {
@@ -261,7 +260,7 @@ pic_reset(void)
 {
     int is_at     = IS_AT(machine);
     int is_zenith = machine_has_flags(machine, MACHINE_ZENITH);
-    is_at         = is_at || (machines[machine].init == machine_xt_xi8088_init);
+    is_at         = is_at || (MACHINE_IS(machine_xt_xi8088_init));
 
     memset(&pic, 0, sizeof(pic_t));
     memset(&pic2, 0, sizeof(pic_t));
@@ -787,9 +786,6 @@ picint_common(uint16_t num, int level, int set, uint8_t *irq_state)
 
    if (!slaves)
        num &= 0x00ff;
-
-   if (num & 0x0100)
-       acpi_rtc_status = !!set;
 
    if (num) {
        if (set) {

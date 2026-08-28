@@ -61,7 +61,6 @@ static const device_t keyboard_internal_device = {
 static keyboard_t keyboard_devices[] = {
     // clang-format off
     { &keyboard_internal_device        },
-    { &keyboard_pc_xt_device           },
     { &keyboard_at_device              },
     { &keyboard_ax_device              },
     { &keyboard_ps2_device             },

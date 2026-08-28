@@ -1509,15 +1509,12 @@ dma_page_write(uint16_t addr, uint8_t val, UNUSED(void *priv))
     addr &= 0x0f;
     dmaregs[2][addr] = val;
 
-    if (machines[machine].init == machine_xt_ibm5550_init) {
-        if (addr >= 4)
-            addr = 8;
-    } else {
-        if (addr >= 8)
-            addr = convert[addr & 0x07] | 4;
-        else
-            addr = convert[addr & 0x07];
-    }
+    /* PeepeeBox: the IBM 5550's different page-register layout went with the
+       machine. */
+    if (addr >= 8)
+        addr = convert[addr & 0x07] | 4;
+    else
+        addr = convert[addr & 0x07];
 
     if (addr < 8) {
         dma[addr].page_l = val;
@@ -1540,47 +1537,19 @@ dma_page_read(uint16_t addr, UNUSED(void *priv))
     uint8_t convert[8] = CHANNELS;
     uint8_t ret        = 0xff;
 
-    if (((addr & 0xfffc) == 0x80) && (CS == 0xf000) &&
-        ((cpu_state.pc & 0xfffffff8) == 0x00007278) &&
-        (machines[machine].init == machine_at_wd76c10_init))  switch (addr) {
-        /* The Amstrad MegaPC Quadtel BIOS times a sequence of:
-               mov ax,di
-               div bx
-           And expects this value to be at least 0x06e0 for 20 MHz,
-           and at least 0x0898 for 25 MHz, everything below 0x06e0
-           is assumed to be 16 MHz. Given that for some reason, this
-           does not occur on 86Box, we have to work around it here,
-           we return 0x0580 for 16 MHz, because it logically follows
-           in the sequence (0x06e0 = 0x0898 * (20 / 25), and
-           0x0580 = 0x06e0 * (16 / 20)). */
-        case 0x0081:
-            if (cpu_busspeed >= 25000000)
-                ret = 0x98;
-            else if (cpu_busspeed >= 20000000)
-                ret = 0xe0;
-            else
-                ret = 0x80;
-            break;
-        case 0x0082:
-            if (cpu_busspeed >= 25000000)
-                ret = 0x08;
-            else if (cpu_busspeed >= 20000000)
-                ret = 0x06;
-            else
-                ret = 0x05;
-            break;
-    } else {
-        addr &= 0x0f;
-        ret = dmaregs[2][addr];
+    /* PeepeeBox: upstream returned cooked values here for the Amstrad MegaPC's
+       Quadtel BIOS, which times a divide loop to guess the bus speed.  That
+       machine (WD76C10) is gone, so this is the plain page-register read. */
+    addr &= 0x0f;
+    ret = dmaregs[2][addr];
 
-        if (addr >= 8)
-            addr = convert[addr & 0x07] | 4;
-        else
-            addr = convert[addr & 0x07];
+    if (addr >= 8)
+        addr = convert[addr & 0x07] | 4;
+    else
+        addr = convert[addr & 0x07];
 
-        if (addr < 8)
-            ret = dma[addr].page_l;
-    }
+    if (addr < 8)
+        ret = dma[addr].page_l;
 
     dma_log("DMA: [R] %04X = %02X\n", addr, ret);
 
@@ -2734,7 +2703,6 @@ dma_ps2_run(int channel)
                 dma_c->cc--;
             } while (dma_c->cc >= 0);
 
-            ps2_cache_clean();
             dma_stat |= (1 << channel);
             break;
 

@@ -70,8 +70,8 @@ machine_at_common_init(const machine_t *model)
     pic2_init();
     dma16_init();
 
-    if (model->init != machine_at_m290_init)
-        device_add(&port_6x_device);
+    /* PeepeeBox: upstream skipped this for the Olivetti M290 only. */
+    device_add(&port_6x_device);
 
     standalone_gameport_type = &gameport_device;
 }

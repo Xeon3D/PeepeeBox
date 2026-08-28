@@ -33,7 +33,6 @@
 #include <86box/device.h>
 #include <86box/dma.h>
 #include <86box/machine.h>
-#include <86box/m_at_t3100e.h>
 #include <86box/fdd.h>
 #include <86box/fdc.h>
 #include <86box/pci.h>
@@ -275,57 +274,7 @@ kbc_translate(atkbc_t *dev, uint8_t val)
     if (dev->sc_or == 0x80)
         dev->sc_or = 0;
 
-    /* Test for T3100E 'Fn' key (Right Alt / Right Ctrl) */
-    if ((dev != NULL) && (kbc_ven == KBC_VEN_TOSHIBA) &&
-        (keyboard_recv(0x138) || keyboard_recv(0x11d)))  switch (ret) {
-        case 0x4f:
-            t3100e_notify_set(0x01);
-            break; /* End */
-        case 0x50:
-            t3100e_notify_set(0x02);
-            break; /* Down */
-        case 0x51:
-            t3100e_notify_set(0x03);
-            break; /* PgDn */
-        case 0x52:
-            t3100e_notify_set(0x04);
-            break; /* Ins */
-        case 0x53:
-            t3100e_notify_set(0x05);
-            break; /* Del */
-        case 0x54:
-            t3100e_notify_set(0x06);
-            break; /* SysRQ */
-        case 0x45:
-            t3100e_notify_set(0x07);
-            break; /* NumLock */
-        case 0x46:
-            t3100e_notify_set(0x08);
-            break; /* ScrLock */
-        case 0x47:
-            t3100e_notify_set(0x09);
-            break; /* Home */
-        case 0x48:
-            t3100e_notify_set(0x0a);
-            break; /* Up */
-        case 0x49:
-            t3100e_notify_set(0x0b);
-            break; /* PgUp */
-        case 0x4a:
-            t3100e_notify_set(0x0c);
-            break; /* Keypad - */
-        case 0x4b:
-            t3100e_notify_set(0x0d);
-            break; /* Left */
-        case 0x4c:
-            t3100e_notify_set(0x0e);
-            break; /* KP 5 */
-        case 0x4d:
-            t3100e_notify_set(0x0f);
-            break; /* Right */
-        default:
-            break;
-    }
+    /* PeepeeBox: the Toshiba T3100e 'Fn' key translation went with that machine. */
 
     return ret;
 }
@@ -774,15 +723,15 @@ write_p2(atkbc_t *dev, uint8_t val)
             cpu_set_edx();
             flushmmucache();
             if ((kbc_ven == KBC_VEN_ALI) ||
-                (machines[machine].init == machine_at_spc7700plw_init) ||
-                (machines[machine].init == machine_at_pl4600c_init))
+                (MACHINE_IS(machine_at_spc7700plw_init)) ||
+                (MACHINE_IS(machine_at_pl4600c_init)))
                 smbase = 0x00030000;
 
             /* Yes, this is a hack, but until someone gets ahold of the real PCD-2L
                and can find out what they actually did to make it boot from FFFFF0
                correctly despite A20 being gated when the CPU is reset, this will
                have to do. */
-            if ((kbc_ven == KBC_VEN_SIEMENS) || (machines[machine].init == machine_at_acera1g_init))
+            if (kbc_ven == KBC_VEN_SIEMENS)
                 is486 ? loadcs(0xf000) : loadcs_2386(0xf000);
         }
     }
@@ -1154,7 +1103,7 @@ write_cmd_ami(void *priv, uint8_t val)
             kbc_at_log("ATkbc: set KBC lines P22-P23 (P2 bits 2-3) low\n");
             if (!(dev->flags & DEVICE_PCI))
                 write_p2(dev, dev->p2 & ~(4 << (val & 0x01)));
-            if (machines[machine].init == machine_at_sb486pv_init)
+            if (MACHINE_IS(machine_at_sb486pv_init))
                 kbc_delay_to_ob(dev, 0x03, 0, 0x00);
             else
                 kbc_delay_to_ob(dev, dev->ob, 0, 0x00);
@@ -2063,121 +2012,6 @@ write_cmd_quadtel(void *priv, uint8_t val)
 }
 
 static uint8_t
-write_cmd_data_toshiba(void *priv, uint8_t val)
-{
-    const atkbc_t *dev = (atkbc_t *) priv;
-    uint8_t        ret = 1;
-
-    switch (dev->command) {
-        default:
-            break;
-
-        case 0xb6: /* T3100e - set color/mono switch */
-            kbc_at_log("ATkbc: T3100e - set color/mono switch\n");
-            t3100e_mono_set(val);
-            ret = 0;
-            break;
-    }
-
-    return ret;
-}
-
-static uint8_t
-write_cmd_toshiba(void *priv, uint8_t val)
-{
-    atkbc_t *dev = (atkbc_t *) priv;
-    uint8_t  ret = 1;
-
-    switch (val) {
-        default:
-            break;
-
-        case 0xaf:
-            kbc_at_log("ATkbc: bad KBC command AF\n");
-            break;
-
-        case 0xb0: /* T3100e: Turbo on */
-            kbc_at_log("ATkbc: T3100e: Turbo on\n");
-            t3100e_turbo_set(1);
-            ret = 0;
-            break;
-
-        case 0xb1: /* T3100e: Turbo off */
-            kbc_at_log("ATkbc: T3100e: Turbo off\n");
-            t3100e_turbo_set(0);
-            ret = 0;
-            break;
-
-        case 0xb2: /* T3100e: Select external display */
-            kbc_at_log("ATkbc: T3100e: Select external display\n");
-            t3100e_display_set(0x00);
-            ret = 0;
-            break;
-
-        case 0xb3: /* T3100e: Select internal display */
-            kbc_at_log("ATkbc: T3100e: Select internal display\n");
-            t3100e_display_set(0x01);
-            ret = 0;
-            break;
-
-        case 0xb4: /* T3100e: Get configuration / status */
-            kbc_at_log("ATkbc: T3100e: Get configuration / status\n");
-            kbc_delay_to_ob(dev, t3100e_config_get(), 0, 0x00);
-            ret = 0;
-            break;
-
-        case 0xb5: /* T3100e: Get colour / mono byte */
-            kbc_at_log("ATkbc: T3100e: Get colour / mono byte\n");
-            kbc_delay_to_ob(dev, t3100e_mono_get(), 0, 0x00);
-            ret = 0;
-            break;
-
-        case 0xb6: /* T3100e: Set colour / mono byte */
-            kbc_at_log("ATkbc: T3100e: Set colour / mono byte\n");
-            dev->wantdata  = 1;
-            dev->state     = STATE_KBC_PARAM;
-            ret = 0;
-            break;
-
-        /* TODO: Toshiba KBC mode switching. */
-        case 0xb7: /* T3100e: Emulate PS/2 keyboard */
-        case 0xb8: /* T3100e: Emulate AT keyboard */
-            dev->misc_flags &= ~FLAG_PS2;
-            if (val == 0xb7) {
-                kbc_at_log("ATkbc: T3100e: Emulate PS/2 keyboard\n");
-                dev->misc_flags |= FLAG_PS2;
-                kbc_at_do_poll = kbc_at_poll_ps2;
-            } else {
-                kbc_at_log("ATkbc: T3100e: Emulate AT keyboard\n");
-                kbc_at_do_poll = kbc_at_poll_at;
-            }
-            ret = 0;
-            break;
-
-        case 0xbb: /* T3100e: Read 'Fn' key.
-                      Return it for right Ctrl and right Alt; on the real
-                      T3100e, these keystrokes could only be generated
-                      using 'Fn'. */
-            kbc_at_log("ATkbc: T3100e: Read 'Fn' key\n");
-            if (keyboard_recv(0xb8) || /* Right Alt */
-                keyboard_recv(0x9d))   /* Right Ctrl */
-                kbc_delay_to_ob(dev, 0x04, 0, 0x00);
-            else
-                kbc_delay_to_ob(dev, 0x00, 0, 0x00);
-            ret = 0;
-            break;
-
-        case 0xbc: /* T3100e: Reset Fn+Key notification */
-            kbc_at_log("ATkbc: T3100e: Reset Fn+Key notification\n");
-            t3100e_notify_set(0x00);
-            ret = 0;
-            break;
-    }
-
-    return ret;
-}
-
-static uint8_t
 read_p1(atkbc_t *dev)
 {
     /*
@@ -2259,10 +2093,7 @@ read_p1(atkbc_t *dev)
     uint8_t kbc_ven = dev->flags & KBC_VEN_MASK;
     uint8_t ret     = 0x00;
 
-    if ((dev != NULL) && (kbc_ven == KBC_VEN_TOSHIBA))
-        ret             = machine_get_p1(0xff);
-    else
-        ret             = machine_get_p1(dev->p1 & 0xfc) | (dev->p1 & 0x03);
+    ret = machine_get_p1(dev->p1 & 0xfc) | (dev->p1 & 0x03);
 
     dev->p1 = ((dev->p1 + 1) & 0x03) | (dev->p1 & 0xfc);
 
@@ -2607,7 +2438,7 @@ kbc_at_process_cmd(void *priv)
                 if (dev->ib == 0xbb)
                     break;
 
-                if (machines[machine].init == machine_at_pb410a_init)
+                if (MACHINE_IS(machine_at_pb410a_init))
                     cpu_override_dynarec = 1;
 
                 if (dev->misc_flags & FLAG_PS2) {
@@ -2739,7 +2570,7 @@ kbc_at_port_1_read(uint16_t port, void *priv)
      */
     if (!(dev->misc_flags & FLAG_PS2) && (dev->irq[0] != 0xffff))
         picintclevel(1 << dev->irq[0], &dev->irq_state);
-    if ((machines[machine].init == machine_at_pb410a_init) && (cpu_override_dynarec == 1))
+    if ((MACHINE_IS(machine_at_pb410a_init)) && (cpu_override_dynarec == 1))
         cpu_override_dynarec = 0;
 
     kbc_at_log("ATkbc: [%04X:%08X] read (%04X) = %02X\n",  CS, cpu_state.pc, port, ret);
@@ -3004,10 +2835,6 @@ kbc_at_init(const device_t *info)
             dev->write_cmd_ven = write_cmd_quadtel;
             break;
 
-        case KBC_VEN_TOSHIBA:
-            dev->write_cmd_data_ven = write_cmd_data_toshiba;
-            dev->write_cmd_ven = write_cmd_toshiba;
-            break;
     }
 
     dev->ami_is_amikey_2 = ((dev->ami_revision >= 'H') && (dev->ami_revision < 'X')) ||

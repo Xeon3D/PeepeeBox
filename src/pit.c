@@ -1887,7 +1887,7 @@ pit_set_clock(uint32_t clock)
 #endif
         }
         
-        if (machines[machine].init == machine_xt_ibm5550_init) {
+        if (MACHINE_IS(machine_xt_ibm5550_init)) {
             PITCONSTD = (cpuclock / 2000000.0); /* CLK input 2.0 MHz */
             PITCONST  = (uint64_t) (PITCONSTD * (double) (1ULL << 32));
         }
@@ -1901,7 +1901,7 @@ pit_set_clock(uint32_t clock)
 
     /* Delay for empty I/O ports. */
     io_delay = (int) round(((double) cpu_s->rspeed) / 3000000.0);
-    if (machines[machine].init == machine_xt_ibm5550_init)
+    if (MACHINE_IS(machine_xt_ibm5550_init))
         io_delay = 8;
 
 #ifdef WRONG_MDACONST

@@ -100,7 +100,6 @@
 #include <86box/version.h>
 #include <86box/gdbstub.h>
 #include <86box/machine_status.h>
-#include <86box/acpi.h>
 #include <86box/nv/vid_nv_rivatimer.h>
 #include <86box/vfio.h>
 
@@ -1755,9 +1754,6 @@ pc_reset_hard_init(void)
 
     /* Reset the IDE and SCSI presences */
     other_ide_present = other_scsi_present = 0;
-
-    /* Mark ACPI as unavailable */
-    acpi_enabled = 0;
 
     /* Reset the general machine support modules. */
     io_init();

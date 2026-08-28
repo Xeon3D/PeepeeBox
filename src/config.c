@@ -534,11 +534,8 @@ load_machine(void)
     cpu_f                    = NULL;
     p                        = ini_section_get_string(cat, "cpu_family", NULL);
     if (p) {
-        /* Migrate CPU family changes. */
-        if (machines[machine].init == machine_at_deskpro386_init)
-            cpu_f = cpu_get_family("i386dx_deskpro386");
-        else
-            cpu_f = cpu_get_family(p);
+        /* PeepeeBox: the Deskpro 386 CPU-family migration went with the machine. */
+        cpu_f = cpu_get_family(p);
 
         if (cpu_f && !cpu_family_is_eligible(cpu_f, machine)) /* only honor eligible families */
             cpu_f = NULL;
@@ -764,8 +761,6 @@ load_input_devices(void)
     p = ini_section_get_string(cat, "keyboard_type", NULL);
     if (p != NULL)
         keyboard_type = keyboard_get_from_internal_name(p);
-    else if (machines[machine].init == machine_xt_pc5086_init)
-        keyboard_type = KEYBOARD_TYPE_PC_XT;
     else if (machine_has_bus(machine, MACHINE_BUS_PS2_PORTS)) {
         if (machine_has_flags(machine, MACHINE_KEYBOARD_JIS))
             keyboard_type = KEYBOARD_TYPE_PS55;

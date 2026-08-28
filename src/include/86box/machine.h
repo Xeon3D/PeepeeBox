@@ -400,6 +400,16 @@ extern const machine_filter_t machine_chipsets[];
 extern const machine_t        machines[];
 extern int                    bios_only;
 extern int                    machine;
+
+/* PeepeeBox: PeepeeBox emulates exactly one machine, so every upstream test of
+   the form `machines[machine].init == machine_at_foo_init` -- "is this that
+   particular board?" -- is now a compile-time false.  Those tests live in shared
+   device code that PeepeeBox still needs, so rather than hand-deleting each one
+   and losing the record of what it was for, they collapse through this macro.
+   The board name is kept as the argument purely as documentation; the macro
+   never evaluates it. */
+#define MACHINE_IS(board) 0
+
 extern void *                 machine_snd;
 
 /* Core functions. */

@@ -409,10 +409,6 @@ cpu_is_eligible(const cpu_family_t *cpu_family, int cpu, int machine)
     if (cpu_override)
         return 1;
 
-    /* Cyrix 6x86MX on the NuPRO 592. */
-    if (((cpu_s->cyrix_id & 0xff00) == 0x0400) && (machine_s->init == machine_at_nupro592_init))
-        return 0;
-
     /* Check CPU blocklist. */
     if (machine_s->cpu.block) {
         i = 0;

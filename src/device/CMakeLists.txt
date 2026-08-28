@@ -44,10 +44,8 @@ add_library(dev OBJECT
     kbc_at.c
     kbc_at_dev.c
     kbc_ps2_m25.c
-    kbc_xt.c
     keyboard.c
     keyboard_at.c
-    keyboard_xt.c
     lpt.c
     lpt_ditto.c
     mouse.c
