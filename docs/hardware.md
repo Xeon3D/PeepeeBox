@@ -18,7 +18,7 @@ than a preference.
 
 Two things are optional, because service and installation media exist even though
 no cabinet shipped with a drive. Both are off by default and both are toggled
-from the **View** menu:
+from the **Tools** menu:
 
 - A generic **52× ATAPI CD-ROM** as secondary master.
 - A **3.5" 1.44 MB floppy** as drive A:.
@@ -69,7 +69,7 @@ be replayed.
 The 48-byte block carries the **version banner**, which the guest string-matches.
 It must equal `MAIN.SET["Version"]` for the image being run, which differs per
 image and per territory, so banner and territory stay selectable — that is what
-the **View → Dongle** dialog is for. Get it wrong and the game reports
+the **Tools → Dongle** dialog is for. Get it wrong and the game reports
 `Wrong Version`.
 
 ### 2. The Dallas DS1982 iButton, on a UART at I/O 0x268

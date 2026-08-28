@@ -44,13 +44,13 @@ extern "C" {
    why this is enforced at load time rather than left to the config file. */
 extern void photoplay_apply_profile(void);
 
-/* Whether the optional CD-ROM drive is attached.  Toggled from the View menu;
+/* Whether the optional CD-ROM drive is attached.  Toggled from the Tools menu;
    persisted in the [Photo Play] section of the config file. */
 extern int  photoplay_cdrom_enabled(void);
 extern void photoplay_set_cdrom_enabled(int enabled);
 
 /* Whether the optional 3.5" floppy drive is attached.  Same deal as the
-   CD-ROM: toggled from the View menu, persisted in [Photo Play]. */
+   CD-ROM: toggled from the Tools menu, persisted in [Photo Play]. */
 extern int  photoplay_fdd_enabled(void);
 extern void photoplay_set_fdd_enabled(int enabled);
 

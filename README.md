@@ -48,7 +48,7 @@ PeepeeBox.exe -P . -L 86box.log
 What you *can* change
 ---------------------
 
-Four things, all under the **View** menu:
+Four things, all under the **Tools** menu:
 
 | Item | What it does |
 |---|---|
