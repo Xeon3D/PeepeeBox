@@ -31,7 +31,6 @@
 #include "qt_rendererstack.hpp"
 #include "qt_renderercommon.hpp"
 
-#include "qt_cgasettingsdialog.hpp"
 
 #include "qt_defs.hpp"
 
@@ -385,15 +384,6 @@ MainWindow::MainWindow(QWidget *parent)
         ui->menuTablet_tool->menuAction()->setVisible(false);
 #endif
 
-        bool enable_comp_option = false;
-        for (int i = 0; i < MONITORS_NUM; i++) {
-            if (monitors[i].mon_composite) {
-                enable_comp_option = true;
-                break;
-            }
-        }
-
-        ui->actionCGA_composite_settings->setEnabled(enable_comp_option);
 
         if (mouse_input_mode == 0)
             ui->actionMouse->setChecked(1);
@@ -1868,15 +1858,6 @@ MainWindow::refreshMediaMenu()
     int int_ax_kbd = machine_has_flags(machine, MACHINE_KEYBOARD_JIS) && !machine_has_bus(machine, MACHINE_BUS_PS2_PORTS);
     kana_label->setVisible(ext_ax_kbd || int_ax_kbd);
 
-    bool enable_comp_option = false;
-    for (int i = 0; i < MONITORS_NUM; i++) {
-        if (monitors[i].mon_composite) {
-            enable_comp_option = true;
-            break;
-        }
-    }
-
-    ui->actionCGA_composite_settings->setEnabled(enable_comp_option);
 }
 
 void
@@ -2734,13 +2715,3 @@ MainWindow::on_actionACPI_Shutdown_triggered()
     on_actionExit_triggered();
 }
 
-void
-MainWindow::on_actionCGA_composite_settings_triggered()
-{
-    isNonPause = true;
-    CGASettingsDialog dialog;
-    dialog.setModal(true);
-    dialog.exec();
-    isNonPause = false;
-    config_save();
-}

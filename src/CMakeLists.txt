@@ -148,7 +148,6 @@ target_link_libraries(86Box
     mdsx_dll
     utils
     vid
-    voodoo
     plat
     ui
 )

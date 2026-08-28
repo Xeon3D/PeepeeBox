@@ -627,30 +627,8 @@ VMManagerSystem::setupVars()
     if (video_config.contains("da2") && (video_config["da2"].toInt() != 0))
         display_table[VMManager::Display::Name::Video].append(tr("IBM PS/55 Display Adapter Graphics").prepend(VMManagerDetailSection::sectionSeparator));
 
-    // Voodoo
-    QString voodoo_name = "";
-    if (video_config.contains("voodoo") && (video_config["voodoo"].toInt() != 0)) {
-        char temp[512];
-        device_get_name(&voodoo_device, 0, temp);
-        auto voodoo_config = getCategory(QString(temp));
-        int  voodoo_type   = voodoo_config["type"].toInt();
-        switch (voodoo_type) {
-            case 0:
-            default:
-                voodoo_name = tr("3Dfx Voodoo Graphics");
-                break;
-            case 1:
-                voodoo_name = tr("Obsidian SB50 + Amethyst (2 TMUs)");
-                break;
-            case 2:
-                voodoo_name = tr("3Dfx Voodoo 2");
-                break;
-        }
-
-        if (voodoo_config["sli"].toInt() == 1)
-            voodoo_name.append(" (SLI)");
-    }
-    display_table[VMManager::Display::Name::Voodoo] = voodoo_name;
+    /* PeepeeBox: no Voodoo in this build. */
+    display_table[VMManager::Display::Name::Voodoo] = "";
 
     // Drives
     // First the number of disks

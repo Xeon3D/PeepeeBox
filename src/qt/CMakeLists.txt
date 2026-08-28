@@ -265,9 +265,6 @@ add_library(ui STATIC
 
     qt_iconindicators.hpp
     qt_iconindicators.cpp
-    qt_cgasettingsdialog.hpp
-    qt_cgasettingsdialog.cpp
-    qt_cgasettingsdialog.ui
 )
 
 # Build the Qt ImGui backend separately so AUTOMOC skips it.
