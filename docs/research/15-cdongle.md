@@ -346,6 +346,31 @@ The other query on the wire needs nothing: the one-byte read is the parallel-por
 autodetect at `0x0BAD`, which only checks whether the transport worked and never
 looks at the value.
 
+## Two read routines, not one
+
+Answering the query exposed a transport assumption the menu's path never tested.
+**`0xFCA` is a twin of `0x0F6F`** — same structure, same hundred-poll ready wait,
+same handshake, same bit loop — except that it claims the waiting reply by writing
+**`8F`** where `0x0F6F` writes **`CF`**. `0x0F2B` reaches it, and the games do.
+
+Keying on `CF` therefore strands it: it writes `8F` two hundred times against a
+line held high and gives up. Keying on a *bit* does not work either — a frame's
+own `C?` write is bit-for-bit indistinguishable from `CF`, and `8?` from `8F`.
+What identifies the claim is **where it sits**: immediately after a byte's `D?`
+trailer, with no frame under way. Earlier code survived only because no payload
+byte happened to put `CF` in that position.
+
+Two smaller rules fall out with it:
+
+- **A delivered reply must let the line go.** ACK returns to echoing bit 5 of the
+  last write instead of staying high; held high, the host never leaves its
+  wind-down loop.
+- **The tail of a transaction can form a valid-looking frame.** Decoding has to
+  stop once the reply is out and resume at the next reset pulse train.
+
+With those, all six transactions of a boot complete: the autodetect, and the
+licence query over each of the two read routines.
+
 ## Method note
 
 The two `MENU.EXE` patches used to get past the check and reach the games — neutering the
