@@ -12,7 +12,11 @@
 #   * macOS builds arm64 with NEW_DYNAREC on, because the CI matrix excludes the
 #     old dynarec on arm64.
 #
-# Releases are tagged build-<run number>, so re-running never collides.
+# Releases are tagged build-<run number>, so re-running never collides -- unless the
+# commit carries a v<x.y> tag, in which case that tag names the release instead and
+# it is titled "Release <x.y>".  To cut one, push the tag along with the branch:
+#
+#     git tag -a v1.1 -m "…" && git push origin main v1.1
 
 name: Release
 
@@ -203,7 +207,11 @@ jobs:
     needs: [windows, linux, macos]
     runs-on: ubuntu-latest
     steps:
+      # Full history and tags, so the step below can see whether this commit was
+      # tagged as a named release.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Collect artifacts
         uses: actions/download-artifact@v4
@@ -216,10 +224,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="build-${{ github.run_number }}"
           subject="$(git log -1 --pretty=%s)"
+
+          # A commit carrying a v<x.y> tag is a named release; anything else is
+          # just the next automatic build.  Push the tag together with the branch
+          # (git push origin main v1.1) and this picks it up.
+          version="$(git tag --points-at HEAD | grep -E '^v[0-9]' | sort -V | tail -1 || true)"
+          if [ -n "$version" ]; then
+            tag="$version"
+            title="Release ${version#v}"
+            headline="PeepeeBox $title — \`${GITHUB_SHA::7}\`"
+          else
+            tag="build-${{ github.run_number }}"
+            title="PeepeeBox $tag"
+            headline="Automatic build of \`${GITHUB_SHA::7}\` — $subject"
+          fi
+
           {
-            echo "Automatic build of \`${GITHUB_SHA::7}\` — $subject"
+            echo "$headline"
             echo
             echo "Each archive contains the emulator, the two ROM images it needs, and"
             echo "the README. Drop your \`HardDisk.img\` in beside the executable and run it."
@@ -231,6 +253,6 @@ jobs:
             echo "| macOS arm64 | Qt 5, new dynarec; unsigned, so Gatekeeper will object |"
           } > notes.md
           gh release create "$tag" assets/*.zip \
-              --title "PeepeeBox $tag" \
+              --title "$title" \
               --notes-file notes.md \
               --latest
