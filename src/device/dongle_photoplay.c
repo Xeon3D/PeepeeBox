@@ -857,7 +857,8 @@ pp_init(const device_t *info)
     pp_t      *dev = calloc(1, sizeof(pp_t));
     const int  bi  = device_get_config_int("banner");
     const int  ti  = device_get_config_int("territory");
-    char       banner[31];
+    char       banner[31];   /* the record's field: 30 characters plus the NUL */
+    char       full[96];     /* composed here first, so overlong is detectable */
     char       img_banner[64];
     char       img_terr[16];
     char       img_rel[64];
@@ -883,14 +884,31 @@ pp_init(const device_t *info)
             *paren = 0;
     }
 
-    const char *rel = (have_img && (bi < 0) && img_rel[0])
-                    ? img_rel
-                    : pp_banners[(bi >= 0 && bi < PP_NBANNERS) ? bi : 0];
-    const char *ter = (have_img && (ti < 0) && img_terr[0])
-                    ? img_terr
-                    : pp_terrs[(ti >= 0 && ti < PP_NTERRS) ? ti : 0];
+    if (have_img && (bi < 0) && (ti < 0) && img_banner[0]) {
+        /* Both fields on auto: hand back MAIN.SET's string exactly as it reads.
+           Rebuilding it from our own release and territory lists would only ever be
+           as good as those lists, and the guest does an exact compare -- so a
+           release or a territory this build has never heard of still gets a correct
+           dongle this way. */
+        snprintf(full, sizeof(full), "%s", img_banner);
+    } else {
+        /* At least one field was pinned by hand, so compose: keep whichever half is
+           still on auto and substitute the other. */
+        const char *rel = (have_img && (bi < 0) && img_rel[0])
+                        ? img_rel
+                        : pp_banners[(bi >= 0 && bi < PP_NBANNERS) ? bi : 0];
+        const char *ter = (have_img && (ti < 0) && img_terr[0])
+                        ? img_terr
+                        : pp_terrs[(ti >= 0 && ti < PP_NTERRS) ? ti : 0];
 
-    snprintf(banner, sizeof(banner), "%s (%s)", rel, ter);
+        snprintf(full, sizeof(full), "%s (%s)", rel, ter);
+    }
+
+    /* No release uses a banner longer than 30 characters, which is exactly what the
+       record has room for -- a banner and eight dwords inside 62 bytes.  The copy is
+       bounded regardless, so the compiler can see it is safe without being told. */
+    strncpy(banner, full, sizeof(banner) - 1);
+    banner[sizeof(banner) - 1] = 0;
 
     /* Lay the record out the way the hardware does. */
     const size_t blen = strlen(banner);
