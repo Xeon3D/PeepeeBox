@@ -18,6 +18,7 @@ typedef struct dev_status_empty_t {
 } dev_status_empty_t;
 
 typedef struct machine_status_t {
+    dev_status_empty_active_t fdd[FDD_NUM];
     dev_status_empty_active_t cdrom[CDROM_NUM];
     dev_status_active_t       hdd[HDD_BUS_USB];
     dev_status_empty_active_t net[NET_CARD_MAX];

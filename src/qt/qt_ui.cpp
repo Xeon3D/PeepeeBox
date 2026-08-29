@@ -45,6 +45,7 @@ extern "C" {
 #include <86box/hdc.h>
 #include <86box/scsi.h>
 #include <86box/scsi_device.h>
+#include <86box/fdd.h>
 #include <86box/cdrom.h>
 #include <86box/hdd.h>
 #include <86box/thread.h>
@@ -265,6 +266,9 @@ ui_sb_update_icon_wp(int tag, int state)
     switch (category) {
         default:
             break;
+        case SB_FLOPPY:
+            machine_status.fdd[item].write_prot = state > 0 ? true : false;
+            break;
     }
 
     if (main_window != nullptr)
@@ -280,6 +284,9 @@ ui_sb_update_icon_state(int tag, int state)
 
     switch (category) {
         default:
+            break;
+        case SB_FLOPPY:
+            machine_status.fdd[item].empty = state > 0 ? true : false;
             break;
         case SB_CDROM:
             machine_status.cdrom[item].empty = state > 0 ? true : false;
@@ -307,6 +314,10 @@ ui_sb_update_icon(int tag, int active)
 
     switch (category) {
         default:
+            break;
+        case SB_FLOPPY:
+            machine_status.fdd[item].active = active > 0 ? true : false;
+            break;
         case SB_CDROM:
             machine_status.cdrom[item].active = active > 0 ? true : false;
             break;
@@ -331,6 +342,10 @@ ui_sb_update_icon_write(int tag, int write)
 
     switch (category) {
         default:
+            break;
+        case SB_FLOPPY:
+            machine_status.fdd[item].write_active = write > 0 ? true : false;
+            break;
         case SB_CDROM:
             machine_status.cdrom[item].write_active = write > 0 ? true : false;
             break;

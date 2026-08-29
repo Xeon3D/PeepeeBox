@@ -21,6 +21,7 @@ extern "C" {
 #include <86box/hdd.h>
 #include <86box/timer.h>
 #include <86box/device.h>
+#include <86box/fdd.h>
 #include <86box/cdrom.h>
 #include <86box/cdrom_interface.h>
 #include <86box/hdc.h>
@@ -97,6 +98,7 @@ struct PixmapSetEmptyActive {
     void    load(const QIcon &icon);
 };
 struct Pixmaps {
+    PixmapSetEmptyActive floppy_35;
     PixmapSetEmptyActive cdrom;
     PixmapSetEmptyActive dvdrom;
     PixmapSetEmptyActive zip;
@@ -309,6 +311,7 @@ struct MachineStatus::States {
 
     States(QObject *parent)
     {
+        pixmaps.floppy_35.load(QIcon(":/settings/qt/icons/floppy_35.ico"));
         pixmaps.cdrom.load(QIcon(":/settings/qt/icons/cdrom.ico"));
         pixmaps.dvdrom.load(QIcon(":/settings/qt/icons/dvdrom.ico"));
         pixmaps.zip.load(QIcon(":/settings/qt/icons/zip.ico"));
@@ -319,6 +322,9 @@ struct MachineStatus::States {
         pixmaps.dynarec.normal                          = QIcon(":/menuicons/qt/icons/recompiler.ico").pixmap(pixmap_size);
         pixmaps.dynarec.disabled                        = QIcon(":/menuicons/qt/icons/interpreter.ico").pixmap(pixmap_size);
 
+        for (auto &f : fdd) {
+            f.pixmaps = &pixmaps.floppy_35;
+        }
         for (auto &c : cdrom) {
             c.pixmaps = &pixmaps.cdrom;
         }
@@ -330,6 +336,7 @@ struct MachineStatus::States {
         }
     }
 
+    std::array<StateEmptyActive, FDD_NUM>      fdd;
     std::array<StateEmptyActive, CDROM_NUM>    cdrom;
     std::array<StateActive, HDD_BUS_USB>       hdds;
     std::array<StateEmptyActive, NET_CARD_MAX> net;
@@ -423,6 +430,10 @@ MachineStatus::refreshEmptyIcons()
     if (!sbar_initialized)
         return;
 
+    for (size_t i = 0; i < FDD_NUM; ++i) {
+        d->fdd[i].setEmpty(machine_status.fdd[i].empty);
+        d->fdd[i].setWriteProtected(machine_status.fdd[i].write_prot);
+    }
     for (size_t i = 0; i < CDROM_NUM; ++i)
         d->cdrom[i].setEmpty(machine_status.cdrom[i].empty);
 
@@ -447,6 +458,10 @@ MachineStatus::refreshIcons()
         return;
 
 
+    for (size_t i = 0; i < FDD_NUM; ++i) {
+        d->fdd[i].setActive(machine_status.fdd[i].active);
+        d->fdd[i].setWriteActive(machine_status.fdd[i].write_active);
+    }
     for (size_t i = 0; i < CDROM_NUM; ++i) {
         d->cdrom[i].setActive(machine_status.cdrom[i].active);
         d->cdrom[i].setWriteActive(machine_status.cdrom[i].write_active);
@@ -478,6 +493,10 @@ MachineStatus::refreshIcons()
 void
 MachineStatus::clearActivity()
 {
+    for (auto &fdd : d->fdd) {
+        fdd.setActive(false);
+        fdd.setWriteActive(false);
+    }
     for (auto &cdrom : d->cdrom) {
         cdrom.setActive(false);
         cdrom.setWriteActive(false);
@@ -506,6 +525,9 @@ MachineStatus::refresh(QStatusBar *sbar)
     int c_atapi = hdd_count(HDD_BUS_ATAPI);
     int c_scsi  = hdd_count(HDD_BUS_SCSI);
 
+    for (size_t i = 0; i < FDD_NUM; i++) {
+        sbar->removeWidget(d->fdd[i].label.get());
+    }
     for (size_t i = 0; i < CDROM_NUM; i++) {
         sbar->removeWidget(d->cdrom[i].label.get());
     }
@@ -519,6 +541,32 @@ MachineStatus::refresh(QStatusBar *sbar)
     sbar->removeWidget(d->sound.get());
 
 
+
+    /* PeepeeBox: one drive, and it is always 3.5". */
+    if (fdd_get_type(0)) {
+        const int i = 0;
+        d->fdd[i].pixmaps = &d->pixmaps.floppy_35;
+        d->fdd[i].label   = std::make_unique<ClickableLabel>();
+        d->fdd[i].setEmpty(QString(floppyfns[i]).isEmpty());
+        if (QString(floppyfns[i]).isEmpty())
+            d->fdd[i].setWriteProtected(false);
+        else if (QString(floppyfns[i]).left(5) == "wp://")
+            d->fdd[i].setWriteProtected(true);
+        else
+            d->fdd[i].setWriteProtected(ui_writeprot[i]);
+        d->fdd[i].setActive(false);
+        d->fdd[i].setWriteActive(false);
+        d->fdd[i].refresh();
+        connect((ClickableLabel *) d->fdd[i].label.get(), &ClickableLabel::clicked, [i](QPoint pos) {
+            MediaMenu::ptr->floppyMenus[i]->popup(pos - QPoint(0, MediaMenu::ptr->floppyMenus[i]->sizeHint().height()));
+        });
+        connect((ClickableLabel *) d->fdd[i].label.get(), &ClickableLabel::dropped, [i](QString str) {
+            MediaMenu::ptr->floppyMount(i, str, false);
+        });
+        d->fdd[i].label->setToolTip(MediaMenu::ptr->floppyMenus[i]->toolTip());
+        d->fdd[i].label->setAcceptDrops(true);
+        sbar->addWidget(d->fdd[i].label.get());
+    }
 
     iterateCDROM([this, sbar](int i) {
         int t = cdrom[i].type;
@@ -711,6 +759,10 @@ MachineStatus::updateTip(int tag)
     if (!MediaMenu::ptr)
         return;
     switch (category) {
+        case SB_FLOPPY:
+            if (d->fdd[item].label && MediaMenu::ptr->floppyMenus[item])
+                d->fdd[item].label->setToolTip(MediaMenu::ptr->floppyMenus[item]->toolTip());
+            break;
         case SB_CDROM:
             if (d->cdrom[item].label && MediaMenu::ptr->cdromMenus[item])
                 d->cdrom[item].label->setToolTip(MediaMenu::ptr->cdromMenus[item]->toolTip());

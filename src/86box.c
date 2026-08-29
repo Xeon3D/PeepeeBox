@@ -61,6 +61,7 @@
 #include <86box/random.h>
 #include <86box/nvr.h>
 #include <86box/machine.h>
+#include <86box/photoplay.h>
 #include <86box/bugger.h>
 #include <86box/postcard.h>
 #include <86box/unittester.h>
@@ -1717,6 +1718,15 @@ pc_reset_hard_close(void)
 void
 pc_reset_hard_init(void)
 {
+    /* PeepeeBox: re-stamp the Photo Play profile.  It used to run only at the
+       end of config_load(), which meant anything that changed the machine
+       without restarting the program -- attaching the CD-ROM or the floppy from
+       the Tools menu -- wrote the setting, reset the machine, and then rebuilt
+       it from globals the toggle had never touched.  The drive did not appear
+       until the next launch.  Applying it here makes the profile authoritative
+       for every hard reset, which is what it was always meant to be. */
+    photoplay_apply_profile();
+
     /*
      * First, we reset the modules that are not part of
      * the actual machine, but which support some of the

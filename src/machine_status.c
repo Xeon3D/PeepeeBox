@@ -29,6 +29,12 @@ machine_status_t machine_status;
 void
 machine_status_init(void)
 {
+    for (size_t i = 0; i < FDD_NUM; ++i) {
+        machine_status.fdd[i].empty        = (strlen(floppyfns[i]) == 0);
+        machine_status.fdd[i].active       = false;
+        machine_status.fdd[i].write_active = false;
+        machine_status.fdd[i].write_prot   = !!ui_writeprot[i];
+    }
     for (size_t i = 0; i < CDROM_NUM; ++i) {
         machine_status.cdrom[i].empty        = (strlen(cdrom[i].image_path) == 0);
         machine_status.cdrom[i].active       = false;
