@@ -1,0 +1,234 @@
+# Build PeepeeBox for Windows, Linux and macOS and publish the three artifacts as
+# a GitHub Release, one per build.
+#
+# The per-OS jobs deliberately mirror the three CMake (…) CI workflows, which are
+# known to build this tree green -- same dependency lists, same configure flags.
+# The differences are on purpose:
+#
+#   * preset `regular` (Release, DEV_BRANCH off) rather than the debug/dev presets
+#     CI uses, because this is what people actually run;
+#   * roms/ is staged alongside the binary so the download is runnable as-is --
+#     PeepeeBox needs exactly two ROM images and they live in this repository;
+#   * macOS builds arm64 with NEW_DYNAREC on, because the CI matrix excludes the
+#     old dynarec on arm64.
+#
+# Releases are tagged build-<run number>, so re-running never collides.
+
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - src/**
+      - cmake/**
+      - roms/**
+      - "**/CMakeLists.txt"
+      - CMakePresets.json
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+
+  windows:
+    name: Windows (x64)
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Prepare MSYS2 environment
+        uses: msys2/setup-msys2@v2
+        with:
+          release: true
+          update: true
+          msystem: UCRT64
+          pacboy: >-
+            ninja:p
+            cmake:p
+            gcc:p
+            pkgconf:p
+            freetype:p
+            sdl3:p
+            zlib:p
+            libpng:p
+            openal:p
+            rtmidi:p
+            libslirp:p
+            fluidsynth:p
+            libserialport:p
+            qt5-static:p
+            vulkan-headers:p
+            llvm-openmp:p
+            zstd:p
+            zip:p
+
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build --preset regular -D NEW_DYNAREC=off -D QT=on
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Package
+        run: cmake --install build
+
+      - name: Stage
+        run: |
+          mkdir -p dist/PeepeeBox
+          cp -r build/artifacts/* dist/PeepeeBox/
+          cp -r roms dist/PeepeeBox/
+          cp README.md dist/PeepeeBox/
+          cd dist && zip -r ../PeepeeBox-windows-x64.zip PeepeeBox
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PeepeeBox-windows-x64
+          path: PeepeeBox-windows-x64.zip
+
+  linux:
+    name: Linux (x86_64)
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Install dependencies
+        run: >-
+          sudo apt update && sudo apt install -y
+          build-essential
+          ninja-build
+          libfreetype-dev
+          libgles2-mesa-dev
+          libsdl3-dev
+          libpng-dev
+          libc6-dev
+          librtmidi-dev
+          libopenal-dev
+          libslirp-dev
+          libfluidsynth-dev
+          libvdeplug-dev
+          libserialport-dev
+          libzstd-dev
+          zip
+          qtbase5-dev
+          qtbase5-private-dev
+          qttools5-dev
+          qttranslations5-l10n
+          libevdev-dev
+          libxkbcommon-x11-dev
+
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build --preset regular
+          -D NEW_DYNAREC=off -D QT=on -D USE_QT6=off
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Package
+        run: cmake --install build
+
+      - name: Stage
+        run: |
+          mkdir -p dist/PeepeeBox
+          cp -r build/artifacts/* dist/PeepeeBox/
+          cp -r roms dist/PeepeeBox/
+          cp README.md dist/PeepeeBox/
+          cd dist && zip -r ../PeepeeBox-linux-x86_64.zip PeepeeBox
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PeepeeBox-linux-x86_64
+          path: PeepeeBox-linux-x86_64.zip
+
+  macos:
+    name: macOS (arm64)
+    runs-on: macos-14
+    steps:
+      - name: Install dependencies
+        run: >-
+          brew install
+          sdl3
+          rtmidi
+          openal-soft
+          fluidsynth
+          libslirp
+          vde
+          libserialport
+          vulkan-headers
+          zstd
+          qt@5
+
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build --preset regular
+          -D NEW_DYNAREC=on
+          -D QT=on
+          -D Qt5_ROOT=$(brew --prefix qt@5)
+          -D Qt5LinguistTools_ROOT=$(brew --prefix qt@5)
+          -D OpenAL_ROOT=$(brew --prefix openal-soft)
+          -D LIBSERIALPORT_ROOT=$(brew --prefix libserialport)
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Package
+        run: cmake --install build
+
+      - name: Stage
+        run: |
+          mkdir -p dist/PeepeeBox
+          cp -R build/artifacts/* dist/PeepeeBox/
+          cp -R roms dist/PeepeeBox/
+          cp README.md dist/PeepeeBox/
+          # -y so the .app bundle's symlinks survive the archive
+          cd dist && zip -ry ../PeepeeBox-macos-arm64.zip PeepeeBox
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PeepeeBox-macos-arm64
+          path: PeepeeBox-macos-arm64.zip
+
+  release:
+    name: Publish release
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Collect artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="build-${{ github.run_number }}"
+          subject="$(git log -1 --pretty=%s)"
+          {
+            echo "Automatic build of \`${GITHUB_SHA::7}\` — $subject"
+            echo
+            echo "Each archive contains the emulator, the two ROM images it needs, and"
+            echo "the README. Drop your \`HardDisk.img\` in beside the executable and run it."
+            echo
+            echo "| Platform | Notes |"
+            echo "|---|---|"
+            echo "| Windows x64 | Qt 5, statically linked |"
+            echo "| Linux x86_64 | Qt 5; needs the usual runtime libraries |"
+            echo "| macOS arm64 | Qt 5, new dynarec; unsigned, so Gatekeeper will object |"
+          } > notes.md
+          gh release create "$tag" assets/*.zip \
+              --title "PeepeeBox $tag" \
+              --notes-file notes.md \
+              --latest

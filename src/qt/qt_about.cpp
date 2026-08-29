@@ -52,12 +52,15 @@ About::About(QWidget *parent)
     setText(QString("<b>%1 v%2%3</b>").arg(EMU_NAME, EMU_VERSION_FULL, versioninfo));
     setInformativeText(QString("<b>%1</b><br><br>%2")
                            .arg(tr("%1 is a fork of %2, adding emulation of the funworld "
-                                   "Photo Play / I.G.O. protection hardware: the HASP "
+                                   "Photo Play / I.G.O. protection hardware: the "
                                    "parallel-port dongle and the Dallas DS1982 iButton.")
                                     .arg(EMU_NAME, EMU_UPSTREAM_NAME),
                                 tr("All credit for the emulator itself belongs to the %1 "
                                    "project and its authors.")
                                     .arg(EMU_UPSTREAM_NAME))
+                       + "<br><br>"
+                       + tr("This fork was entirely vibecoded by Claude, steered by the "
+                            "HUEG PP team.")
                        + "<br><br>"
                        + tr("An emulator of old computers\n\nAuthors: Miran Grča (OBattler), RichardG867, Jasmine Iwanek, TC1995, coldbrewed, Teemu Korhonen (Manaatti), Joakim L. Gilje, Adrien Moulin (elyosh), Daniel Balsom (gloriouscow), Cacodemon345, Fred N. van Kempen (waltje), Tiseno100, reenigne, and others.\n\nWith previous core contributions from Sarah Walker, leilei, JohnElliott, greatpsycho, and others.\n\nReleased under the GNU General Public License version 2 or later. See LICENSE for more information.").replace("\n", "<br>"));
     setWindowTitle(tr("About %1").arg(EMU_NAME));

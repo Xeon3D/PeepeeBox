@@ -260,6 +260,9 @@ static void mount_path(const char *path)
     osd_log_push(msg);
     pclog_toggle_suppr();
     switch (current_view) {
+        case VIEW_FILE_FLOPPY:
+            floppy_mount(0, (char *) path, 0);
+            break;
         case VIEW_FILE_CD:
         case VIEW_CD_FOLDER:
             cdrom_mount(0, (char *) path);
@@ -325,9 +328,6 @@ enum OsdAction {
     ACT_NONE,
     ACT_EJECT_FLOPPY,
     ACT_EJECT_CD,
-    ACT_EJECT_RDISK,
-    ACT_EJECT_CART,
-    ACT_EJECT_MO,
     ACT_HARDRESET,
     ACT_FULLSCREEN,
     ACT_EXIT,
@@ -358,9 +358,11 @@ isFirstCdromAvailable(void)
 }
 
 static const MenuItem menu_items[] = {
+    { "Load Floppy Image...",      ACT_NONE,         VIEW_FILE_FLOPPY, [] () -> bool { return fdd_get_type(0) != 0; }            },
     { "Load CD-ROM Image...",      ACT_NONE,         VIEW_FILE_CD,     isFirstCdromAvailable                                     },
     { "Mount CD Folder (VISO)...", ACT_NONE,         VIEW_CD_FOLDER,   isFirstCdromAvailable                                     },
     { nullptr, ACT_NONE, VIEW_MENU }, /* separator */
+    { "Eject Floppy",              ACT_EJECT_FLOPPY, VIEW_MENU, [] () -> bool { return fdd_get_type(0) && floppyfns[0][0] != 0; }                        },
     { "Eject CD-ROM",              ACT_EJECT_CD,     VIEW_MENU, [] () -> bool { return isFirstCdromAvailable() && cdrom[0].image_path[0] != 0; }         },
     { nullptr, ACT_NONE, VIEW_MENU }, /* separator */
     { "Show Log",                  ACT_NONE,         VIEW_LOG,  [] () -> bool { return true; }  },
@@ -448,6 +450,7 @@ static void activate_menu_item(int idx, bool *close_osd)
     const MenuItem &mi = menu_items[idx];
 
     switch (mi.action) {
+        case ACT_EJECT_FLOPPY: floppy_eject(0);    return;
         case ACT_EJECT_CD:     cdrom_eject(0);     return;
         case ACT_HARDRESET:    pc_reset_hard();    *close_osd = true; return;
         case ACT_FULLSCREEN:
