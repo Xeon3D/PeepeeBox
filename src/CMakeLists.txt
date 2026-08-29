@@ -252,7 +252,11 @@ elseif(APPLE AND NOT QT)
     install(CODE "
         include(BundleUtilities)
         get_filename_component(CMAKE_INSTALL_PREFIX_ABSOLUTE \${CMAKE_INSTALL_PREFIX} ABSOLUTE)
-        fixup_bundle(\"\${CMAKE_INSTALL_PREFIX_ABSOLUTE}/86Box.app\" \"\" \"\")"
+        # PeepeeBox: the bundle is named after the target's OUTPUT_NAME, so this
+        # cannot stay hardcoded to 86Box.app -- packaging failed with
+        # "fixup_bundle: not a valid bundle" because no such bundle is produced.
+        # The Windows branch above already derives the name; this now matches.
+        fixup_bundle(\"\${CMAKE_INSTALL_PREFIX_ABSOLUTE}/$<TARGET_FILE_BASE_NAME:86Box>.app\" \"\" \"\")"
     COMPONENT Runtime)
 endif()
 
