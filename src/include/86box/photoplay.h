@@ -54,6 +54,11 @@ extern void photoplay_set_cdrom_enabled(int enabled);
 extern int  photoplay_fdd_enabled(void);
 extern void photoplay_set_fdd_enabled(int enabled);
 
+/* Work out which release and territory a disk image is, from its own
+   \FOTO\SETTINGS\MAIN.SET.  Returns 1 and fills `out` with something like
+   "IGO 5 PT" on success, 0 if the image is missing, foreign or unreadable. */
+extern int  photoplay_identify(const char *img_path, char *out, size_t outsz);
+
 #ifdef __cplusplus
 }
 #endif

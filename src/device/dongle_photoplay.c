@@ -155,15 +155,41 @@ static const uint32_t pp_dwords[8] = {
 #define PP_BANNER_1999 16
 #define PP_BANNER_KEYN 30
 
-/* The selectable banners.  The value is an index into pp_banners[]. */
+/* The releases, and the banner each one's MAIN.SET carries.  Where an image was
+   available the banner was read out of it directly (Docs/08); the rest follow the
+   year pattern those establish.  The guest string-matches this, so it has to be
+   right -- and note 2005 is "Version 2005B" on both IGO 5 images to hand, which
+   also satisfies a plain "Version 2005" test because that is a prefix of it.
+
+   "IGO 1" and "Photo Play 2001" are the same release under two names: the
+   IGO <n> -> "Version 200<n>" mapping is confirmed for 2, 3 and 5, so there is no
+   separate banner for a first I.G.O.  An IGO Italy build runs on the IGO 8 IT
+   dongle, so it is Version 2008 with the territory set to IT rather than an
+   entry of its own. */
 static const char *pp_banners[] = {
-    "Version 99",   "Version 2000", "Version 2001", "Version 2002",
-    "Version 2003", "Version 2004", "Version 2005B", "Version 2006",
-    "Version 2007", "Version 2008"
+    "Version 99",    /* Photo Play 99                     - read from an image */
+    "Version 2000",  /* Photo Play 2000                   - read from an image */
+    "Version 2001",  /* Photo Play 2001 / IGO 1                                */
+    "Version 2002",  /* IGO 2                             - read from an image */
+    "Version 2003",  /* IGO 3                             - read from an image */
+    "Version 2004",  /* IGO 4                                                  */
+    "Version 2005B", /* IGO 5                             - read from an image */
+    "Version 2006",  /* IGO 6                                                  */
+    "Version 2007",  /* IGO 7                                                  */
+    "Version 2008"   /* IGO 8, and IGO Italy with territory IT                 */
 };
 #define PP_NBANNERS ((int) (sizeof(pp_banners) / sizeof(pp_banners[0])))
 
-static const char *pp_terrs[] = { "AT", "DE", "ES", "IT", "NL", "PT", "SE", "ZA", "GB", "FR" };
+/* Territories, sorted by code.  ES and SP are both here on purpose: the Spanish
+   dongles dumped for this project carry "Version 99 (SP)" in their EEPROM, while
+   the 2003 Spanish image's MAIN.SET says "Version 2003 (ES)".  funworld changed
+   the code between generations, and the banner has to match the image exactly,
+   so both have to be offered.  SE is included because an IGO 3 image reads
+   "Version 2003 (SE)". */
+static const char *pp_terrs[] = {
+    "AT", "BE", "CY", "CZ", "DE", "ES", "FR",
+    "GR", "IT", "NL", "PT", "SE", "SP"
+};
 #define PP_NTERRS ((int) (sizeof(pp_terrs) / sizeof(pp_terrs[0])))
 
 #ifdef ENABLE_DONGLE_PHOTOPLAY_LOG
@@ -921,17 +947,17 @@ static const device_config_t pp_config[] = {
         .file_filter    = NULL,
         .spinner        = { 0 },
         .selection      = {
-            { .description = "Photo Play 1999",  .value = 0 },
-            { .description = "Photo Play 2000",  .value = 1 },
-            { .description = "Photo Play 2001",  .value = 2 },
-            { .description = "I.G.O. 2002",      .value = 3 },
-            { .description = "I.G.O. 2003",      .value = 4 },
-            { .description = "I.G.O. 2004",      .value = 5 },
-            { .description = "I.G.O. 2005B",     .value = 6 },
-            { .description = "I.G.O. 2006",      .value = 7 },
-            { .description = "I.G.O. 2007",      .value = 8 },
-            { .description = "I.G.O. 2008",      .value = 9 },
-            { .description = ""                             }
+            { .description = "Photo Play 1999",        .value = 0 },
+            { .description = "Photo Play 2000",        .value = 1 },
+            { .description = "Photo Play 2001 / IGO 1", .value = 2 },
+            { .description = "IGO 2",                  .value = 3 },
+            { .description = "IGO 3",                  .value = 4 },
+            { .description = "IGO 4",                  .value = 5 },
+            { .description = "IGO 5",                  .value = 6 },
+            { .description = "IGO 6",                  .value = 7 },
+            { .description = "IGO 7",                  .value = 8 },
+            { .description = "IGO 8 / IGO Italy",      .value = 9 },
+            { .description = ""                                   }
         },
         .bios           = { { 0 } }
     },
@@ -944,17 +970,20 @@ static const device_config_t pp_config[] = {
         .file_filter    = NULL,
         .spinner        = { 0 },
         .selection      = {
-            { .description = "AT - Austria",       .value = 0 },
-            { .description = "DE - Germany",       .value = 1 },
-            { .description = "ES - Spain",         .value = 2 },
-            { .description = "IT - Italy",         .value = 3 },
-            { .description = "NL - Netherlands",   .value = 4 },
-            { .description = "PT - Portugal",      .value = 5 },
-            { .description = "SE - Sweden",        .value = 6 },
-            { .description = "ZA - South Africa",  .value = 7 },
-            { .description = "GB - Great Britain", .value = 8 },
-            { .description = "FR - France",        .value = 9 },
-            { .description = ""                               }
+            { .description = "AT - Austria",              .value =  0 },
+            { .description = "BE - Belgium",              .value =  1 },
+            { .description = "CY - Cyprus",               .value =  2 },
+            { .description = "CZ - Czechia",              .value =  3 },
+            { .description = "DE - Germany",              .value =  4 },
+            { .description = "ES - Spain (2003 onwards)", .value =  5 },
+            { .description = "FR - France",               .value =  6 },
+            { .description = "GR - Greece",               .value =  7 },
+            { .description = "IT - Italy",                .value =  8 },
+            { .description = "NL - Netherlands",          .value =  9 },
+            { .description = "PT - Portugal",             .value = 10 },
+            { .description = "SE - Sweden",               .value = 11 },
+            { .description = "SP - Spain (1999)",         .value = 12 },
+            { .description = ""                                       }
         },
         .bios           = { { 0 } }
     },

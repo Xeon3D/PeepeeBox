@@ -238,6 +238,16 @@ pp_apply_disk(void)
     strcpy(hdd[0].fn, fn);
 
     pp_profile_log("PP: disk %s, %u/%u/%u\n", fn, hdd[0].tracks, hdd[0].hpc, hdd[0].spt);
+
+    /* Name the window after what the image actually is, rather than after
+       whatever the working directory happens to be called -- with -P . that
+       came out as ".".  The image says so itself in \FOTO\SETTINGS\MAIN.SET. */
+    char ident[64];
+    if (photoplay_identify(fn, ident, sizeof(ident))) {
+        strncpy(vm_name, ident, sizeof(vm_name) - 1);
+        vm_name[sizeof(vm_name) - 1] = '\0';
+        pp_profile_log("PP: image identified as %s\n", ident);
+    }
 }
 
 /* The optional CD-ROM drive.
