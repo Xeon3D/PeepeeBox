@@ -48,7 +48,7 @@ if (Test-Path $Root) {
                 ForEach-Object { [int]($_.Name -split '-')[0] }
     if ($existing) { $next = ($existing | Measure-Object -Maximum).Maximum + 1 }
 }
-$dir = Join-Path $Root ("{0:d2}-{1}" -f $next, $Name)
+$dir = Join-Path $Root ($next.ToString("00") + "-" + $Name)
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
 Copy-Item $exe $dir -Force
