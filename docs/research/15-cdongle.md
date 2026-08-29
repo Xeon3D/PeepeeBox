@@ -168,6 +168,46 @@ key derivation, and the exact content the record must carry. Not yet established
 - whether anything beyond the banner in the 48 bytes is used later, the way the 1999
   dwords turned out to be picture keys (`Docs/14`). Nothing in the boot path reads them.
 
+## What implementing it changed
+
+Written up before the device existed, so read the above as the design and this as
+what the wire actually did once something answered. The menu now boots on an
+untouched 2000 DE image and `CDONGLE not found` is gone.
+
+**The key is fixed, not running.** `0x0788` is `xor al,[cs:0x1AD]`, one byte of
+the code segment, written once per transaction by `0x076B` (`key = 0`; send the
+nonce; `key = nonce ^ 0xD3`). "Running key" above is loose wording — there is one
+key and it applies to every byte in both directions.
+
+**Between the nibble writes the host reads the CONTROL port, not STATUS.** The
+trace transcribed above condensed both as status reads, which made the ready poll
+look like the only place ACK is sampled by accident rather than by design. It
+really is: STATUS is read twice before the poll loop and nowhere else during a
+send. That is what lets an emulated dongle go ready the moment a command byte
+lands, without knowing how long the command is.
+
+**Every write is answered before the next is issued, including the handshake's
+last.** Moving to the streaming state on the `8F` write puts a data bit under the
+read that `8F` is owed — which must be clear — and the library gives up with
+error `0x17`. The device has to hold until the host clocks the first bit out with
+`CF`. This was the only bug between a decoded protocol and a booting menu.
+
+**The reads are short, and each starts at the beginning of the record.** The
+menu's two transactions ask for one byte and then two, not 48: `V`, then `Ve`.
+Both are satisfied by streaming from offset 0, so whatever the command bytes
+select, it is not an offset into the record — at least not for these. The command
+is `{AC, CB}` for the one-byte read and `{A0, 86, 2E, D0}` for the two-byte one,
+descrambled.
+
+Still unestablished: whether anything ever reads all 48 bytes in one transaction,
+and what the command bytes mean. Neither has to be answered to satisfy the check.
+
+**The `D0` trailer remains unexplained.** Byte `7F`'s trailer reads `D0` on the
+wire, where `0x1187`'s `or al,0x90` / `or al,0x4F` can only produce a value with
+bits `0xDF` set — and does, for every other byte. It does not affect decoding: a
+frame is recovered by sliding a five-write window, which steps over trailers and
+stray writes alike.
+
 ## Method note
 
 The two `MENU.EXE` patches used to get past the check and reach the games — neutering the

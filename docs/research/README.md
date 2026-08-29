@@ -27,7 +27,7 @@ and the corrections are usually the most interesting part.
 | `12-dongle-silicon.md` | **The dongle, from its own silicon.** Five units dumped, firmware disassembled and executed |
 | `13-dongle-families.md` | **It is not a HASP.** Corrects the framing running through 01, 04, 07, 09, 10, 11 |
 | `14-dongle-dwords-are-database-keys.md` | **The dwords are content keys.** Each photo game reads one to decrypt its picture database |
-| `15-cdongle.md` | **The 2000 generation's second dongle, on the wire.** CDONGLE and PDONGLE are one check; the transport decoded |
+| `15-cdongle.md` | **The 2000 generation's second dongle, on the wire.** CDONGLE and PDONGLE are one check; the transport decoded, then implemented |
 
 ## Sibling investigation
 
@@ -56,3 +56,6 @@ Three findings changed the code rather than just the documentation:
    `14` took it for. The host sends `{01, NAME[8], nonce}`; the reply seeds the
    LCG that decrypts the picture's PCX header.
 3. **It is not a HASP** (`13`). Aladdin is not involved in any generation.
+4. **The 2000 generation has a second dongle** (`15`), sharing the parallel port
+   with the 1999 one but nothing else. Emulating it is what made that
+   generation's images boot past `CDONGLE not found`.

@@ -73,6 +73,35 @@
 #define PP_IN_MAX  256
 #define PP_BLOCK   62 /* what KEYN.COM serves; type 3 returns the first 48 */
 
+/* The 2000 generation's second token -- see the CDONGLE section below. */
+#define CD_RECORD 48 /* what the guest asks for, and what the record layout gives */
+
+enum {
+    CD_IDLE = 0, /* listening for command bytes; ACK low                 */
+    CD_READY,    /* a reply is queued; ACK high so the poll loop exits   */
+    CD_ARMED,    /* host acknowledged with CF; ACK back low              */
+    CD_HS,       /* the four-pair attention handshake; ACK follows bit 5 */
+    CD_STREAM    /* clocking the reply out, one bit per CF               */
+};
+
+typedef struct {
+    int     active; /* the reset pulse train has been seen: this guest is a 2000 */
+    int     state;
+
+    uint8_t hist[5]; /* the five-write window a byte is assembled from */
+    int     nhist;
+    uint8_t prev1, prev2; /* the last two DATA writes, for the frame marker */
+    uint8_t last;
+
+    uint8_t key;
+    int     want_nonce;
+
+    uint8_t tx[CD_RECORD];
+    int     tx_len;
+    int     tx_bit;
+    int     attn;
+} cd_t;
+
 typedef struct {
     void *lpt;
 
@@ -103,6 +132,8 @@ typedef struct {
     uint8_t ng_val;
     int     ng_data;   /* sweep DATA readback transforms instead */
     int     ng_mode;
+
+    cd_t    cd;
 
     uint8_t block[PP_BLOCK];
 } pp_t;
@@ -417,6 +448,198 @@ pp_ack_edge(pp_t *dev, uint8_t cur)
     dev->last_data = cur;
 }
 
+/* ------------------------------------------------------------------------------------
+ * The 2000 generation's token: "CDONGLE" to the menu, "PDONGLE" to the games, one
+ * device either way (Docs/15).  A second, later dongle than the 1999 one above, sharing
+ * the same parallel port but nothing else -- the 1999 build contains none of this code.
+ *
+ * The host writes to the DATA port and the only line coming back is STATUS bit 6, the
+ * ACK.  A byte goes out as five writes, low nibble first, and comes back as eight bits
+ * MSB-first, each sampled off ACK.  Both directions are XORed with one key that the host
+ * derives from a nonce -- and transmits in clear before the key is in force, so this end
+ * can derive the same key instead of guessing it.
+ * ---------------------------------------------------------------------------------- */
+
+/* The attention handshake the library insists on before it will read (0x1067).  Each
+   write is answered on ACK with its own bit 5, which is what the real device evidently
+   does; getting one wrong makes the library give up with its error 0x17. */
+static const uint8_t cd_attention[] = { 0xDF, 0xEF, 0xBF, 0xCF, 0x9F, 0xEF, 0xBF, 0x8F };
+#define CD_ATTN_LEN ((int) (sizeof(cd_attention) / sizeof(cd_attention[0])))
+
+static void
+cd_reset(cd_t *cd)
+{
+    cd->state      = CD_IDLE;
+    cd->nhist      = 0;
+    cd->key        = 0;
+    cd->want_nonce = 1;
+    cd->tx_len     = 0;
+    cd->tx_bit     = 0;
+    cd->attn       = 0;
+}
+
+/* Reassemble a byte from the five-write nibble pattern: F<lo> C<lo> F<lo> 9<hi> 8<hi>.
+   The window slides rather than resetting on a mismatch, because each byte is followed
+   by a trailer write and transactions carry stray writes between frames. */
+static int
+cd_assemble(cd_t *cd, uint8_t val, uint8_t *out)
+{
+    if (cd->nhist >= 5) {
+        memmove(cd->hist, cd->hist + 1, 4);
+        cd->nhist = 4;
+    }
+    cd->hist[cd->nhist++] = val;
+    if (cd->nhist < 5)
+        return 0;
+
+    const uint8_t *h  = cd->hist;
+    const uint8_t  lo = h[0] & 0x0f;
+    const uint8_t  hi = h[3] & 0x0f;
+
+    if (((h[0] & 0xf0) == 0xf0) && ((h[1] & 0xf0) == 0xc0) && ((h[2] & 0xf0) == 0xf0) &&
+        ((h[3] & 0xf0) == 0x90) && ((h[4] & 0xf0) == 0x80) &&
+        ((h[1] & 0x0f) == lo) && ((h[2] & 0x0f) == lo) && ((h[4] & 0x0f) == hi)) {
+        *out      = (uint8_t) ((hi << 4) | lo);
+        cd->nhist = 0;
+        return 1;
+    }
+    return 0;
+}
+
+/* Queue the record, scrambled with the key the host just told us about. */
+static void
+cd_prepare(pp_t *dev)
+{
+    cd_t *cd = &dev->cd;
+
+    cd->tx_len = CD_RECORD;
+    cd->tx_bit = 0;
+    for (int i = 0; i < CD_RECORD; i++)
+        cd->tx[i] = (uint8_t) (dev->block[i] ^ cd->key);
+}
+
+static void
+cd_write_data(pp_t *dev, uint8_t val)
+{
+    cd_t   *cd = &dev->cd;
+    uint8_t b;
+
+    /* The library opens every transaction with a BF/7F/BF pulse train (0x0792).  It is
+       the one unambiguous frame marker on this wire, so use it to drop any half-decoded
+       state and to start expecting the nonce again.  A 1999 guest drives only E0..FF on
+       these lines, so it can never produce this pattern. */
+    if ((cd->prev2 == 0xBF) && (cd->prev1 == 0x7F) && (val == 0xBF)) {
+        cd->active = 1;
+        cd_reset(cd);
+        pp_log("PP: CDONGLE transaction start\n");
+        cd->prev2 = cd->prev1;
+        cd->prev1 = val;
+        cd->last  = val;
+        return;
+    }
+    cd->prev2 = cd->prev1;
+    cd->prev1 = val;
+    cd->last  = val;
+
+    switch (cd->state) {
+        case CD_IDLE:
+        case CD_READY:
+            if (!cd_assemble(cd, val, &b))
+                break;
+            if (cd->want_nonce) {
+                /* Sent while the key is still zero, so this is the nonce in clear.  The
+                   host will XOR everything from here on with nonce ^ 0xD3. */
+                cd->key        = (uint8_t) (b ^ 0xD3);
+                cd->want_nonce = 0;
+                pp_log("PP: CDONGLE nonce %02X -> key %02X\n", b, cd->key);
+            } else {
+                pp_log("PP: CDONGLE command byte %02X (raw %02X)\n",
+                       (uint8_t) (b ^ cd->key), b);
+                /* Whatever was asked for, there is only one thing to answer with.  Go
+                   ready now: between the nibble writes the host reads the CONTROL port,
+                   never STATUS, so it cannot see ACK until it reaches its poll loop --
+                   which means this end does not have to know the command's length. */
+                cd_prepare(dev);
+                cd->state = CD_READY;
+            }
+            break;
+
+        case CD_ARMED:
+            if (val == cd_attention[0]) {
+                cd->state = CD_HS;
+                cd->attn  = 1;
+            }
+            break;
+
+        case CD_HS:
+            if (cd->attn >= CD_ATTN_LEN) {
+                /* The handshake's last write is still owed an answer of its own -- ACK
+                   clear, from bit 5 of 8F -- so hold here until the host clocks out the
+                   first bit.  Streaming from the write itself puts a data bit under that
+                   read and the library gives up with its error 0x17. */
+                if (val == 0xCF) {
+                    cd->state = CD_STREAM;
+                    pp_log("PP: CDONGLE handshake done, streaming %d bytes\n", cd->tx_len);
+                }
+            } else if (val == cd_attention[cd->attn])
+                cd->attn++;
+            else if (val == cd_attention[0])
+                cd->attn = 1; /* it restarted the sequence */
+            break;
+
+        case CD_STREAM:
+            /* CF presents the next bit on ACK, FF clocks past it. */
+            if (val == 0xFF) {
+                cd->tx_bit++;
+                if (cd->tx_bit >= (cd->tx_len * 8)) {
+                    /* The library's outer loop can ask for the record again without
+                       another transaction, so rewind and go ready rather than going
+                       silent. */
+                    pp_log("PP: CDONGLE record streamed\n");
+                    cd->tx_bit = 0;
+                    cd->attn   = 0;
+                    cd->state  = CD_READY;
+                }
+            }
+            break;
+
+        default:
+            break;
+    }
+
+    /* The host acknowledges "ready" with CF and then waits for ACK to fall. */
+    if ((cd->state == CD_READY) && (val == 0xCF))
+        cd->state = CD_ARMED;
+}
+
+/* What we drive on ACK right now. */
+static int
+cd_ack(const pp_t *dev)
+{
+    const cd_t *cd = &dev->cd;
+
+    switch (cd->state) {
+        case CD_READY:
+            return 1;
+
+        case CD_HS:
+            /* Answer each attention write with its own bit 5. */
+            return (cd->last & 0x20) ? 1 : 0;
+
+        case CD_STREAM:
+            if (cd->tx_bit < (cd->tx_len * 8)) {
+                const int byte = cd->tx_bit >> 3;
+                const int bit  = 7 - (cd->tx_bit & 7);
+
+                return (cd->tx[byte] >> bit) & 1;
+            }
+            return 0;
+
+        default:
+            return 0;
+    }
+}
+
 /* Full raw-wire trace.  The 1999 bit-bang is byte-framed, so the transaction logging
    above is enough to follow it; the 2000 generation's CDONGLE is a nibble-clocked
    protocol where the meaning is in the individual port writes and in the values the
@@ -445,6 +668,7 @@ pp_write_data(uint8_t val, void *priv)
     if (dev->n_wd++ < 300)
         pp_log("PP: raw write_data %02X\n", val);
     pp_raw(dev, "write_data", val);
+    cd_write_data(dev, val);
     pp_ack_edge(dev, val);
 }
 
@@ -495,6 +719,15 @@ pp_read_status(void *priv)
 {
     pp_t   *dev = (pp_t *) priv;
     uint8_t st  = 0;
+
+    /* Once the 2000 generation's library has announced itself, it owns this line: it
+       reads nothing but bit 6, and the 1999 half would otherwise put nibble data on the
+       very same bit. */
+    if (dev->cd.active) {
+        st = cd_ack(dev) ? 0x40 : 0x00;
+        pp_raw(dev, "read_status", st);
+        return st;
+    }
 
     /* The ack line reaches us the same way the data nibbles do, so sample it from the
        port here rather than relying on write_data edges that 86Box filters out. */
