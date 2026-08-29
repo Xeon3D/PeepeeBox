@@ -199,8 +199,38 @@ select, it is not an offset into the record — at least not for these. The comm
 is `{AC, CB}` for the one-byte read and `{A0, 86, 2E, D0}` for the two-byte one,
 descrambled.
 
-Still unestablished: whether anything ever reads all 48 bytes in one transaction,
-and what the command bytes mean. Neither has to be answered to satisfy the check.
+**A game runs the same two transactions, byte for byte.** Launching a game
+produces a second `{AC, CB}` then `{A0, 86, 2E, D0}` pair, identical to the
+menu's, with the iButton reads in between. That is direct confirmation of this
+document's opening claim — `CDONGLE` and `PDONGLE` really are one check in one
+shared library routine, not two tokens. Both pairs pass.
+
+So nothing yet reads all 48 bytes in one transaction, and what the command bytes
+mean is still unknown. Neither has to be answered to satisfy the check, and the
+whole boot-to-game path is now covered without answering either.
+
+**The nonce is not random, and on a cabinet it is always zero.** `0x075E` is:
+
+```
+    push es / mov ax,0 / mov es,ax / mov ah,[es:0x0440] / pop es / ret
+```
+
+Linear `0x440` is `0040:0040` — the BIOS data area's **floppy motor turn-off
+counter**. It is non-zero only for the couple of seconds after a floppy access,
+and a Photo Play cabinet never touches a floppy, so in practice the nonce is `00`
+and the key is always `D3`. Every transaction observed, menu and game alike, uses
+`00`.
+
+That matters because it retires a success criterion carried over from the 1999
+dongle, whose nonce comes from `rand()`: **for the 2000 generation a constant
+nonce is correct, not a sign that the challenge/response is faked.** Do not go
+looking for a bug when it does not vary.
+
+The cost is that the key derivation has only ever been exercised at `nonce = 0`.
+`nonce ^ 0xD3` is read straight off `0x077D` and both ends derive it from the
+same transmitted byte, so it is hard to see how it could be wrong — but it is
+untested for any other value. To force one, get the guest to touch a floppy
+immediately before a check, or seed `0x440` non-zero from the emulator.
 
 **The `D0` trailer remains unexplained.** Byte `7F`'s trailer reads `D0` on the
 wire, where `0x1187`'s `or al,0x90` / `or al,0x4F` can only produce a value with
