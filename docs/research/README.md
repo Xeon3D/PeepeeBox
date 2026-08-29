@@ -27,7 +27,7 @@ and the corrections are usually the most interesting part.
 | `12-dongle-silicon.md` | **The dongle, from its own silicon.** Five units dumped, firmware disassembled and executed |
 | `13-dongle-families.md` | **It is not a HASP.** Corrects the framing running through 01, 04, 07, 09, 10, 11 |
 | `14-dongle-dwords-are-database-keys.md` | **The dwords are content keys.** Each photo game reads one to decrypt its picture database |
-| `15-cdongle.md` | **The 2000 generation's second dongle, on the wire.** Transport decoded and implemented; the menu boots, but the record model in it is wrong and games still fail |
+| `15-cdongle.md` | **The 2000 generation's second dongle, decoded and emulated.** Transport, licence constant and record read; that generation now boots and runs its games |
 
 ## Sibling investigation
 
@@ -57,6 +57,8 @@ Three findings changed the code rather than just the documentation:
    LCG that decrypts the picture's PCX header.
 3. **It is not a HASP** (`13`). Aladdin is not involved in any generation.
 4. **The 2000 generation has a second dongle** (`15`), sharing the parallel port
-   with the 1999 one but nothing else. Emulating its transport is what made that
-   generation's images boot past `CDONGLE not found` — though only the menu is
-   satisfied so far, and `15` says plainly where its own record model is wrong.
+   with the 1999 one but nothing else. Emulating it is what made that
+   generation's images boot and run their games. Read `15` for how often it
+   corrects itself on the way — the record model in it is wrong, then right for a
+   different reason, and the `D0` trailer goes from anomaly to the one thing the
+   parser should have been built on.

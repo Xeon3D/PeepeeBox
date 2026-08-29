@@ -94,13 +94,16 @@ typedef struct {
     uint8_t last;
 
     uint8_t key;
-    int     want_nonce;
 
     uint8_t cmd; /* the byte 0x11FA sends, descrambled */
     int     have_cmd;
-    int     streamed;    /* the reply has been handed over; ignore trailing wire noise */
-    uint8_t arg[8]; /* the payload after it, descrambled */
+    uint8_t arg[12]; /* the payload after it, descrambled */
     int     nargs;
+
+    uint8_t pending;       /* a byte is decoded; its trailer says what it was */
+    int     await_trailer;
+    int     claimable;     /* a trailer has passed and no frame has started since */
+    uint8_t nonce_raw;     /* the last plain byte before a command: the nonce */
 
     uint8_t tx[CD_RECORD];
     int     tx_len;
@@ -478,10 +481,10 @@ cd_reset(cd_t *cd)
     cd->state      = CD_IDLE;
     cd->nhist      = 0;
     cd->key        = 0;
-    cd->want_nonce = 1;
-    cd->have_cmd   = 0;
-    cd->streamed   = 0;
-    cd->nargs      = 0;
+    cd->have_cmd      = 0;
+    cd->nargs         = 0;
+    cd->await_trailer = 0;
+    cd->nonce_raw     = 0;
     cd->tx_len     = 0;
     cd->tx_bit     = 0;
     cd->attn       = 0;
@@ -580,11 +583,15 @@ cd_write_data(pp_t *dev, uint8_t val)
     cd_t   *cd = &dev->cd;
     uint8_t b;
 
-    /* Is this write sitting immediately after a byte's D? trailer, rather than inside
-       the next byte's frame?  That is the only place the host's "claim the reply" byte
-       can appear, and position is the only thing that separates it from a frame write:
-       the frame's own C? and 8? writes look identical in every bit that matters. */
-    const int after_trailer = (cd->nhist == 1) && ((cd->hist[0] & 0xf0) == 0xd0);
+    int rearmed = 0;
+
+    /* Position, not value, is what separates the host's "claim the reply" byte from a
+       frame write -- the frame's own C? and 8? writes look identical in every bit that
+       matters.  A claim can only sit after a byte's D? trailer with no frame started
+       since, so track exactly that: a trailer opens the window, and the F? that leads
+       every byte frame closes it again. */
+    if ((val & 0xf0) == 0xf0)
+        cd->claimable = 0;
 
     /* The library opens every transaction with a BF/7F/BF pulse train (0x0792).  It is
        the one unambiguous frame marker on this wire, so use it to drop any half-decoded
@@ -606,38 +613,42 @@ cd_write_data(pp_t *dev, uint8_t val)
     switch (cd->state) {
         case CD_IDLE:
         case CD_READY:
-            /* Once the reply has gone out, the tail of the transaction is the host
-               winding the link down.  Those writes can still form a valid-looking
-               frame, so stop decoding until the next reset pulse train. */
-            if (cd->streamed || !cd_assemble(cd, val, &b))
-                break;
-            if (cd->want_nonce) {
-                /* Sent while the key is still zero, so this is the nonce in clear.  The
-                   host will XOR everything from here on with nonce ^ 0xD3. */
-                cd->key        = (uint8_t) (b ^ 0xD3);
-                cd->want_nonce = 0;
-                pp_log("PP: CDONGLE nonce %02X -> key %02X\n", b, cd->key);
-            } else {
-                /* 0x11FA sends the command byte first -- it is the one with the D0
-                   trailer on the wire -- and everything after it is the payload. */
-                const uint8_t plain = (uint8_t) (b ^ cd->key);
+            /* A decoded byte is only classified once its trailer arrives, because the
+               trailer is what says which kind of byte it was.  0x11FA trails the command
+               byte with exactly D0; 0x1187 trails every ordinary byte with DF.  Keying on
+               that rather than on the reset pulse train is what matters: the record read
+               follows the previous transaction with no pulse train at all, and a parser
+               waiting for one sits through the whole thing in silence. */
+            if (cd->await_trailer) {
+                cd->await_trailer = 0;
+                cd->claimable     = 1; /* this is the trailer; a claim may follow it */
 
-                if (!cd->have_cmd) {
-                    cd->cmd      = plain;
+                if (val == 0xD0) {
+                    /* The command.  The ordinary byte before it was the nonce, sent
+                       while the key was still zero, so it names the key outright. */
+                    cd->key      = (uint8_t) (cd->nonce_raw ^ 0xD3);
+                    cd->cmd      = (uint8_t) (cd->pending ^ cd->key);
                     cd->have_cmd = 1;
-                    pp_log("PP: CDONGLE command %02X\n", plain);
+                    cd->nargs    = 0;
+                    pp_log("PP: CDONGLE command %02X (nonce %02X -> key %02X)\n",
+                           cd->cmd, cd->nonce_raw, cd->key);
+                    cd_prepare(dev);
+                    cd->state = CD_READY;
+                } else if (!cd->have_cmd) {
+                    cd->nonce_raw = cd->pending; /* still in clear: a nonce candidate */
                 } else {
                     if (cd->nargs < (int) sizeof(cd->arg))
-                        cd->arg[cd->nargs++] = plain;
-                    pp_log("PP: CDONGLE arg %d = %02X\n", cd->nargs, plain);
+                        cd->arg[cd->nargs++] = (uint8_t) (cd->pending ^ cd->key);
+                    pp_log("PP: CDONGLE arg %d = %02X\n", cd->nargs,
+                           (uint8_t) (cd->pending ^ cd->key));
+                    cd_prepare(dev);
+                    cd->state = CD_READY;
                 }
+            }
 
-                /* Re-answer on every byte.  Going ready early is safe: between the
-                   nibble writes the host reads the CONTROL port, never STATUS, so it
-                   cannot see ACK until it reaches its poll loop -- which means this end
-                   never has to know how long a command is. */
-                cd_prepare(dev);
-                cd->state = CD_READY;
+            if (cd_assemble(cd, val, &b)) {
+                cd->pending       = b;
+                cd->await_trailer = 1;
             }
             break;
 
@@ -665,8 +676,18 @@ cd_write_data(pp_t *dev, uint8_t val)
             break;
 
         case CD_STREAM:
-            /* CF presents the next bit on ACK, FF clocks past it. */
-            if (val == 0xFF) {
+            /* CF presents the next bit on ACK, FF clocks past it.  Anything else ends
+               this read: 0x0F6F signs off with BF.  The record read calls it 48 times
+               over for one byte each, without re-sending the command, so go ready again
+               with the cursor where it stands rather than treating that as the end. */
+            if ((val != 0xFF) && (val != 0xCF)) {
+                if (cd->tx_bit < (cd->tx_len * 8)) {
+                    cd->attn      = 0;
+                    cd->state     = CD_READY;
+                    cd->claimable = 1; /* no trailer precedes the next read's claim */
+                    rearmed       = 1; /* and this write ends a read, it does not claim */
+                }
+            } else if (val == 0xFF) {
                 cd->tx_bit++;
                 if (cd->tx_bit >= (cd->tx_len * 8)) {
                     /* Reply delivered: the device goes idle, which means ACK follows
@@ -674,7 +695,12 @@ cd_write_data(pp_t *dev, uint8_t val)
                        instead strands the host in the wind-down loop that writes 8F
                        and waits for ACK to fall. */
                     pp_log("PP: CDONGLE reply delivered, %d bytes\n", cd->tx_len);
-                    cd->streamed = 1;
+                    /* The transaction is over.  Forget the command, so the bytes of the
+                       next one -- which may arrive with no reset pulse train in between,
+                       as the record read does -- are read as a fresh nonce and command
+                       rather than as more payload for this one. */
+                    cd->have_cmd = 0;
+                    cd->nargs    = 0;
                     cd->attn     = 0;
                     cd->state    = CD_IDLE;
                 }
@@ -691,8 +717,13 @@ cd_write_data(pp_t *dev, uint8_t val)
        Keying on a bit does not work either: a frame's own C? write is indistinguishable
        from CF.  What identifies it is where it sits -- straight after a trailer, with no
        frame under way. */
-    if ((cd->state == CD_READY) && after_trailer && ((val & 0xf0) != 0xf0))
-        cd->state = CD_ARMED;
+    /* 0x0F6F claims with CF, 0xFCA with 8F.  Both are C? or 8?, which is what tells them
+       apart from the D? trailer sitting immediately before. */
+    if ((cd->state == CD_READY) && cd->claimable && !rearmed
+        && (((val & 0xf0) == 0xc0) || ((val & 0xf0) == 0x80))) {
+        cd->state     = CD_ARMED;
+        cd->claimable = 0;
+    }
 }
 
 /* What we drive on ACK right now. */

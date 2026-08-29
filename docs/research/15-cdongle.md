@@ -328,9 +328,9 @@ first: `93` then `46`.
 NL), the challenge is `D0 2E 86` and the expected answer `0x00004693` every single
 time. It is not per-title, not per-territory, and not per-dongle.
 
-That also explains the asymmetry that started this: the menu and the games run the
-*same* query and compare against the *same* constant. The menu simply does not
-treat a mismatch as fatal to reaching its attract screen, where a game does.
+The menu and the games run the *same* query and compare against the *same*
+constant. The menu does not treat a mismatch as fatal to reaching its attract
+screen, where a game does — which is the asymmetry that started all of this.
 
 ### What this is, and is not
 
@@ -342,9 +342,65 @@ run them all — but it is a lookup, not an emulation, and the code says so. Any
 challenge belongs in the same table; the fallback makes its absence loud rather
 than silent.
 
-The other query on the wire needs nothing: the one-byte read is the parallel-port
+The other short query needs nothing: the one-byte read is the parallel-port
 autodetect at `0x0BAD`, which only checks whether the transport worked and never
 looks at the value.
+
+## The third call: the record read, and why it looked absent
+
+`0x236E8` makes **three** calls, and the last is what the check really turns on:
+
+| call | API func | wire command | what it is |
+|---|---|---|---|
+| presence | `0x13` | `AC` | port autodetect; only the transport matters |
+| licence query | `1` | `A0` | the `0x4693` constant above |
+| **record read** | `0x14` | `AD` | 48 bytes, and the subject of the check |
+
+Its caller then runs `strstr(buffer, "Version 2000")` over those 48 bytes and sets
+the `PDONGLE` bit when it fails. So this document's original framing was right
+after all — the guest *does* read a 48-byte record and string-match it. It simply
+does so through a separate command, rather than as the answer to the licence
+query.
+
+**The record read sends no reset pulse train.** It follows straight on from the
+transaction before it. A parser that treats `BF 7F BF` as the start of a
+transaction sits through the whole exchange in silence while the guest polls a
+line nobody drives — which is exactly what happened here, and why the command
+looked absent from the wire when it had been there all along.
+
+**The delimiter is the trailer, not the pulse train.** `0x11FA` trails its command
+byte with exactly `D0`; `0x1187` trails every ordinary byte with `DF`. That one
+distinction frames every transaction, with or without a pulse train, and the byte
+immediately before a `D0`-trailed one is always the nonce. The `D0` trailer,
+recorded above as a curiosity and then as a frame type, turns out to be the thing
+the whole parser should have been built on.
+
+### How the 48 bytes come back
+
+Not in one read. `0x0938` sends the command and an 8-byte payload — a 4-byte value
+out of the guest's own data segment (`00 0D 8C A6` here), the count, and two zero
+words — then loops at `0x09AC` calling `0x0F6F` **48 times, one byte per call**,
+without re-sending the command. The device has to carry a cursor across reads.
+
+Each read signs off with `BF`. Three details matter, each learned by getting it
+wrong first:
+
+- The `BF` that *ends* a read must not be allowed to *claim* the next one.
+- After a read the device goes ready again — ACK high — with the cursor where it
+  stands, rather than going idle.
+- The claim byte cannot be recognised by value, or by any single bit: `0x0F6F`
+  claims with `CF` and `0xFCA` with `8F`, and a byte frame's own `C?` and `8?`
+  writes are indistinguishable from both. It is recognised by **position** — a
+  `D?` trailer has passed and no frame has started since. Counting writes since
+  the last completed byte looks equivalent and is not: it breaks the moment a
+  second claim arrives inside one transaction.
+
+## Result
+
+An untouched Photo Play 2000 DE image boots to its menu and **runs its games**.
+The guest reads back `Version 2000 (DE)\0…` followed by the dwords — the record,
+in the layout the 1999 half already built. The 1999 path is unaffected: still a
+type 3 exchange with a fresh nonce each boot, still draining all 48 bytes.
 
 ## Two read routines, not one
 
