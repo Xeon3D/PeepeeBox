@@ -93,6 +93,38 @@ inside the SVGA core, the Sound Blaster and Aztech mixers inside `snd_sb.c`, and
 the floppy controller the Super I/O drives on-chip. Each of those is unreachable
 at runtime; none of them is pretending to be needed.
 
+Cataloguing a collection
+------------------------
+
+Dumps arrive with names like `igo_final_v2` that say nothing true about what is
+in them. `scripts/catalog-photoplay.py` opens each image, asks it what it is, and
+renames the folder and the image to match:
+
+```bash
+python scripts/catalog-photoplay.py "D:\PhotoPlay" --dry-run
+```
+
+```
+D:\PhotoPlay\
+    some_dump_from_ebay\        ->  IGO 5 PT 81519\
+        igo5_final.img          ->      HardDisk.img
+```
+
+The release and territory come from `\FOTO\SETTINGS\MAIN.SET` inside the image --
+the same source the title bar uses -- and the serial from `\MENU\NSB.NR`, or
+`NONSB` where there is no such file. Folder names are never trusted: one image in
+circulation is filed as a 1998 Spanish build and its own settings say
+*Version 2003 (ES)*.
+
+It also writes `photoplay-catalog.log` in the top-level folder, listing every
+folder before and after with its release, whether `KEYN.COM` is present, and the
+MD5 of `MENU.EXE` so copies of one dump can be told apart.
+
+Nothing is written inside the images and the dongle is not involved; the only
+changes on disk are the two renames. Run it with `--dry-run` first. It is plain
+Python 3.8+ with no dependencies, so it needs no build and is not part of the
+emulator.
+
 Building
 --------
 
