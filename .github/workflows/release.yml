@@ -65,7 +65,6 @@ jobs:
             vulkan-headers:p
             llvm-openmp:p
             zstd:p
-            zip
 
       - uses: actions/checkout@v4
 
@@ -84,7 +83,10 @@ jobs:
           cp -r build/artifacts/* dist/PeepeeBox/
           cp -r roms dist/PeepeeBox/
           cp README.md dist/PeepeeBox/
-          cd dist && zip -r ../PeepeeBox-windows-x64.zip PeepeeBox
+
+      - name: Archive
+        shell: pwsh
+        run: Compress-Archive -Path dist/PeepeeBox -DestinationPath PeepeeBox-windows-x64.zip
 
       - uses: actions/upload-artifact@v4
         with:
