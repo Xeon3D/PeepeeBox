@@ -9,6 +9,7 @@
             NN-short-description\
                 PeepeeBox.exe
                 roms\
+                nvr\                      <- copy of the settled CMOS/flash
                 HardDisk.img              <- hard link to the master
                 run.cmd
                 BUILD.txt
@@ -40,6 +41,13 @@ if (-not (Test-Path $exe)) { throw "No build at $exe - build first." }
 $master = Join-Path $Root "HardDisk.img"
 if (-not (Test-Path $master)) { throw "No master disk image at $master." }
 
+# A fresh folder with no nvr/ boots to a CMOS checksum error: the 4DPS BIOS finds
+# no saved settings and the emulated flash is blank.  Seed each build from a
+# settled copy so it comes up clean.  Copied rather than linked -- it is two small
+# files and each build should be free to diverge.
+$masterNvr = Join-Path $Root "nvr"
+if (-not (Test-Path $masterNvr)) { throw "No master nvr at $masterNvr." }
+
 # Number the folder so they sort in the order they were made.
 $next = 1
 if (Test-Path $Root) {
@@ -53,6 +61,7 @@ New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
 Copy-Item $exe $dir -Force
 Copy-Item (Join-Path $Repo "roms") $dir -Recurse -Force
+Copy-Item $masterNvr $dir -Recurse -Force
 New-Item -ItemType HardLink -Path (Join-Path $dir "HardDisk.img") -Target $master | Out-Null
 
 @"
@@ -77,6 +86,9 @@ Run it   : double-click run.cmd, or PeepeeBox.exe directly.
 HardDisk.img is a hard link to the shared master one level up, so the guest's
 disk state is shared with every other build folder.  Replace it with a real copy
 if you want this build to have its own disk.
+
+nvr\ is a copy of the settled CMOS and flash contents, so the 4DPS BIOS does not
+report a checksum error on first boot.  It is this build's own, not shared.
 "@ | Set-Content (Join-Path $dir "BUILD.txt") -Encoding UTF8
 
 Write-Host "packaged -> $dir"
