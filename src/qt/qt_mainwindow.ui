@@ -76,28 +76,14 @@
      <addaction name="actionTablet"/>
      <addaction name="actionTablet_Crosshair"/>
     </widget>
-    <addaction name="actionKeyboard_requires_capture"/>
-    <addaction name="actionRight_CTRL_is_left_ALT"/>
-    <addaction name="separator"/>
-    <addaction name="actionUpdate_mouse_every_CPU_frame"/>
     <addaction name="menuInput_device"/>
-    <addaction name="menuTablet_tool"/>
     <addaction name="separator"/>
     <addaction name="actionPause"/>
-    <addaction name="separator"/>
     <addaction name="actionFullscreen"/>
-    <addaction name="actionToggle_OSD"/>
-    <addaction name="separator"/>
-    <addaction name="actionFast_forward"/>
-    <addaction name="actionForce_interpretation"/>
     <addaction name="separator"/>
     <addaction name="actionHard_Reset"/>
-    <addaction name="actionCtrl_Alt_Del"/>
-    <addaction name="separator"/>
-    <addaction name="actionCtrl_Alt_Esc"/>
-    <addaction name="actionNon_maskable_interrupt"/>
-    <addaction name="separator"/>
     <addaction name="actionACPI_Shutdown"/>
+    <addaction name="separator"/>
     <addaction name="actionExit"/>
    </widget>
    <widget class="QMenu" name="menuTools">
@@ -118,13 +104,6 @@
     <addaction name="actionFloppy_drive"/>
     <addaction name="actionUpdate_status_bar_icons"/>
     <addaction name="separator"/>
-    <addaction name="actionEnable_Discord_integration"/>
-    <addaction name="separator"/>
-    <addaction name="actionTake_screenshot"/>
-    <addaction name="actionTake_raw_screenshot"/>
-    <addaction name="actionCopy_screenshot"/>
-    <addaction name="actionCopy_raw_screenshot"/>
-    <addaction name="separator"/>
     <addaction name="menuSound"/>
     <addaction name="separator"/>
     <addaction name="actionPreferences"/>
@@ -133,9 +112,6 @@
     <addaction name="actionEnd_trace"/>
     <addaction name="separator"/>
     <addaction name="actionMCA_devices"/>
-    <addaction name="separator"/>
-    <addaction name="actionOpen_printer_tray"/>
-    <addaction name="actionOpen_screenshots_folder"/>
    </widget>
    <widget class="QMenu" name="menuView">
     <property name="title">
@@ -207,18 +183,6 @@
      <addaction name="action_7x_2"/>
      <addaction name="action_8x_2"/>
     </widget>
-    <addaction name="actionHide_tool_bar"/>
-    <addaction name="actionHide_status_bar"/>
-    <addaction name="actionShow_non_primary_monitors"/>
-    <addaction name="separator"/>
-    <addaction name="actionResizable_window"/>
-    <addaction name="actionRemember_size_and_position"/>
-    <addaction name="actionSpecify_dimensions"/>
-    <addaction name="actionForce_4_3_display_ratio"/>
-    <addaction name="separator"/>
-    <addaction name="menuFullscreen_stretch_mode"/>
-    <addaction name="actionApply_fullscreen_stretch_mode_when_maximized"/>
-    <addaction name="separator"/>
     <addaction name="menuWindow_scale_factor"/>
     <addaction name="actionHiDPI_scaling"/>
     <addaction name="separator"/>
@@ -284,20 +248,13 @@
     <bool>false</bool>
    </attribute>
    <addaction name="actionPause"/>
-   <addaction name="actionFast_forward"/>
    <addaction name="actionHard_Reset"/>
    <addaction name="actionACPI_Shutdown"/>
-   <addaction name="separator"/>
-   <addaction name="actionCtrl_Alt_Del"/>
-   <addaction name="actionCtrl_Alt_Esc"/>
    <addaction name="separator"/>
    <addaction name="actionSettings"/>
    <addaction name="actionNetwork"/>
    <addaction name="actionCDROM_drive"/>
    <addaction name="actionFloppy_drive"/>
-   <addaction name="separator"/>
-   <addaction name="actionTake_screenshot"/>
-   <addaction name="actionCopy_screenshot"/>
   </widget>
   <action name="actionForce_interpretation">
    <property name="icon">
