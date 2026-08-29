@@ -272,20 +272,37 @@ pp_respond(pp_t *dev)
         }
         pp_log("PP: type 3, nonce %02X -> 48 encrypted bytes\n", dev->cmd[1]);
     } else if (type == 1) {
-        /* keyed hash of the 8-byte name, then XORed under the 4-byte keystream */
-        uint8_t h[4];
-        uint8_t k = dev->cmd[1];
+        /* The host sends { 01, NAME[8], nonce } -- the uppercased, space-padded
+           8-character basename of a file it is about to open, then a random byte.
+           The dongle answers a 4-byte code derived from the name alone, XORed under
+           a keystream seeded with the nonce.
 
-        pp_type1(&dev->cmd[2], h);
+           This is not the idle curiosity Docs/12 and Docs/14 took it for.  Those
+           concluded no 1999 binary calls type 1; they are wrong.  It is fetched once
+           per picture, immediately between reading a PCX header and validating it,
+           and the code it returns is the seed for the Turbo Pascal LCG that decrypts
+           that header -- the first 128 bytes of every PCX inside a GWAD archive.  Get
+           it wrong and the game reports "not a PCX-File".
+
+           Verified end to end against shipped data: every one of the 731 pictures in
+           FMEMO/PICS/FOTOPLAY.WAD decrypts to a valid 320x220 8-bit PCX header using
+           the code this returns for its filename, and the five keys recovered
+           independently by seed-cracking reproduce exactly, little-endian.
+
+           Archives packed without a dongle are keyed with the vendor default
+           0x00012345 instead of by name -- FMEMO's own GRAFIX archive and all of
+           FINDIT's pictures are like that -- so not every PCX in the game goes
+           through this path. */
+        uint8_t h[4];
+        uint8_t k = dev->cmd[9];
+
+        pp_type1(&dev->cmd[1], h);
         for (int i = 0; i < pp_recv_len[1]; i++) {
             pp_queue(dev, (uint8_t) (h[i] ^ k));
             k = pp_next_key1(k);
         }
-        pp_log("PP: type 1, nonce %02X, name %02X%02X%02X%02X%02X%02X%02X%02X"
-               " -> %02X %02X %02X %02X\n", dev->cmd[1],
-               dev->cmd[2], dev->cmd[3], dev->cmd[4], dev->cmd[5],
-               dev->cmd[6], dev->cmd[7], dev->cmd[8], dev->cmd[9],
-               h[0], h[1], h[2], h[3]);
+        pp_log("PP: type 1, name \"%.8s\", nonce %02X -> code %02X%02X%02X%02X\n",
+               (const char *) &dev->cmd[1], dev->cmd[9], h[3], h[2], h[1], h[0]);
     } else if (type == 2) {
         /* Programming: the host sends the 48-byte record encrypted under the same
            keystream type 3 answers with, and the dongle writes it to EEPROM.  The
