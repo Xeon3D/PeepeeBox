@@ -199,15 +199,18 @@ select, it is not an offset into the record — at least not for these. The comm
 is `{AC, CB}` for the one-byte read and `{A0, 86, 2E, D0}` for the two-byte one,
 descrambled.
 
-**A game runs the same two transactions, byte for byte.** Launching a game
-produces a second `{AC, CB}` then `{A0, 86, 2E, D0}` pair, identical to the
-menu's, with the iButton reads in between. That is direct confirmation of this
-document's opening claim — `CDONGLE` and `PDONGLE` really are one check in one
-shared library routine, not two tokens. Both pairs pass.
+**A game runs the same two transactions, byte for byte — and still fails.**
+Launching `SOLI.EXE` produces a third `{AC, CB}` then `{A0, 86, 2E, D0}` pair,
+identical to the menu's two, and then reports `PDONGLE FAILED`.
 
-So nothing yet reads all 48 bytes in one transaction, and what the command bytes
-mean is still unknown. Neither has to be answered to satisfy the check, and the
-whole boot-to-game path is now covered without answering either.
+This was briefly written up here as the game passing, on the strength of the log
+showing both transactions completing. That was wrong, and the mistake is worth
+naming: **completing the handshake is not passing the check.** The transport
+succeeds and the guest then rejects what it was told. Only the screen settles it.
+
+So the menu is satisfied by these answers and the games are not, from identical
+wire traffic. The difference is in what each program does with the two bytes it
+gets back, not in the exchange that delivers them.
 
 **The nonce is not random, and on a cabinet it is always zero.** `0x075E` is:
 
@@ -232,11 +235,65 @@ same transmitted byte, so it is hard to see how it could be wrong — but it is
 untested for any other value. To force one, get the guest to touch a floppy
 immediately before a check, or seed `0x440` non-zero from the emulator.
 
-**The `D0` trailer remains unexplained.** Byte `7F`'s trailer reads `D0` on the
-wire, where `0x1187`'s `or al,0x90` / `or al,0x4F` can only produce a value with
-bits `0xDF` set — and does, for every other byte. It does not affect decoding: a
-frame is recovered by sliding a five-write window, which steps over trailers and
-stray writes alike.
+**The `D0` trailer is explained: it marks the command byte.** It does not come
+from `0x1187` at all. `0x11FA`, which opens every transaction, is:
+
+```
+    call 0x76b        ; send the nonce, set the key
+    call 0x11a0       ; send a byte as the five nibble writes
+    or al,0xd0 / and al,0xf0 / out dx,al      ; -> exactly D0
+```
+
+So `D0` trails the byte `0x11FA` sends — the command — and `DF` trails every
+ordinary byte after it. It is a frame type, not an anomaly, and it makes the
+command byte identifiable on the wire without descrambling anything.
+
+## The record model in this document is wrong
+
+The transport above holds; it is confirmed twice over and the guest talks to it
+happily. What does not hold is the premise that the guest reads a 48-byte record
+and string-compares it. **There is no 48-byte read anywhere in this library.**
+`0x0F6F`'s `bx` is a *pair* — `bh` bytes to send, `bl` bytes to read — and every
+call site uses small counts:
+
+| | |
+|---|---|
+| `mov bx,0x302` | send 3, read 2 — the workhorse, and transaction 2 |
+| `mov bx,0x203` | send 2, read 3 |
+| `mov bx,0x1` / `0x2` / `0x4` | short reads |
+
+`strstr(record, "Version 2000")` and the 48-byte block are the **1999** grammar
+(type 3, receive 48), carried across to this generation by assumption when this
+document was written. The 2000 device answers small queries; it does not hand
+over a record. Serving it record bytes from offset 0 satisfies the menu by luck
+and tells the games nothing they will accept.
+
+## What the two transactions actually are
+
+**Transaction 1 is the parallel-port autodetect**, at `0x0BAD`: reset pulse
+train, `0x11FA`, `mov al,0xCB`, send, read **1** byte. What follows it is a loop
+over `0x278` / `0x378` / … deciding which port the dongle is on. It is not a
+protection check.
+
+**Transaction 2 is a generic API call**, at `0x0D10`: reset, `0x11FA`, send `bh`
+bytes from `DS:SI`, read `bl`. The dispatcher at `0x06D6` builds the command byte
+from the API function number in `ah`:
+
+```
+    cmd = nibbleswap(ah + 0x9F) ^ 0xA3
+```
+
+which for the observed `0xA0` gives `ah = 0x91`. `al` is a caller parameter,
+preserved across that transform and sent as part of the payload — so `{86, 2E,
+D0}` carries an argument this end currently ignores.
+
+## What is still needed
+
+The transport is done and proven. What is not known is **what the two bytes
+returned by command `0xA0` are supposed to be.** They are not record bytes. The
+next step is on the guest side rather than in this library: find what `MENU.EXE`
+and a game EXE each do with that answer, and why one accepts `Ve` and the other
+does not.
 
 ## Method note
 
