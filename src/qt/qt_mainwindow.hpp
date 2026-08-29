@@ -178,6 +178,7 @@ private slots:
 
 
 private:
+    bool confirmDriveChange(const QString &drive, bool attaching);
     Ui::MainWindow                *ui;
     std::unique_ptr<MachineStatus> status;
     std::shared_ptr<MediaMenu>     mm;

@@ -187,6 +187,9 @@ int      fpu_type                               = 0;              /* (C) fpu typ
 int      fpu_softfloat                          = 0;              /* (C) fpu uses softfloat */
 int      time_sync                              = 0;              /* (C) enable time sync */
 int      confirm_reset                          = 1;              /* (G) enable reset confirmation */
+int      confirm_drive_change                   = 1;              /* (G) PeepeeBox: warn that attaching or
+                                                                     detaching the CD-ROM or floppy reboots
+                                                                     the emulated machine */
 int      confirm_exit                           = 1;              /* (G) enable exit confirmation */
 int      confirm_save                           = 1;              /* (G) enable save confirmation */
 int      chd_precache_level                     = 0;              /* (G) CHD precache level */

@@ -1393,6 +1393,44 @@ MainWindow::on_actionSettings_triggered()
 
 /* PeepeeBox: the cabinets are offline, but the network card stays selectable --
    it is the one piece of hardware a user might legitimately want to add. */
+/* PeepeeBox: attaching or detaching a drive changes what hardware exists, so it
+   can only take effect through a hard reset.  That is not obvious from a menu
+   tick, and losing whatever the guest was doing without warning is unpleasant --
+   so ask first, with the same "don't show this again" affordance the hard reset
+   confirmation already uses.  The preference is global and can be turned back on
+   under Preferences -> Emulator. */
+bool
+MainWindow::confirmDriveChange(const QString &drive, bool attaching)
+{
+    if (!confirm_drive_change)
+        return true;
+
+    const QString text = (attaching
+        ? tr("Attaching the %1 will restart the emulated machine. Any unsaved work in the guest will be lost.")
+        : tr("Removing the %1 will restart the emulated machine. Any unsaved work in the guest will be lost."))
+            .arg(drive);
+
+    QMessageBox questionbox(QMessageBox::Icon::Question, EMU_NAME, text,
+                            QMessageBox::Yes | QMessageBox::No, this);
+    const auto chkbox = new QCheckBox(tr("Don't show this message again"));
+    questionbox.setCheckBox(chkbox);
+    chkbox->setChecked(!confirm_drive_change);
+
+    QObject::connect(chkbox, &QCheckBox::CHECK_STATE_CHANGED, [](int state) {
+        confirm_drive_change = (state == Qt::CheckState::Unchecked);
+    });
+    questionbox.exec();
+
+    if (questionbox.result() == QMessageBox::No) {
+        /* A dismissed warning should not also silence future ones. */
+        confirm_drive_change = true;
+        return false;
+    }
+
+    config_save_global();
+    return true;
+}
+
 /* PeepeeBox: the cabinets had no optical drive, but installation and service
    media exist, so one can be switched on.  What the drive is is not a choice --
    see src/photoplay.c -- only whether it is there.  Attaching or removing it
@@ -1403,6 +1441,11 @@ MainWindow::on_actionSettings_triggered()
 void
 MainWindow::on_actionFloppy_drive_triggered(bool checked)
 {
+    if (!confirmDriveChange(tr("floppy drive"), checked)) {
+        ui->actionFloppy_drive->setChecked(!checked);
+        return;
+    }
+
     const int currentPause = dopause;
 
     plat_pause(1);
@@ -1418,6 +1461,11 @@ MainWindow::on_actionFloppy_drive_triggered(bool checked)
 void
 MainWindow::on_actionCDROM_drive_triggered(bool checked)
 {
+    if (!confirmDriveChange(tr("CD-ROM drive"), checked)) {
+        ui->actionCDROM_drive->setChecked(!checked);
+        return;
+    }
+
     const int currentPause = dopause;
 
     plat_pause(1);

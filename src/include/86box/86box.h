@@ -218,6 +218,7 @@ extern int      fpu_softfloat;              /* (C) fpu uses softfloat */
 extern int      time_sync;                  /* (C) enable time sync */
 extern int      hdd_format_type;            /* (C) hard disk file format */
 extern int      confirm_reset;              /* (G) enable reset confirmation */
+extern int      confirm_drive_change;       /* (G) warn on CD-ROM/floppy attach */
 extern int      confirm_exit;               /* (G) enable exit confirmation */
 extern int      confirm_save;               /* (G) enable save confirmation */
 extern int      chd_precache_level;         /* (G) CHD precache level */

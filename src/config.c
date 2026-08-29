@@ -146,6 +146,7 @@ load_global_emulator(void)
     do_auto_dialog_pause = ini_section_get_int(cat, "do_auto_dialog_pause", 0);
 
     confirm_reset = ini_section_get_int(cat, "confirm_reset", 1);
+    confirm_drive_change = ini_section_get_int(cat, "confirm_drive_change", 1);
     confirm_exit  = ini_section_get_int(cat, "confirm_exit", 1);
     confirm_save  = ini_section_get_int(cat, "confirm_save", 1);
     color_scheme  = ini_section_get_int(cat, "color_scheme", 0);
@@ -230,6 +231,7 @@ load_global_legacy(void)
     open_dir_usr_path = ini_section_get_int(cat, "open_dir_usr_path", 0);
 
     confirm_reset = ini_section_get_int(cat, "confirm_reset", 1);
+    confirm_drive_change = ini_section_get_int(cat, "confirm_drive_change", 1);
     confirm_exit  = ini_section_get_int(cat, "confirm_exit", 1);
     confirm_save  = ini_section_get_int(cat, "confirm_save", 1);
     color_scheme  = ini_section_get_int(cat, "color_scheme", 0);
@@ -2185,6 +2187,11 @@ save_global_emulator(void)
         ini_section_set_int(cat, "confirm_reset", confirm_reset);
     else
         ini_section_delete_var(cat, "confirm_reset");
+
+    if (confirm_drive_change != 1)
+        ini_section_set_int(cat, "confirm_drive_change", confirm_drive_change);
+    else
+        ini_section_delete_var(cat, "confirm_drive_change");
 
     if (confirm_exit != 1)
         ini_section_set_int(cat, "confirm_exit", confirm_exit);
