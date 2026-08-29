@@ -61,13 +61,6 @@
     <property name="title">
      <string>&amp;Action</string>
     </property>
-    <widget class="QMenu" name="menuTablet_tool">
-     <property name="title">
-      <string>&amp;Tablet tool</string>
-     </property>
-     <addaction name="actionPen"/>
-     <addaction name="actionCursor_Puck"/>
-    </widget>
     <widget class="QMenu" name="menuInput_device">
      <property name="title">
       <string>Input &amp;device</string>
@@ -147,16 +140,6 @@
      </property>
      <addaction name="actionNearest"/>
      <addaction name="actionLinear"/>
-    </widget>
-    <widget class="QMenu" name="menuFullscreen_stretch_mode">
-     <property name="title">
-      <string>Fullscreen &amp;stretch mode</string>
-     </property>
-     <addaction name="actionFullScreen_stretch"/>
-     <addaction name="actionFullScreen_43"/>
-     <addaction name="actionFullScreen_keepRatio"/>
-     <addaction name="actionFullScreen_int"/>
-     <addaction name="actionFullScreen_int43"/>
     </widget>
     <widget class="QMenu" name="menuOpenGL_input_stretch_mode">
      <property name="title">
@@ -256,39 +239,6 @@
    <addaction name="actionCDROM_drive"/>
    <addaction name="actionFloppy_drive"/>
   </widget>
-  <action name="actionForce_interpretation">
-   <property name="icon">
-    <iconset resource="../qt_resources.qrc">
-     <normaloff>:/menuicons/qt/icons/interpreter.ico</normaloff>:/menuicons/qt/icons/interpreter.ico</iconset>
-   </property>
-   <property name="text">
-    <string>&amp;Force interpretation</string>
-   </property>
-  </action>
-  <action name="actionUpdate_mouse_every_CPU_frame">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>&amp;Update mouse every CPU frame</string>
-   </property>
-  </action>
-  <action name="actionKeyboard_requires_capture">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>&amp;Keyboard requires capture</string>
-   </property>
-  </action>
-  <action name="actionRight_CTRL_is_left_ALT">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>&amp;Right CTRL is left ALT</string>
-   </property>
-  </action>
   <action name="actionHard_Reset">
    <property name="icon">
     <iconset resource="../qt_resources.qrc">
@@ -299,38 +249,6 @@
    </property>
    <property name="toolTip">
     <string>Hard reset</string>
-   </property>
-  </action>
-  <action name="actionCtrl_Alt_Del">
-   <property name="icon">
-    <iconset resource="../qt_resources.qrc">
-     <normaloff>:/menuicons/qt/icons/send_cad.ico</normaloff>:/menuicons/qt/icons/send_cad.ico</iconset>
-   </property>
-   <property name="text">
-    <string>&amp;Ctrl+Alt+Del</string>
-   </property>
-   <property name="toolTip">
-    <string>Press Ctrl+Alt+Del</string>
-   </property>
-  </action>
-  <action name="actionCtrl_Alt_Esc">
-   <property name="icon">
-    <iconset resource="../qt_resources.qrc">
-     <normaloff>:/menuicons/qt/icons/send_cae.ico</normaloff>:/menuicons/qt/icons/send_cae.ico</iconset>
-   </property>
-   <property name="text">
-    <string>Ctrl+Alt+&amp;Esc</string>
-   </property>
-   <property name="toolTip">
-    <string>Press Ctrl+Alt+Esc</string>
-   </property>
-  </action>
-  <action name="actionNon_maskable_interrupt">
-   <property name="text">
-    <string>&amp;Non-maskable interrupt</string>
-   </property>
-   <property name="toolTip">
-    <string>Non-maskable interrupt</string>
    </property>
   </action>
   <action name="actionPause">
@@ -409,11 +327,6 @@
     <string>&amp;Fullscreen</string>
    </property>
   </action>
-  <action name="actionToggle_OSD">
-   <property name="text">
-    <string>Toggle &amp;on-screen display</string>
-   </property>
-  </action>
   <action name="actionSoftware_Renderer">
    <property name="checkable">
     <bool>true</bool>
@@ -423,43 +336,6 @@
    </property>
    <property name="vid_api" stdset="0">
     <number>0</number>
-   </property>
-  </action>
-  <action name="actionHide_status_bar">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>&amp;Hide status bar</string>
-   </property>
-  </action>
-  <action name="actionResizable_window">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>&amp;Resizeable window</string>
-   </property>
-  </action>
-  <action name="actionRemember_size_and_position">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>R&amp;emember size &amp;&amp; position</string>
-   </property>
-  </action>
-  <action name="actionSpecify_dimensions">
-   <property name="text">
-    <string>Specify &amp;dimensions…</string>
-   </property>
-  </action>
-  <action name="actionForce_4_3_display_ratio">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>Force &amp;4:3 display ratio</string>
    </property>
   </action>
   <action name="actionHiDPI_scaling">
@@ -566,46 +442,6 @@
     <string>&amp;Linear</string>
    </property>
   </action>
-  <action name="actionFullScreen_stretch">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>&amp;Full screen stretch</string>
-   </property>
-  </action>
-  <action name="actionFullScreen_43">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>&amp;4:3</string>
-   </property>
-  </action>
-  <action name="actionFullScreen_keepRatio">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>&amp;Square pixels (Keep ratio)</string>
-   </property>
-  </action>
-  <action name="actionFullScreen_int">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>&amp;Integer scale</string>
-   </property>
-  </action>
-  <action name="actionFullScreen_int43">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>4:&amp;3 Integer scale</string>
-   </property>
-  </action>
   <action name="actionAbout_Qt">
    <property name="text">
     <string>About &amp;Qt</string>
@@ -638,54 +474,6 @@
     <string>&amp;Update status bar icons</string>
    </property>
   </action>
-  <action name="actionTake_screenshot">
-   <property name="text">
-    <string>Take s&amp;creenshot</string>
-   </property>
-   <property name="toolTip">
-    <string>Take screenshot</string>
-   </property>
-   <property name="icon">
-    <iconset resource="../qt_resources.qrc">
-     <normaloff>:/menuicons/qt/icons/take_screenshot.ico</normaloff>:/menuicons/qt/icons/take_screenshot.ico</iconset>
-   </property>
-  </action>
-  <action name="actionTake_raw_screenshot">
-   <property name="text">
-    <string>Take &amp;raw screenshot</string>
-   </property>
-   <property name="toolTip">
-    <string>Take raw screenshot</string>
-   </property>
-   <property name="icon">
-    <iconset resource="../qt_resources.qrc">
-     <normaloff>:/menuicons/qt/icons/take_raw_screenshot.ico</normaloff>:/menuicons/qt/icons/take_raw_screenshot.ico</iconset>
-   </property>
-  </action>
-  <action name="actionCopy_screenshot">
-   <property name="text">
-    <string>C&amp;opy screenshot</string>
-   </property>
-   <property name="toolTip">
-    <string>Copy screenshot</string>
-   </property>
-   <property name="icon">
-    <iconset resource="../qt_resources.qrc">
-     <normaloff>:/menuicons/qt/icons/copy_screenshot.ico</normaloff>:/menuicons/qt/icons/copy_screenshot.ico</iconset>
-   </property>
-  </action>
-  <action name="actionCopy_raw_screenshot">
-   <property name="text">
-    <string>Copy r&amp;aw screenshot</string>
-   </property>
-   <property name="toolTip">
-    <string>Copy raw screenshot</string>
-   </property>
-   <property name="icon">
-    <iconset resource="../qt_resources.qrc">
-     <normaloff>:/menuicons/qt/icons/copy_raw_screenshot.ico</normaloff>:/menuicons/qt/icons/copy_raw_screenshot.ico</iconset>
-   </property>
-  </action>
   <action name="actionMute_Unmute">
    <property name="text">
     <string>&amp;Mute</string>
@@ -713,22 +501,6 @@
    </property>
    <property name="menuRole">
     <enum>QAction::PreferencesRole</enum>
-   </property>
-  </action>
-  <action name="actionEnable_Discord_integration">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>Enable &amp;Discord integration</string>
-   </property>
-  </action>
-  <action name="actionHide_tool_bar">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>Hide &amp;toolbar</string>
    </property>
   </action>
   <action name="actionACPI_Shutdown">
@@ -795,14 +567,6 @@
     <string>&amp;MCA devices…</string>
    </property>
   </action>
-  <action name="actionShow_non_primary_monitors">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>Show non-&amp;primary monitors</string>
-   </property>
-  </action>
   <action name="actionVNC">
    <property name="checkable">
     <bool>true</bool>
@@ -812,40 +576,6 @@
    </property>
    <property name="vid_api" stdset="0">
     <number>3</number>
-   </property>
-  </action>
-  <action name="actionOpen_printer_tray">
-   <property name="text">
-    <string>Open p&amp;rinter tray…</string>
-   </property>
-  </action>
-  <action name="actionOpen_screenshots_folder">
-   <property name="text">
-    <string>Open screenshots &amp;folder…</string>
-   </property>
-  </action>
-  <action name="actionApply_fullscreen_stretch_mode_when_maximized">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>Appl&amp;y fullscreen stretch mode when maximized</string>
-   </property>
-  </action>
-  <action name="actionCursor_Puck">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>&amp;Cursor/Puck</string>
-   </property>
-  </action>
-  <action name="actionPen">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>&amp;Pen</string>
    </property>
   </action>
   <action name="action_Full_screen_stretch_gl">
@@ -886,14 +616,6 @@
    </property>
    <property name="text">
     <string>4:&amp;3 Integer scale</string>
-   </property>
-  </action>
-  <action name="action_1x">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>&amp;1x</string>
    </property>
   </action>
   <action name="action_0_5x_2">
@@ -974,21 +696,6 @@
    </property>
    <property name="text">
     <string>&amp;8x</string>
-   </property>
-  </action>
-  <action name="actionFast_forward">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="icon">
-    <iconset resource="../qt_resources.qrc">
-     <normaloff>:/settings/qt/icons/fast_forward.ico</normaloff>:/settings/qt/icons/fast_forward.ico</iconset>
-   </property>
-   <property name="text">
-    <string>&amp;Fast forward</string>
-   </property>
-   <property name="toolTip">
-    <string>Fast forward</string>
    </property>
   </action>
   <action name="actionMouse">
