@@ -332,7 +332,8 @@ static const struct {
 };
 
 int
-photoplay_identify(const char *img_path, char *out, size_t outsz)
+photoplay_identify_ex(const char *img_path, char *out, size_t outsz,
+                      char *banner_out, size_t bsz, char *terr_out, size_t tsz)
 {
     pp_fat_t fs;
     uint16_t clus;
@@ -342,6 +343,10 @@ photoplay_identify(const char *img_path, char *out, size_t outsz)
     if ((out == NULL) || (outsz < 8))
         return 0;
     out[0] = '\0';
+    if (banner_out != NULL)
+        banner_out[0] = '\0';
+    if (terr_out != NULL)
+        terr_out[0] = '\0';
 
     if (!pp_fat_open(&fs, img_path))
         return 0;
@@ -377,6 +382,14 @@ photoplay_identify(const char *img_path, char *out, size_t outsz)
                     }
                 }
 
+                /* The dongle has to report this string rather than the display
+                   name: the guest compares its record against the MAIN.SET
+                   "Version" field verbatim (Docs/08). */
+                if (banner_out != NULL)
+                    snprintf(banner_out, bsz, "%s", version);
+                if (terr_out != NULL)
+                    snprintf(terr_out, tsz, "%s", land);
+
                 if (name != NULL) {
                     if (land[0])
                         snprintf(out, outsz, "%s %s", name, land);
@@ -395,4 +408,11 @@ photoplay_identify(const char *img_path, char *out, size_t outsz)
 
     fclose(fs.f);
     return ok;
+}
+
+
+int
+photoplay_identify(const char *img_path, char *out, size_t outsz)
+{
+    return photoplay_identify_ex(img_path, out, outsz, NULL, 0, NULL, 0);
 }

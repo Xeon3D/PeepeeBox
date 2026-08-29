@@ -64,6 +64,7 @@
 #include <86box/device.h>
 #include <86box/io.h>
 #include <86box/lpt.h>
+#include <86box/photoplay.h>
 
 /* Protocol bring-up: log every transaction.  Remove once this is trusted. */
 #define ENABLE_DONGLE_PHOTOPLAY_LOG 1
@@ -85,6 +86,7 @@ typedef struct {
     int     have_strobe_hook; /* master calls pp_strobe: don't double-latch in write_ctrl */
     int     n_cmd;
     int     n_wd, n_wc, n_rs, n_rd;
+    int     n_raw;             /* full raw-wire trace, see pp_raw() */
 
     /* dongle -> host, as a queue of nibbles */
     uint8_t out[PP_OUT_MAX];
@@ -415,6 +417,22 @@ pp_ack_edge(pp_t *dev, uint8_t cur)
     dev->last_data = cur;
 }
 
+/* Full raw-wire trace.  The 1999 bit-bang is byte-framed, so the transaction logging
+   above is enough to follow it; the 2000 generation's CDONGLE is a nibble-clocked
+   protocol where the meaning is in the individual port writes and in the values the
+   guest reads back, which the transaction layer never sees.  Set PEEPEEBOX_LPT_TRACE
+   to record every access.  Off unless asked for: it is tens of thousands of lines. */
+static int pp_raw_want = -1;
+
+static void
+pp_raw(pp_t *dev, const char *what, uint8_t val)
+{
+    if (pp_raw_want < 0)
+        pp_raw_want = (getenv("PEEPEEBOX_LPT_TRACE") != NULL);
+    if (pp_raw_want && dev->n_raw++ < 400000)
+        pp_log("PPRAW %6d %-10s %02X\n", dev->n_raw, what, val);
+}
+
 static void
 pp_write_data(uint8_t val, void *priv)
 {
@@ -426,6 +444,7 @@ pp_write_data(uint8_t val, void *priv)
        few hundred raw accesses so the real wire behaviour is visible either way. */
     if (dev->n_wd++ < 300)
         pp_log("PP: raw write_data %02X\n", val);
+    pp_raw(dev, "write_data", val);
     pp_ack_edge(dev, val);
 }
 
@@ -440,6 +459,7 @@ pp_write_ctrl(uint8_t val, void *priv)
        and drop all framing state. */
     if (dev->n_wc++ < 300)
         pp_log("PP: raw write_ctrl %02X\n", val);
+    pp_raw(dev, "write_ctrl", val);
 
     if ((val ^ dev->last_ctrl) & 0x0c) {
         dev->in_have = 0;
@@ -481,8 +501,6 @@ pp_read_status(void *priv)
     if (dev->lpt != NULL)
         pp_ack_edge(dev, ((lpt_t *) dev->lpt)->dat);
 
-    if (dev->n_rs++ < 60)
-        pp_log("PP: raw read_status #%d\n", dev->n_rs);
 
     /* NG-DONGLE sweep: answer the probe's single STATUS read with the swept value. */
     if (dev->ng_sweep && dev->n_rs == 1) {
@@ -503,14 +521,16 @@ pp_read_status(void *priv)
                    dev->idle_polls);
     }
 
+    pp_raw(dev, "read_status", st);
     return st;
 }
 
 static uint8_t
 pp_read_ctrl(void *priv)
 {
-    const pp_t *dev = (const pp_t *) priv;
+    pp_t *dev = (pp_t *) priv;
 
+    pp_raw(dev, "read_ctrl", dev->last_ctrl);
     return dev->last_ctrl;
 }
 
@@ -559,6 +579,7 @@ pp_read_data(void *priv)
     if (dev->n_rd++ < 200)
         pp_log("PP: raw read_data latch %02X -> %02X (mode %d)\n", latch, out, dev->ng_mode);
 
+    pp_raw(dev, "read_data", out);
     return out;
 }
 
@@ -837,10 +858,39 @@ pp_init(const device_t *info)
     const int  bi  = device_get_config_int("banner");
     const int  ti  = device_get_config_int("territory");
     char       banner[31];
+    char       img_banner[64];
+    char       img_terr[16];
+    char       img_rel[64];
 
-    snprintf(banner, sizeof(banner), "%s (%s)",
-             pp_banners[(bi >= 0 && bi < PP_NBANNERS) ? bi : 0],
-             pp_terrs[(ti >= 0 && ti < PP_NTERRS) ? ti : 0]);
+    /* The image knows what it is, and a cabinet's dongle always matched the disk
+       it shipped with, so both fields default to whatever MAIN.SET says rather
+       than to a fixed guess.  A 2000-generation image asked for by a dongle
+       reporting "Version 99 (AT)" fails its own check, which is exactly the
+       trap that made the games report PDONGLE FAILED.  Either field can still
+       be pinned by hand for testing an image against the wrong dongle. */
+    const int have_img = photoplay_image_ident(img_banner, sizeof(img_banner),
+                                               img_terr, sizeof(img_terr));
+
+    /* MAIN.SET carries the composed form, "Version 2000 (DE)".  Split the
+       territory back off so a hand-picked one can be substituted. */
+    snprintf(img_rel, sizeof(img_rel), "%s", img_banner);
+    {
+        char *paren = strchr(img_rel, '(');
+
+        while ((paren != NULL) && (paren > img_rel) && (paren[-1] == ' '))
+            paren--;
+        if (paren != NULL)
+            *paren = 0;
+    }
+
+    const char *rel = (have_img && (bi < 0) && img_rel[0])
+                    ? img_rel
+                    : pp_banners[(bi >= 0 && bi < PP_NBANNERS) ? bi : 0];
+    const char *ter = (have_img && (ti < 0) && img_terr[0])
+                    ? img_terr
+                    : pp_terrs[(ti >= 0 && ti < PP_NTERRS) ? ti : 0];
+
+    snprintf(banner, sizeof(banner), "%s (%s)", rel, ter);
 
     /* Lay the record out the way the hardware does. */
     const size_t blen = strlen(banner);
@@ -943,10 +993,11 @@ static const device_config_t pp_config[] = {
         .description    = "Version",
         .type           = CONFIG_SELECTION,
         .default_string = NULL,
-        .default_int    = 0,
+        .default_int    = -1,
         .file_filter    = NULL,
         .spinner        = { 0 },
         .selection      = {
+            { .description = "Auto (from the disk image)", .value = -1 },
             { .description = "Photo Play 1999",        .value = 0 },
             { .description = "Photo Play 2000",        .value = 1 },
             { .description = "Photo Play 2001 / IGO 1", .value = 2 },
@@ -966,10 +1017,11 @@ static const device_config_t pp_config[] = {
         .description    = "Territory",
         .type           = CONFIG_SELECTION,
         .default_string = NULL,
-        .default_int    = 0,
+        .default_int    = -1,
         .file_filter    = NULL,
         .spinner        = { 0 },
         .selection      = {
+            { .description = "Auto (from the disk image)", .value = -1 },
             { .description = "AT - Austria",              .value =  0 },
             { .description = "BE - Belgium",              .value =  1 },
             { .description = "CY - Cyprus",               .value =  2 },

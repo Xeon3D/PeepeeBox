@@ -71,3 +71,8 @@ CMakeLists.txt.user
 
 # Jetbrains CLion
 .idea
+
+# Disk images and folders of them.  These are gigabytes each and are not ours to
+# redistribute.
+*.img
+PP2000/

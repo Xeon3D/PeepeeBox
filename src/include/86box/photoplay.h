@@ -59,6 +59,20 @@ extern void photoplay_set_fdd_enabled(int enabled);
    "IGO 5 PT" on success, 0 if the image is missing, foreign or unreadable. */
 extern int  photoplay_identify(const char *img_path, char *out, size_t outsz);
 
+/* The same, but also handing back the two raw fields the dongle needs: the
+   MAIN.SET "Version" string verbatim (e.g. "Version 2000 (DE)"), which is what
+   the guest compares its dongle record against, and the bare territory code.
+   Either out-pointer may be NULL. */
+extern int  photoplay_identify_ex(const char *img_path, char *out, size_t outsz,
+                                  char *banner_out, size_t bsz,
+                                  char *terr_out, size_t tsz);
+
+/* What the disk image sitting next to the executable says it is.  Answers from a
+   cache, so the dongle can ask at every hard reset without re-reading the FAT.
+   Returns 1 when the image identified itself. */
+extern int  photoplay_image_ident(char *banner_out, size_t bsz,
+                                  char *terr_out, size_t tsz);
+
 #ifdef __cplusplus
 }
 #endif

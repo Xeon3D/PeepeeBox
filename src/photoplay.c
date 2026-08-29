@@ -250,6 +250,36 @@ pp_apply_disk(void)
     }
 }
 
+/* What the disk image says it is, cached.  The dongle asks again on every hard
+   reset, and the answer cannot change without restarting the emulator, so the
+   FAT is walked once. */
+static int  pp_ident_done = 0;
+static int  pp_ident_ok   = 0;
+static char pp_ident_banner[64];
+static char pp_ident_terr[16];
+
+int
+photoplay_image_ident(char *banner_out, size_t bsz, char *terr_out, size_t tsz)
+{
+    if (!pp_ident_done) {
+        char fn[MAX_IMAGE_PATH_LEN];
+        char disp[64];
+
+        pp_ident_done = 1;
+        path_append_filename(fn, exe_path, PHOTOPLAY_DISK_IMAGE);
+        pp_ident_ok   = photoplay_identify_ex(fn, disp, sizeof(disp),
+                                              pp_ident_banner, sizeof(pp_ident_banner),
+                                              pp_ident_terr, sizeof(pp_ident_terr));
+    }
+
+    if (banner_out != NULL)
+        snprintf(banner_out, bsz, "%s", pp_ident_banner);
+    if (terr_out != NULL)
+        snprintf(terr_out, tsz, "%s", pp_ident_terr);
+
+    return pp_ident_ok && (pp_ident_banner[0] != 0);
+}
+
 /* The optional CD-ROM drive.
 
    The cabinets shipped without one -- everything ran from the hard disk -- but
