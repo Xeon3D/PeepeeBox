@@ -287,13 +287,64 @@ which for the observed `0xA0` gives `ah = 0x91`. `al` is a caller parameter,
 preserved across that transform and sent as part of the payload — so `{86, 2E,
 D0}` carries an argument this end currently ignores.
 
-## What is still needed
+## The check, finally: one constant, everywhere
 
-The transport is done and proven. What is not known is **what the two bytes
-returned by command `0xA0` are supposed to be.** They are not record bytes. The
-next step is on the guest side rather than in this library: find what `MENU.EXE`
-and a game EXE each do with that answer, and why one accepts `Ve` and the other
-does not.
+Decompiling the guests answers it. The library's public entry is a far call taking
+four words:
+
+```
+    dongle(func, port, in, out)
+```
+
+`func` dispatches at `0x062D`. Functions `1..8` all take the same path — send 3
+bytes from `DS:SI`, read 2 into `ES:DI` — and the two nibble-swap/XOR transforms
+between `0x06D6` and `0x07E8` cancel exactly, so the byte that reaches the wire is
+simply:
+
+```
+    command = func + 0x9F
+```
+
+The observed `0xA0` is therefore **function 1**. Above it sits a thin C wrapper at
+library offset `0x0A`, which every executable calls and nothing else does: it
+fixes `func = 1`, reverses a 3-byte input, and widens the 2-byte reply into a
+`long` with the high word zeroed.
+
+Its caller in `SOLI.EXE` is the whole protection check, and it is four
+instructions:
+
+```
+    push &v ; push 0x2CB7 ; push 0x0B ; call far <wrapper>
+    cmp  DWORD PTR [bp-6], 0x4693
+    jne  <fail>
+```
+
+`DS:0x2CB7` holds `D0 2E 86` — which the wrapper reverses to the `{86, 2E, D0}`
+seen on the wire. So the device must answer that challenge with `0x4693`, low byte
+first: `93` then `46`.
+
+**The pair is a constant.** Harvested from every executable on the DE image — all
+29 games and `MENU.EXE` — and from `MENU.EXE` on all four 2000 images (DE, IT ×2,
+NL), the challenge is `D0 2E 86` and the expected answer `0x00004693` every single
+time. It is not per-title, not per-territory, and not per-dongle.
+
+That also explains the asymmetry that started this: the menu and the games run the
+*same* query and compare against the *same* constant. The menu simply does not
+treat a mismatch as fatal to reaching its attract screen, where a game does.
+
+### What this is, and is not
+
+The device now answers this one query from a recorded table. **The function inside
+the real dongle that maps a challenge to a response is still unknown**, and
+nothing here can compute an answer for a challenge that has not been seen. Since
+every shipped 2000-generation binary asks exactly one question, that is enough to
+run them all — but it is a lookup, not an emulation, and the code says so. Any new
+challenge belongs in the same table; the fallback makes its absence loud rather
+than silent.
+
+The other query on the wire needs nothing: the one-byte read is the parallel-port
+autodetect at `0x0BAD`, which only checks whether the transport worked and never
+looks at the value.
 
 ## Method note
 

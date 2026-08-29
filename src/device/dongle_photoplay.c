@@ -96,6 +96,12 @@ typedef struct {
     uint8_t key;
     int     want_nonce;
 
+    uint8_t cmd; /* the byte 0x11FA sends, descrambled */
+    int     have_cmd;
+    int     streamed;    /* the reply has been handed over; ignore trailing wire noise */
+    uint8_t arg[8]; /* the payload after it, descrambled */
+    int     nargs;
+
     uint8_t tx[CD_RECORD];
     int     tx_len;
     int     tx_bit;
@@ -473,6 +479,9 @@ cd_reset(cd_t *cd)
     cd->nhist      = 0;
     cd->key        = 0;
     cd->want_nonce = 1;
+    cd->have_cmd   = 0;
+    cd->streamed   = 0;
+    cd->nargs      = 0;
     cd->tx_len     = 0;
     cd->tx_bit     = 0;
     cd->attn       = 0;
@@ -506,14 +515,61 @@ cd_assemble(cd_t *cd, uint8_t val, uint8_t *out)
     return 0;
 }
 
-/* Queue the record, scrambled with the key the host just told us about. */
+/* The one query the 2000 generation's protection actually turns on.
+ *
+ * The API this reaches is `dongle(func, port, in, out)` -- send `in`, receive `out` --
+ * and the guest's own wrapper (library offset 0x0A) fixes func = 1, reverses a 3-byte
+ * input and widens the 2-byte reply into a long.  Its caller then does, verbatim:
+ *
+ *     cmp DWORD PTR [bp-6], 0x4693
+ *     jne <fail>
+ *
+ * That constant, and the challenge that earns it, are the same in every one of the 29
+ * game executables, in MENU.EXE, and across all four 2000 images to hand -- one fixed
+ * pair, not a per-title or per-territory one.  Docs/15.
+ *
+ * So this is a recorded answer, not a derived one: the function inside the real device
+ * that maps the challenge to the response is still unknown, and nothing here can compute
+ * it for a challenge that has not been seen.  It is the honest shape of what has been
+ * established.  Should another challenge ever turn up, it belongs in this table beside
+ * this one, and the fallback below will make its absence obvious rather than silent. */
+#define CD_CMD_KEY 0xA0 /* API function 1; the wire command byte is func + 0x9F */
+
+static const struct {
+    uint8_t cmd;
+    uint8_t arg[3];
+    uint8_t reply[2];
+} cd_answers[] = {
+    { CD_CMD_KEY, { 0x86, 0x2E, 0xD0 }, { 0x93, 0x46 } } /* -> the long 0x00004693 */
+};
+#define CD_NANSWERS ((int) (sizeof(cd_answers) / sizeof(cd_answers[0])))
+
+/* Queue whatever this command is owed, scrambled with the key the host just told us. */
 static void
 cd_prepare(pp_t *dev)
 {
     cd_t *cd = &dev->cd;
 
-    cd->tx_len = CD_RECORD;
     cd->tx_bit = 0;
+
+    for (int a = 0; a < CD_NANSWERS; a++) {
+        if ((cd->cmd != cd_answers[a].cmd) || (cd->nargs != 3))
+            continue;
+        if (memcmp(cd->arg, cd_answers[a].arg, 3) != 0)
+            continue;
+
+        cd->tx_len = 2;
+        cd->tx[0]  = (uint8_t) (cd_answers[a].reply[0] ^ cd->key);
+        cd->tx[1]  = (uint8_t) (cd_answers[a].reply[1] ^ cd->key);
+        pp_log("PP: CDONGLE answering the licence query with %02X%02X\n",
+               cd_answers[a].reply[1], cd_answers[a].reply[0]);
+        return;
+    }
+
+    /* Everything else gets the record.  The only other query seen is the parallel-port
+       autodetect (`0x0BAD`), which reads one byte and looks solely at whether the
+       transport worked -- it never examines the value. */
+    cd->tx_len = CD_RECORD;
     for (int i = 0; i < CD_RECORD; i++)
         cd->tx[i] = (uint8_t) (dev->block[i] ^ cd->key);
 }
@@ -523,6 +579,12 @@ cd_write_data(pp_t *dev, uint8_t val)
 {
     cd_t   *cd = &dev->cd;
     uint8_t b;
+
+    /* Is this write sitting immediately after a byte's D? trailer, rather than inside
+       the next byte's frame?  That is the only place the host's "claim the reply" byte
+       can appear, and position is the only thing that separates it from a frame write:
+       the frame's own C? and 8? writes look identical in every bit that matters. */
+    const int after_trailer = (cd->nhist == 1) && ((cd->hist[0] & 0xf0) == 0xd0);
 
     /* The library opens every transaction with a BF/7F/BF pulse train (0x0792).  It is
        the one unambiguous frame marker on this wire, so use it to drop any half-decoded
@@ -544,7 +606,10 @@ cd_write_data(pp_t *dev, uint8_t val)
     switch (cd->state) {
         case CD_IDLE:
         case CD_READY:
-            if (!cd_assemble(cd, val, &b))
+            /* Once the reply has gone out, the tail of the transaction is the host
+               winding the link down.  Those writes can still form a valid-looking
+               frame, so stop decoding until the next reset pulse train. */
+            if (cd->streamed || !cd_assemble(cd, val, &b))
                 break;
             if (cd->want_nonce) {
                 /* Sent while the key is still zero, so this is the nonce in clear.  The
@@ -553,12 +618,24 @@ cd_write_data(pp_t *dev, uint8_t val)
                 cd->want_nonce = 0;
                 pp_log("PP: CDONGLE nonce %02X -> key %02X\n", b, cd->key);
             } else {
-                pp_log("PP: CDONGLE command byte %02X (raw %02X)\n",
-                       (uint8_t) (b ^ cd->key), b);
-                /* Whatever was asked for, there is only one thing to answer with.  Go
-                   ready now: between the nibble writes the host reads the CONTROL port,
-                   never STATUS, so it cannot see ACK until it reaches its poll loop --
-                   which means this end does not have to know the command's length. */
+                /* 0x11FA sends the command byte first -- it is the one with the D0
+                   trailer on the wire -- and everything after it is the payload. */
+                const uint8_t plain = (uint8_t) (b ^ cd->key);
+
+                if (!cd->have_cmd) {
+                    cd->cmd      = plain;
+                    cd->have_cmd = 1;
+                    pp_log("PP: CDONGLE command %02X\n", plain);
+                } else {
+                    if (cd->nargs < (int) sizeof(cd->arg))
+                        cd->arg[cd->nargs++] = plain;
+                    pp_log("PP: CDONGLE arg %d = %02X\n", cd->nargs, plain);
+                }
+
+                /* Re-answer on every byte.  Going ready early is safe: between the
+                   nibble writes the host reads the CONTROL port, never STATUS, so it
+                   cannot see ACK until it reaches its poll loop -- which means this end
+                   never has to know how long a command is. */
                 cd_prepare(dev);
                 cd->state = CD_READY;
             }
@@ -592,13 +669,14 @@ cd_write_data(pp_t *dev, uint8_t val)
             if (val == 0xFF) {
                 cd->tx_bit++;
                 if (cd->tx_bit >= (cd->tx_len * 8)) {
-                    /* The library's outer loop can ask for the record again without
-                       another transaction, so rewind and go ready rather than going
-                       silent. */
-                    pp_log("PP: CDONGLE record streamed\n");
-                    cd->tx_bit = 0;
-                    cd->attn   = 0;
-                    cd->state  = CD_READY;
+                    /* Reply delivered: the device goes idle, which means ACK follows
+                       bit 5 of whatever the host last wrote.  Holding it high here
+                       instead strands the host in the wind-down loop that writes 8F
+                       and waits for ACK to fall. */
+                    pp_log("PP: CDONGLE reply delivered, %d bytes\n", cd->tx_len);
+                    cd->streamed = 1;
+                    cd->attn     = 0;
+                    cd->state    = CD_IDLE;
                 }
             }
             break;
@@ -607,8 +685,13 @@ cd_write_data(pp_t *dev, uint8_t val)
             break;
     }
 
-    /* The host acknowledges "ready" with CF and then waits for ACK to fall. */
-    if ((cd->state == CD_READY) && (val == 0xCF))
+    /* The host claims the waiting reply and then waits for ACK to fall.  There are two
+       read routines and they use different bytes to do it -- 0x0F6F writes CF, 0xFCA
+       writes 8F -- so keying on one value strands the other in its retry loop forever.
+       Keying on a bit does not work either: a frame's own C? write is indistinguishable
+       from CF.  What identifies it is where it sits -- straight after a trailer, with no
+       frame under way. */
+    if ((cd->state == CD_READY) && after_trailer && ((val & 0xf0) != 0xf0))
         cd->state = CD_ARMED;
 }
 
@@ -618,26 +701,24 @@ cd_ack(const pp_t *dev)
 {
     const cd_t *cd = &dev->cd;
 
-    switch (cd->state) {
-        case CD_READY:
-            return 1;
+    if (cd->state == CD_STREAM) {
+        if (cd->tx_bit < (cd->tx_len * 8)) {
+            const int byte = cd->tx_bit >> 3;
+            const int bit  = 7 - (cd->tx_bit & 7);
 
-        case CD_HS:
-            /* Answer each attention write with its own bit 5. */
-            return (cd->last & 0x20) ? 1 : 0;
-
-        case CD_STREAM:
-            if (cd->tx_bit < (cd->tx_len * 8)) {
-                const int byte = cd->tx_bit >> 3;
-                const int bit  = 7 - (cd->tx_bit & 7);
-
-                return (cd->tx[byte] >> bit) & 1;
-            }
-            return 0;
-
-        default:
-            return 0;
+            return (cd->tx[byte] >> bit) & 1;
+        }
+        return 0;
     }
+
+    /* Held high while a reply is waiting and the host has not yet claimed it -- that is
+       what lets the poll loop out.  Otherwise ACK echoes bit 5 of the byte the host last
+       wrote, which is what makes the attention handshake's four pairs come out right and
+       what lets the line go once a transaction is over. */
+    if (cd->state == CD_READY)
+        return 1;
+
+    return (cd->last & 0x20) ? 1 : 0;
 }
 
 /* Full raw-wire trace.  The 1999 bit-bang is byte-framed, so the transaction logging
