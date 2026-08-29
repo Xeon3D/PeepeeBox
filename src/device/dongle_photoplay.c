@@ -1,8 +1,19 @@
 /*
- * PeepeeBox - funworld Photo Play / I.G.O. HASP dongle emulation.
+ * PeepeeBox - funworld Photo Play / I.G.O. protection dongle emulation.
+ *
+ * NOT a HASP.  Earlier notes here and in Docs/01, 04, 07, 09 called it one and said the
+ * later generations reached it through Aladdin's linked-in library.  That was an
+ * assumption and it is wrong (Docs/13).  Five of these dongles were dumped and their
+ * firmware disassembled and executed (Docs/12): the 1999 device is funworld's own
+ * two-chip design -- an AT89C2051-class 8051 holding all the logic, plus a 24Cxx I2C
+ * EEPROM holding the licence record.  "H" is merely one of ten dongle types MENU.EXE
+ * learned to probe for over the years, and no generation has been shown to use one.
+ *
+ * The dongle firmware confirmed the transport and grammar below line for line, from the
+ * device's side, having been recovered originally from the game binaries' side.
  *
  * TRANSPORT (recovered from the 1999-generation game binaries, which bit-bang the
- * parallel port inline instead of going through Aladdin's library -- see Docs/07):
+ * parallel port inline; independently confirmed from the dongle firmware, Docs/12):
  *
  *   host -> dongle : two nibbles per byte, low first, on DATA bits 0-3 (bits 5-7 held
  *                    high, bit 4 low), each latched on a STROBE rising edge.
@@ -100,12 +111,49 @@ typedef struct {
 static const int pp_send_len[4] = { 0, 10, 50, 2 };
 static const int pp_recv_len[4] = { 0, 4, 0, 48 };
 
-/* Banner NUL-padded to 30 bytes, then the eight dwords, exactly as KEYN.COM serves them.
-   The banner is per-image; it must equal MAIN.SET["Version"] (see Docs/08). */
-static const uint8_t pp_tail[32] = {
-    0x8b, 0x03, 0x00, 0x00, 0xcd, 0x81, 0x01, 0x00, 0x60, 0xd7, 0x01, 0x00, 0x92, 0x9b, 0x02, 0x00,
-    0x7e, 0x28, 0x01, 0x00, 0x9d, 0x08, 0x00, 0x00, 0xa6, 0x73, 0x02, 0x00, 0x3e, 0xbf, 0xde, 0xfd
+/* The licence record, as the real 1999 dongles hold it in their EEPROM (Docs/12):
+
+       char     banner[16];    NUL-terminated, exactly filling the field
+       uint32_t v[8];          little-endian
+
+   48 bytes, which is exactly what a type-3 read returns.
+
+   This used to be built KEYN.COM's way -- banner padded to *30* bytes, then the
+   dwords -- which put every dword 14 bytes too late.  That was not cosmetic.
+   Docs/14 showed each 1999 photo game reads one specific dword straight out of
+   this block and uses it as the LCG seed that decrypts its picture database:
+
+       FINDIT  block+0x1C = v[3]
+       MOSAIC  block+0x20 = v[4]
+       FMEMO   block+0x24 = v[5]
+
+   Under the old layout those offsets landed mid-dword, so a game got a wrong
+   but non-zero key, took the decrypting path, and read noise.  That is the
+   "photo games stall while loading pictures" defect previously written off as
+   pre-existing and unrelated to the dongle.  It was the dongle.
+
+   v[1]..v[6] are byte-identical on every unit dumped and across generations --
+   funworld's fixed per-title content keys, not per-site values.  v[0] and v[7]
+   do vary per unit and no game is known to read either; these are r3_alt's, so
+   for a 1999 SP image this device now serves a block that is byte-for-byte that
+   physical dongle's. */
+static const uint32_t pp_dwords[8] = {
+    0x00000000, /* v[0]  per-unit; uninitialised host memory on a real dongle */
+    0x0000038B, /* v[1] */
+    0x000181CD, /* v[2] */
+    0x0001D760, /* v[3]  FINDIT picture database key */
+    0x00029B92, /* v[4]  MOSAIC picture database key */
+    0x0001287E, /* v[5]  FMEMO  picture database key */
+    0x0000089D, /* v[6] */
+    0xBAE8A135  /* v[7]  per-unit */
 };
+
+/* A 1999 banner is "Version 99 (XX)" -- 15 characters, so the 16-byte field is
+   exact.  The later banners offered below do not fit, and they belong to dongle
+   families this device is not (Docs/13); for those the block keeps the old
+   30-byte-banner layout so that whatever worked before still does. */
+#define PP_BANNER_1999 16
+#define PP_BANNER_KEYN 30
 
 /* The selectable banners.  The value is an index into pp_banners[]. */
 static const char *pp_banners[] = {
@@ -148,6 +196,54 @@ pp_next_key(uint8_t k)
     return k;
 }
 
+/* the 4-byte keystream type 1 answers under: a clamped +0x25 walk (Docs/12) */
+static uint8_t
+pp_next_key1(uint8_t k)
+{
+    k = (uint8_t) (k + 0x25);
+    if (k < 0x1E)
+        k = 0x7B;
+    if (k > 0xAE)
+        k = 0x17;
+    return k;
+}
+
+/* Type 1: a keyed hash of the 8-byte name the host sends, recovered from the
+   dongle firmware (Docs/12).  It touches no EEPROM state at all -- the answer is
+   a pure function of the name and the nonce, identical on every dongle of this
+   generation, which is why it can be reproduced exactly here.  All arithmetic is
+   mod 256.  No 1999 binary is known to call it; this is correctness, not a
+   dependency. */
+static void
+pp_type1(const uint8_t *name, uint8_t *out)
+{
+    uint8_t v0 = (uint8_t) (4 * name[0] + 0x11 + 3 * name[1]);
+    uint8_t v1 = (uint8_t) (7 * name[2] + 0xA7 + 2 * name[3]);
+    uint8_t v2 = (uint8_t) (4 * name[4] + 0x75 + 7 * name[5]);
+    uint8_t v3 = (uint8_t) (name[6] + 0x17 + 4 * name[7]);
+
+    /* one extra round, selected by the data itself */
+    switch ((v0 + v1) & 3) {
+        case 0:
+            v3 = (uint8_t) (6 * v3 + v1 + 0x75);
+            break;
+        case 1:
+            v2 = (uint8_t) (v0 + 2 * v3 + 0x0C);
+            break;
+        case 2:
+            v1 = (uint8_t) (4 * v0 + 0x37 + 4 * v1);
+            break;
+        default:
+            v0 = (uint8_t) (5 * v2 + 0x64);
+            break;
+    }
+
+    out[0] = v0;
+    out[1] = v1;
+    out[2] = v2;
+    out[3] = v3;
+}
+
 static void
 pp_queue(pp_t *dev, uint8_t b)
 {
@@ -176,11 +272,37 @@ pp_respond(pp_t *dev)
         }
         pp_log("PP: type 3, nonce %02X -> 48 encrypted bytes\n", dev->cmd[1]);
     } else if (type == 1) {
-        /* send 10 / receive 4.  Not exercised by the boot path; the content is not
-           known yet, so answer zeros and log the request for later study. */
-        for (int i = 0; i < pp_recv_len[1]; i++)
-            pp_queue(dev, 0x00);
-        pp_log("PP: type 1 (10 in / 4 out) -- payload UNKNOWN, answered with zeros\n");
+        /* keyed hash of the 8-byte name, then XORed under the 4-byte keystream */
+        uint8_t h[4];
+        uint8_t k = dev->cmd[1];
+
+        pp_type1(&dev->cmd[2], h);
+        for (int i = 0; i < pp_recv_len[1]; i++) {
+            pp_queue(dev, (uint8_t) (h[i] ^ k));
+            k = pp_next_key1(k);
+        }
+        pp_log("PP: type 1, nonce %02X, name %02X%02X%02X%02X%02X%02X%02X%02X"
+               " -> %02X %02X %02X %02X\n", dev->cmd[1],
+               dev->cmd[2], dev->cmd[3], dev->cmd[4], dev->cmd[5],
+               dev->cmd[6], dev->cmd[7], dev->cmd[8], dev->cmd[9],
+               h[0], h[1], h[2], h[3]);
+    } else if (type == 2) {
+        /* Programming: the host sends the 48-byte record encrypted under the same
+           keystream type 3 answers with, and the dongle writes it to EEPROM.  The
+           XOR is its own inverse.  There is no authentication on this command --
+           that is how the real hardware behaves (Docs/12).
+
+           Applied in memory only: a real dongle keeps it, but here the profile
+           rebuilds the block from the configured banner on every hard reset, and
+           nothing but funworld's own programming tool is known to send this. */
+        uint8_t k = dev->cmd[1];
+
+        for (int i = 0; i < 48; i++) {
+            dev->block[i] = (uint8_t) (dev->cmd[2 + i] ^ k);
+            k = pp_next_key(k);
+        }
+        pp_log("PP: type 2, record reprogrammed in memory, banner now \"%.16s\"\n",
+               (const char *) dev->block);
     } else {
         /* type 0 and type 2 expect nothing back */
         pp_log("PP: type %d -- no response expected\n", type);
@@ -677,12 +799,25 @@ pp_init(const device_t *info)
              pp_banners[(bi >= 0 && bi < PP_NBANNERS) ? bi : 0],
              pp_terrs[(ti >= 0 && ti < PP_NTERRS) ? ti : 0]);
 
-    /* banner NUL-padded to 30, then the eight dwords */
-    memset(dev->block, 0, sizeof(dev->block));
-    memcpy(dev->block, banner, strlen(banner));
-    memcpy(dev->block + 30, pp_tail, sizeof(pp_tail));
+    /* Lay the record out the way the hardware does. */
+    const size_t blen = strlen(banner);
+    const size_t voff = (blen < PP_BANNER_1999) ? PP_BANNER_1999 : PP_BANNER_KEYN;
 
-    pp_log("PP: Photo Play dongle attached, banner \"%s\"\n", banner);
+    memset(dev->block, 0, sizeof(dev->block));
+    memcpy(dev->block, banner, blen);
+    for (size_t n = 0; n < 8; n++) {
+        const size_t o = voff + (n * 4);
+
+        if ((o + 4) > sizeof(dev->block))
+            break;
+        dev->block[o]     = (uint8_t) (pp_dwords[n]);
+        dev->block[o + 1] = (uint8_t) (pp_dwords[n] >> 8);
+        dev->block[o + 2] = (uint8_t) (pp_dwords[n] >> 16);
+        dev->block[o + 3] = (uint8_t) (pp_dwords[n] >> 24);
+    }
+
+    pp_log("PP: Photo Play dongle attached, banner \"%s\", dwords at +%02X\n",
+           banner, (unsigned) voff);
 
     dev->lpt = lpt_attach(pp_write_data, pp_write_ctrl, pp_strobe,
                           pp_read_status, pp_read_ctrl, NULL, NULL, dev);

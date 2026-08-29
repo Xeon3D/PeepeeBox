@@ -5,8 +5,8 @@ PeepeeBox
 one machine: a funworld Photo Play / I.G.O. arcade kiosk, including both of its
 hardware protection tokens.**
 
-The cabinets are gated by an Aladdin HASP dongle on the parallel port *and* a
-Dallas DS1982 iButton on a 1-Wire link, and they need both. PeepeeBox answers
+The cabinets are gated by a funworld dongle on the parallel port *and* a Dallas
+DS1982 iButton on a 1-Wire link, and they need both. PeepeeBox answers
 both, so a completely unmodified disk image boots and runs with zero bytes
 changed on disk — no patched executables, no software bypass.
 

@@ -48,11 +48,15 @@ missing disk should not look like a corrupt one.
 This is the reason PeepeeBox exists. The kiosks are gated by **two independent
 hardware tokens**, and both must answer before the menu or any game will run.
 Emulating only one changes nothing: with the iButton absent, every game aborts
-with `DS1982 FAILED` regardless of what the HASP says.
+with `DS1982 FAILED` regardless of what the other one says.
 
-### 1. The HASP dongle, on the parallel port
+### 1. The funworld dongle, on the parallel port
 
-The 1999 generation does not use Aladdin's library — it bit-bangs LPT inline.
+**Not a HASP.** Five of these were dumped and their firmware disassembled and
+executed (`docs/research/12`): it is funworld's own two-chip design — an
+AT89C2051-class 8051 plus a 24Cxx I²C EEPROM holding the licence record. Aladdin
+is not involved in any generation (`docs/research/13`); "H" is one of ten dongle
+types the front end learned to probe for. The 1999 games bit-bang LPT inline.
 
 - **Host → dongle:** two nibbles per byte on DATA 0–3, each latched on a STROBE
   rising edge.
@@ -66,7 +70,11 @@ under a keystream seeded with that nonce. The nonce is drawn at random per
 transaction, so this is a genuine challenge/response — a recorded exchange cannot
 be replayed.
 
-The 48-byte block carries the **version banner**, which the guest string-matches.
+The 48-byte block is `char banner[16]; uint32 v[8]` — the exact record the real
+EEPROMs hold, so PeepeeBox serves a block byte-identical to a dumped dongle. Six
+of the dwords are funworld's fixed per-title keys: each photo game reads one and
+uses it as the LCG seed that decrypts its picture database
+(`docs/research/14`). The banner is string-matched by the guest.
 It must equal `MAIN.SET["Version"]` for the image being run, which differs per
 image and per territory, so banner and territory stay selectable — that is what
 the **Tools → Dongle** dialog is for. Get it wrong and the game reports
