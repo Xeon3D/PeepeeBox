@@ -27,6 +27,7 @@ and the corrections are usually the most interesting part.
 | `12-dongle-silicon.md` | **The dongle, from its own silicon.** Five units dumped, firmware disassembled and executed |
 | `13-dongle-families.md` | **It is not a HASP.** Corrects the framing running through 01, 04, 07, 09, 10, 11 |
 | `14-dongle-dwords-are-database-keys.md` | **The dwords are content keys.** Each photo game reads one to decrypt its picture database |
+| `15-cdongle.md` | **The 2000 generation's second dongle, on the wire.** CDONGLE and PDONGLE are one check; the transport decoded |
 
 ## Sibling investigation
 
