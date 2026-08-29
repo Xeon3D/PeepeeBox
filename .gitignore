@@ -44,7 +44,12 @@ CMakeFiles
 /out
 
 # Windows resource compiler
-RC*
+# PeepeeBox: anchored to the repository root.  Unanchored, this pattern matches
+# at any depth -- and because git on Windows is case-insensitive by default it
+# also matches lowercase 'rc', which silently swallowed all 209 files of
+# src/qt/qdarkstyle/dark/rc/ when this repository was first populated.  Anyone
+# cloning it could not build the Qt GUI.
+/RC*
 
 # Qt Creator
 CMakeLists.txt.user
