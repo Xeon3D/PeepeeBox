@@ -71,6 +71,3 @@ CMakeLists.txt.user
 
 # Jetbrains CLion
 .idea
-
-# Python bytecode from scripts/
-__pycache__/
