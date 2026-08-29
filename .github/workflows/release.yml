@@ -65,7 +65,7 @@ jobs:
             vulkan-headers:p
             llvm-openmp:p
             zstd:p
-            zip:p
+            zip
 
       - uses: actions/checkout@v4
 

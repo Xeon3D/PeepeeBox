@@ -953,7 +953,7 @@ MainWindow::closeEvent(QCloseEvent *event)
     skip_exit_confirmation       = false;
 
     if (!skip_confirmation && confirm_exit && confirm_exit_cmdl && cpu_thread_run) {
-        QMessageBox questionbox(QMessageBox::Icon::Question, "86Box", tr("Are you sure you want to exit 86Box?"), QMessageBox::Yes | QMessageBox::No, this);
+        QMessageBox questionbox(QMessageBox::Icon::Question, EMU_NAME, tr("Are you sure you want to exit %1?").arg(EMU_NAME), QMessageBox::Yes | QMessageBox::No, this);
         auto        chkbox = new QCheckBox(tr("Don't show this message again"));
         questionbox.setCheckBox(chkbox);
         chkbox->setChecked(!confirm_exit);
@@ -1877,23 +1877,6 @@ MainWindow::focusOutEvent(QFocusEvent *event)
 }
 
 static void
-video_toggle_option(QAction *action, int *val)
-{
-    startblit();
-    *val ^= 1;
-    video_copy = (video_grayscale || invert_display) ? video_transform_copy : memcpy;
-    action->setChecked(*val > 0 ? true : false);
-    endblit();
-    config_save();
-    reset_screen_size();
-    device_force_redraw();
-    for (int i = 0; i < MONITORS_NUM; i++) {
-        if (monitors[i].target_buffer)
-            video_force_resize_set_monitor(1, i);
-    }
-}
-
-static void
 update_scaled_checkboxes(Ui::MainWindow *ui, QAction *selected)
 {
     ui->action0_5x->setChecked(ui->action0_5x == selected);
@@ -1998,25 +1981,6 @@ MainWindow::on_actionLinear_triggered()
 {
     video_filter_method = 1;
     ui->actionNearest->setChecked(false);
-}
-
-static void
-update_fullscreen_scale_checkboxes(Ui::MainWindow *ui, QAction *selected)
-{
-
-    {
-        auto widget = ui->stackedWidget->currentWidget();
-        ui->stackedWidget->onResize(widget->width(), widget->height());
-    }
-
-    for (int i = 1; i < MONITORS_NUM; i++) {
-        if (main_window->renderers[i])
-            main_window->renderers[i]->onResize(main_window->renderers[i]->width(),
-                                                main_window->renderers[i]->height());
-    }
-
-    device_force_redraw();
-    config_save();
 }
 
 void

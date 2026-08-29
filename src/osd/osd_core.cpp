@@ -369,7 +369,7 @@ static const MenuItem menu_items[] = {
     { nullptr, ACT_NONE, VIEW_MENU }, /* separator */
     { "Hard Reset",                ACT_HARDRESET,    VIEW_MENU, [] () -> bool { return true; }  },
     { "Toggle Fullscreen",         ACT_FULLSCREEN,   VIEW_MENU, [] () -> bool { return true; }  },
-    { "Exit 86Box",                ACT_EXIT,         VIEW_MENU, [] () -> bool { return true; }  },
+    { "Exit " EMU_NAME,            ACT_EXIT,         VIEW_MENU, [] () -> bool { return true; }  },
     { nullptr, ACT_NONE, VIEW_MENU }, /* separator */
     { "Close OSD",                 ACT_CLOSE_OSD,    VIEW_MENU, [] () -> bool { return true; }  },
 };
