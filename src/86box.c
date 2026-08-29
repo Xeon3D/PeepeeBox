@@ -193,7 +193,6 @@ int      confirm_drive_change                   = 1;              /* (G) PeepeeB
 int      confirm_exit                           = 1;              /* (G) enable exit confirmation */
 int      confirm_save                           = 1;              /* (G) enable save confirmation */
 int      chd_precache_level                     = 0;              /* (G) CHD precache level */
-int      enable_discord                         = 0;              /* (C) enable Discord integration */
 int      pit_mode                               = -1;             /* (C) force setting PIT mode */
 int      fm_driver                              = 0;              /* (C) select FM sound driver */
 int      open_dir_usr_path                      = 0;              /* (G) default file open dialog directory
@@ -240,16 +239,6 @@ struct accelKey acc_keys[NUM_ACCELS];
 // Default accelerator key values
 struct accelKey def_acc_keys[NUM_ACCELS] = {
     {
-        .name="send_ctrl_alt_del",
-        .desc="Send Control+Alt+Del",
-        .seq="Ctrl+F12"
-    },
-    {
-        .name="send_ctrl_alt_esc",
-        .desc="Send Control+Alt+Escape",
-        .seq="Ctrl+F10"
-    },
-    {
         .name="fullscreen",
         .desc="Toggle fullscreen",
         .seq="Ctrl+Alt+PgUp"
@@ -258,31 +247,6 @@ struct accelKey def_acc_keys[NUM_ACCELS] = {
         .name="toggle_ui_fullscreen",
         .desc="Toggle UI in fullscreen",
         .seq="Ctrl+Alt+PgDown"
-    },
-    {
-        .name="screenshot",
-        .desc="Take screenshot",
-        .seq="Ctrl+F11"
-    },
-    {
-        .name="raw_screenshot",
-        .desc="Take raw screenshot",
-        .seq=""
-    },
-    {
-        .name="copy_screenshot",
-        .desc="Copy screenshot",
-        .seq=""
-    },
-    {
-        .name="copy_raw_screenshot",
-        .desc="Copy raw screenshot",
-        .seq=""
-    },
-    {
-        .name="fast_forward",
-        .desc="Fast forward",
-        .seq="Ctrl+Alt+F"
     },
     {
         .name="release_mouse",
@@ -305,26 +269,11 @@ struct accelKey def_acc_keys[NUM_ACCELS] = {
         .seq="Ctrl+Alt+M"
     },
     {
-        .name="force_interpretation",
-        .desc="Force interpretation",
-        .seq="Ctrl+Alt+I"
-    },
-    {
-        .name="nmi",
-        .desc="Non-maskable interrupt",
-        .seq=""
-    },
-    {
-        .name="toggle_osd",
-        .desc="Toggle on-screen display",
-        .seq="Ctrl+Alt+O"
-    }
-,
-    {
         .name="exit",
         .desc="Exit",
         .seq=""
     }
+
 };
 
 char vmm_path[1024] = { '\0' }; /* VM manager path to scan for VMs */

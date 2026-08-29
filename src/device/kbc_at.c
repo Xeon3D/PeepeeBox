@@ -240,7 +240,6 @@ kbc_translate(atkbc_t *dev, uint8_t val)
     int      xt_mode   = (dev->mem[0x20] & 0x20) && !(dev->misc_flags & FLAG_PS2);
     /* The IBM AT keyboard controller firmware does not apply translation in XT mode. */
     int      translate = !xt_mode && ((dev->mem[0x20] & 0x40) || (dev->is_type2));
-    uint8_t  kbc_ven   = dev->flags & KBC_VEN_MASK;
     int      ret       = - 1;
 
     /* Allow for scan code translation. */
@@ -2090,7 +2089,6 @@ read_p1(atkbc_t *dev)
               Compaq: Reserved;
               NCR: DMA mode.
      */
-    uint8_t kbc_ven = dev->flags & KBC_VEN_MASK;
     uint8_t ret     = 0x00;
 
     ret = machine_get_p1(dev->p1 & 0xfc) | (dev->p1 & 0x03);

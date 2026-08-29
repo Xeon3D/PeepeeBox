@@ -85,11 +85,6 @@ if(DYNAREC)
     add_compile_definitions(USE_DYNAREC)
 endif()
 
-if(DISCORD)
-    add_compile_definitions(DISCORD)
-    target_sources(86Box PRIVATE discord.c)
-endif()
-
 if(DEBUGREGS486)
     add_compile_definitions(USE_DEBUG_REGS_486)
 endif()

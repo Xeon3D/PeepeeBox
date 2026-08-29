@@ -222,7 +222,6 @@ extern int      confirm_drive_change;       /* (G) warn on CD-ROM/floppy attach 
 extern int      confirm_exit;               /* (G) enable exit confirmation */
 extern int      confirm_save;               /* (G) enable save confirmation */
 extern int      chd_precache_level;         /* (G) CHD precache level */
-extern int      enable_discord;             /* (C) enable Discord integration */
 extern int      force_10ms;                 /* (C) force 10ms CPU frame interval */
 extern int      jumpered_internal_ecp_dma;  /* (C) Jumpered internal EPC DMA */
 extern int      other_ide_present;          /* IDE controllers from non-IDE cards are present */
@@ -339,7 +338,10 @@ struct accelKey {
 	char desc[64];
 	char seq[64];
 };
-#define NUM_ACCELS 17
+/* PeepeeBox: was 17.  The accelerators for the menu items that no longer exist
+   -- screenshots, fast forward, Ctrl+Alt+Del/Esc, NMI, force interpretation and
+   the OSD toggle -- went with them, so they can no longer be bound to a key. */
+#define NUM_ACCELS 7
 extern struct accelKey acc_keys[NUM_ACCELS];
 extern struct accelKey def_acc_keys[NUM_ACCELS];
 extern int FindAccelerator(const char *name);

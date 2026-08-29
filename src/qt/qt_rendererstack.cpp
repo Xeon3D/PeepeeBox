@@ -566,7 +566,7 @@ RendererStack::closeEvent(QCloseEvent *event)
 {
     if (cpu_thread_run == 1 || is_quit == 0) {
         event->accept();
-        main_window->ui->actionShow_non_primary_monitors->setChecked(false);
+        /* PeepeeBox: the non-primary monitor toggle is gone. */
         return;
     }
     event->ignore();
