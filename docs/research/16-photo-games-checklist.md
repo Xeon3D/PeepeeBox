@@ -105,11 +105,26 @@ AMORE's three-character names and fail on everything longer.
 ### The structure of `S_j`
 
 1. **Separable in the nibbles**: `S(c) = a[hi] + b[lo]` mod 256, exactly, in every
-   position of every case — no contradiction over 3096 cracked keys.
-2. **`b` is linear in the bits of the low nibble**, so four weights give all
-   sixteen entries. This is why an affine model in the name *bytes* was
-   rank-deficient and died (`Docs/09`): the function is affine in its **bits**.
-3. Verified 667 / 810 / 911 / 708 over the four cases — **3096/3096**.
+   position of every case — no contradiction anywhere in the corpus.
+2. **`b` is linear in the bits of the low nibble**, and so is `a`. Four weights
+   give all sixteen low nibbles; three of the four high nibbles give the fourth.
+   This is why an affine model in the name *bytes* was rank-deficient and died
+   (`Docs/09`): the function is affine in its **bits**.
+3. Verified **3765/3765** — every picture in every dongle-keyed archive of all
+   four 2000 images, nothing uncovered.
+
+Three things are needed to get from the raw folds to full coverage, and each was
+found by watching what was still missing:
+
+- **`a` and `b` are pinned only up to one offset per connected component** of the
+  (hi, lo) graph. Space is nearly always a component of its own, so anchoring once
+  and propagating stops there and silently loses most of the table. Label the
+  components; join them where the bit-linearity of `a` pins the offset.
+- **`a[hi]` extends to unobserved high nibbles.** `a[3]-a[2]` and `a[5]-a[4]` are
+  the same weight, so any three of `a[2..5]` give the fourth — which is what
+  covers a position where the archives only ever put `P..Z` and never `A..O`.
+- **Solve back.** A filled entry can close a fold that had two unknowns when it
+  was first walked. Iterate to a fixpoint.
 
 The closed form behind `a[]` is still unknown, as is the constant-to-transform
 rule that would give the real `A3` and `A4`. The tables in
@@ -122,9 +137,18 @@ function must reproduce them.
 Both mechanisms are checkable offline, without the emulator and without guessing,
 because both plaintexts are known:
 
-- **PCX**: a header begins `0A 05 01 08 00 00 00 00`. Eight known bytes pin the
-  Borland LCG seed (`s = s*0x08088405 + 1`, keystream `s >> 24`, first 128 bytes
-  only). `evidence/amore-pcx/crack.c` does the whole archive in about 90 ms.
+- **PCX**: a header begins `0A 05 01 08` and then, *usually*, `00 00 00 00` for
+  the origin. Eight known bytes pin the Borland LCG seed
+  (`s = s*0x08088405 + 1`, keystream `s >> 24`, first 128 bytes only).
+  `evidence/amore-pcx/crack.c` does the whole archive in about 90 ms.
+
+  **Some pictures have a non-zero origin** — 320 of MOSAIC's 669 — and fail that
+  assumption. `derive/crack2.c` assumes only the four-byte signature and scores
+  each surviving candidate on whether the rest of the header decodes to a
+  plausible PCX. Run the narrow cracker first and the widened one only on its
+  failures: on four known bytes alone the widened one goes ambiguous where the
+  narrow one is exact. Those 320 were written off as uncrackable for a while, and
+  they turned out to be the only samples covering several table entries.
 - **dBASE III**: a `.DAB` begins `03` followed by a date and a record count.
 
 Sanity check the method against an archive packed **without** a dongle: it must
