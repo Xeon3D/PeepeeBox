@@ -2,9 +2,11 @@
 
 Marcos's identification: the 2001 and I.G.O. dongles are **HASP4**, and everything
 measured here is consistent with it. `docs/research/13` and `HANDOFF2001.md` § 2.5
-should now be read as settled in that direction for **2001 and IGO 2-7 only** —
+should now be read as settled in that direction for **2001 and the I.G.O. line** —
 1999 and 2000 are *not* HASP (confirmed by Marcos, and they carry none of the
-library's fingerprints), and IGO 8 is the serial smart-card reader of Phase 18.
+library's fingerprints). The 2008 generation is the one to be careful with: the
+IGO 8 images use the serial reader of Phase 18, but a 2008-era build in the same
+collection is parallel HASP throughout. See the last section.
 
 Corroborating evidence for HASP4, from `HANDOFF2001.md` §§ 16 and 19:
 
@@ -98,3 +100,49 @@ site that the `lhsh` walk has already confirmed.
 A second slip in the same pass: the first version of the store heuristic had pass1
 and pass2 the wrong way round, which produced `1329 / 68BB` for IGO 7. Pushes are
 reversed and stores are not; the two forms need opposite handling.
+
+## The 2008 generation comes in both flavours
+
+Phase 18 established that the IGO 8 token is a serial smart-card reader. That is
+right for the IGO 8 images, and it is not the whole of the generation.
+
+Measured across every executable on each image:
+
+| image | executables | link the HASP library (`lhsh`) | mention `NGDONGLE` |
+|---|---|---|---|
+| IGO 7 AT | 51 | **51** | 0 |
+| IGO 8 ES | 61 | **0** | 15, each paired with the serial base `0x2F8` |
+| IGO 8 PT | 61 | **0** | 15 |
+| `PPIGOITALY-NSB NONE` | 54 | **54** | 0 |
+
+So the IGO 8 images are serial-only — no executable on them contains the parallel
+library at all — while the IGO Italy build of the same era is **entirely parallel**.
+Both flavours exist; which one a cabinet has is a property of the build, not the
+year.
+
+`MENU.EXE` carries a message for every dongle type the family has ever used, and
+the list grows by one letter per generation:
+
+| menu | dongle messages it carries |
+|---|---|
+| IGO 6 | CDONGLE, HDONGLE, MBDONGLE, … |
+| IGO 7 | + ODONGLE |
+| IGO 8 and IGO Italy | + NG-DONGLE |
+
+That is why `HDONGLE FAILED` appears in an IGO 8 game's strings (`DJACK.EXE`
+alongside `..\LIBS\NGDONGLE.CPP`) even though nothing on the image can talk to a
+parallel HASP: the names are a shared table used for the `ERROR.LOG` line, and the
+dispatch behind them is a 20-entry jump table on a message code, not the bitmask
+2001 used.
+
+**So `docs/research/18` should be read as "the IGO 8 images use a serial reader",
+not "the 2008 generation abandoned the parallel port".**
+
+### A caution about the null passwords
+
+The IGO Italy build stores `0000 / 0000` in all 54 executables, exactly as IGO 6
+does in all 140 of its. Its folder is named `…-NSB NONE-…`, which reads like a
+no-dongle conversion, and that is the most likely explanation for both: the
+passwords were zeroed by whoever prepared the copy. If so, the IGO 6 pair is not
+`0000 / 0000` — it is unknown, and needs an unmodified IGO 6 image to recover.
+Treat both zeros as "not established" rather than as a value.
