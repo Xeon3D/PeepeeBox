@@ -45,6 +45,30 @@ whether both tokens answered:
 PeepeeBox.exe -P . -L 86box.log
 ```
 
+Which releases run
+------------------
+
+The cabinets changed their protection every year or two, so coverage is per
+generation rather than all-or-nothing.
+
+| Release | Dongle | Status |
+|---|---|---|
+| Photo Play 99 | funworld two-chip, parallel | runs, games and photo games |
+| Photo Play 2000 | second funworld dongle (CDONGLE), parallel | runs, games and photo games |
+| Photo Play 2001 / I.G.O. 1 | HASP4, parallel | boots and plays; **photo pictures still scramble** |
+| I.G.O. 4 (2004) | CDONGLE, parallel | runs, games and photo games |
+| I.G.O. 8 (2008) | serial smart-card reader on COM2 | runs, games and photo games |
+| I.G.O. 2, 3, 5, 6, 7 | HASP4, parallel | untried |
+
+I.G.O. 4 needs nothing of its own: it drives the same CDONGLE transport the 2000
+generation uses, its pictures are stored unencrypted, and so it runs on the device
+as it already stands.  Verified on `IGO 4 AT A0006`; the IT and PT images carry an
+identical `MENU.EXE` and should behave the same.
+
+2001's record is served correctly and its games run, but that generation encrypts
+its photo archives with a cipher the dongle itself computes, which is not yet
+emulated.
+
 What you *can* change
 ---------------------
 
