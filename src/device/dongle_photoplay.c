@@ -543,7 +543,18 @@ static const struct {
     uint8_t arg[3];
     uint8_t reply[2];
 } cd_answers[] = {
-    { CD_CMD_KEY, { 0x86, 0x2E, 0xD0 }, { 0x93, 0x46 } } /* -> the long 0x00004693 */
+    /* Established: the licence query, the same in all 29 games, MENU.EXE and all
+       four 2000 images. */
+    { 0xA0, { 0x86, 0x2E, 0xD0 }, { 0x93, 0x46 } }, /* -> the long 0x00004693 */
+
+    /* PLACEHOLDERS, not established.  AMORE asks these three before it will load a
+       picture; nothing checks their values, they are cached and used as the 16-bit
+       constant in its picture-key derivation, so a wrong one yields a wrong key
+       rather than a refusal.  They are here to get past the query and see what the
+       game asks next -- the values are placeholders and the log says so. */
+    { 0xA1, { 0xA6, 0x4B, 0xD0 }, { 0x8E, 0x0A } },
+    { 0xA3, { 0x73, 0x07, 0x09 }, { 0x8B, 0x03 } },
+    { 0xA4, { 0x76, 0x02, 0x27 }, { 0x8E, 0x0A } },
 };
 #define CD_NANSWERS ((int) (sizeof(cd_answers) / sizeof(cd_answers[0])))
 
@@ -556,7 +567,7 @@ cd_prepare(pp_t *dev)
     cd->tx_bit = 0;
 
     for (int a = 0; a < CD_NANSWERS; a++) {
-        if ((cd->cmd != cd_answers[a].cmd) || (cd->nargs != 3))
+        if ((cd->cmd != cd_answers[a].cmd) || (cd->nargs < 3))
             continue;
         if (memcmp(cd->arg, cd_answers[a].arg, 3) != 0)
             continue;
@@ -569,9 +580,28 @@ cd_prepare(pp_t *dev)
         return;
     }
 
+    /* Library functions 1 to 8 -- wire A0 to A7 -- always read exactly two bytes
+       back: the dispatcher hands 0x07E8 a fixed bx = 0x0302, three bytes out and two
+       in.  Queueing the 48-byte record for one of those leaves the device parked in
+       the middle of a record the guest stopped reading after two bytes, and the next
+       transaction is served the leftovers.  Serve the right length even when the
+       value is unknown. */
+    if ((cd->cmd >= 0xA0) && (cd->cmd <= 0xA7)) {
+        cd->tx_len = 2;
+        cd->tx[0]  = cd->key;
+        cd->tx[1]  = cd->key; /* plaintext 00 00 */
+        pp_log("PP: CDONGLE command %02X (%02X %02X %02X) has no recorded answer\n",
+               cd->cmd, cd->arg[0], cd->arg[1], cd->arg[2]);
+        return;
+    }
+
     /* Everything else gets the record.  The only other query seen is the parallel-port
        autodetect (`0x0BAD`), which reads one byte and looks solely at whether the
        transport worked -- it never examines the value. */
+    pp_log("PP: CDONGLE no recorded answer for command %02X with %d args"
+           " %02X %02X %02X %02X %02X %02X %02X %02X -- serving the record\n",
+           cd->cmd, cd->nargs, cd->arg[0], cd->arg[1], cd->arg[2], cd->arg[3],
+           cd->arg[4], cd->arg[5], cd->arg[6], cd->arg[7]);
     cd->tx_len = CD_RECORD;
     for (int i = 0; i < CD_RECORD; i++)
         cd->tx[i] = (uint8_t) (dev->block[i] ^ cd->key);
