@@ -168,6 +168,20 @@ is dongle-keyed, and finding one that is not proves nothing about the others.
    **not** move.
 4. Only then look at the per-name function.
 
+## Confirmed
+
+All four Photo Play 2000 images — DE, IT ×2, NL — boot, run their ordinary games,
+and display pictures in every photo game. Played manually, on screen, not inferred
+from a log. The offline check agrees: 3765 of 3765 pictures predicted exactly,
+nothing wrong, nothing uncovered.
+
+That matters for how much this document should be trusted. Everything above was
+also true of a build whose photo games showed two black panels, because a clean
+log and a passing check are different things. `evidence/amore-pcx/derive/checkimg.py`
+is the offline half — it cracks each image's own archives and predicts every key,
+and it is self-verifying, since a wrong key cannot produce a valid PCX header. The
+other half is asking someone to play the game.
+
 ## What this corrected in the code
 
 `PP_BANNER_KEYN` and the conditional that chose between the two layouts are gone.
