@@ -86,7 +86,7 @@ extern const device_t igo8_reader_device;
 #define HD_BANNER 30  /* the banner's column count; the numeric fields follow it */
 #define HD_RECORD 112 /* 56 words, which is what service 0x32 asks for */
 #define HD_START  8   /* the library adds 8 to the caller's start word */
-#define HD_KEY    0x7477 /* the first password; the record is stored XORed with it */
+                 /* the scramble key is the release's first password -- hd_key() */
 
 #define HD_CS 0x02 /* DATA bit 1 */
 #define HD_SK 0x20 /* DATA bit 5 */
@@ -1376,9 +1376,44 @@ static const struct {
 #define HD_FIELDS ((int) (sizeof(hd_fields) / sizeof(hd_fields[0])))
 #define HD_TEXT   83 /* through the last column of the last field */
 
+/* The record is stored XORed with the caller's first password, and every HASP
+   generation uses a different pair (Docs/19).  The transport does not vary: IGO 3,
+   5 and 7 carry the same Microwire primitives, the same four-entry identity table
+   and the same scrambler as 2001, so only this constant has to follow the release.
+
+   IGO 6's pair reads as 0000/0000 in every image to hand, which Docs/19 argues is
+   a neutered copy rather than a real value, so it is left out and falls through to
+   the default. */
+static const struct {
+    const char *banner;
+    uint16_t    pass1;
+    int         swap;   /* unpacks each word low byte first -- see hd_load() */
+    int         fields; /* record shape: 0 = 2001's text columns, 1 = the I.G.O. one */
+} hd_keys[] = {
+    { "Version 2001",  0x7477, 0, 0 },
+    { "Version 2002",  0x68BB, 1, 1 }, /* I.G.O. 2 */
+    { "Version 2003",  0x6B91, 1, 1 }, /* I.G.O. 3 */
+    { "Version 2005",  0x6B91, 1, 1 }, /* I.G.O. 5, whose banner is "Version 2005B" */
+    { "Version 2007",  0x68BB, 1, 1 }  /* I.G.O. 7 */
+};
+
+static int
+hd_release(const char *banner)
+{
+    for (int n = 0; n < (int) (sizeof(hd_keys) / sizeof(hd_keys[0])); n++) {
+        if (!strncmp(banner, hd_keys[n].banner, strlen(hd_keys[n].banner)))
+            return n;
+    }
+    return 0; /* 2001 */
+}
+
 static void
 hd_load(pp_t *dev, const char *banner)
 {
+    const int      rel  = hd_release(banner);
+    const uint16_t key  = hd_keys[rel].pass1;
+    const int      swap = hd_keys[rel].swap;
+
     uint8_t rec[HD_RECORD];
     char    num[16];
     size_t  blen = strlen(banner);
@@ -1386,38 +1421,92 @@ hd_load(pp_t *dev, const char *banner)
     /* Spaces everywhere the record has content, zeros after it: the unpack loop reads
        until it meets a zero word, and byte 83 onwards is where it should stop. */
     memset(rec, 0, sizeof(rec));
-    memset(rec, ' ', HD_TEXT);
 
-    if (blen > (HD_BANNER - 1))
-        blen = HD_BANNER - 1;
-    memcpy(rec, banner, blen);
-    rec[blen] = '\0'; /* the parser trims on strlen, so the padding must not be copied */
+    if (hd_keys[rel].fields) {
+        /* The I.G.O. record is not 2001's column layout at all.  IGO 5's MENU.EXE
+           parses it at 0x3B300 as three pieces and formats them with "%s %s (%c%c)"
+           (DS:0x4CB7), then strstr's the result for its own version:
 
-    for (int f = 0; f < HD_FIELDS; f++) {
-        const int n = snprintf(num, sizeof(num), "%lu", hd_fields[f].val);
+               bytes 0..1    the territory, as two characters
+               byte  2       unused -- the parser starts at 3
+               bytes 3..9    the release word, seven characters: "Version"
+               bytes 10..14  the version token, five: "2005B"
 
-        if ((n > 0) && (n <= hd_fields[f].cols))
-            memcpy(&rec[hd_fields[f].at + hd_fields[f].cols - n], num, (size_t) n);
+           which assembles to "Version 2005B (AT)".  Feeding this parser 2001's
+           record puts "sion 20 05B ( (Ve)" on screen, which is how the layout was
+           found: those are exactly bytes 3..9, 10..14 and 0..1 of the 2001 form. */
+        const char *sp = strchr(banner, ' ');
+        const char *lp = strchr(banner, '(');
+
+        memset(rec, ' ', 15);
+        memcpy(&rec[3], banner, (blen < 7) ? blen : 7);
+        if (sp != NULL) {
+            size_t vl = strlen(sp + 1);
+
+            if ((lp != NULL) && (lp > sp + 1))
+                vl = (size_t) (lp - (sp + 1));
+            while (vl && (sp[vl] == ' '))
+                vl--;
+            memcpy(&rec[10], sp + 1, (vl < 5) ? vl : 5);
+        }
+        if ((lp != NULL) && lp[1] && lp[2]) {
+            rec[0] = (uint8_t) lp[1];
+            rec[1] = (uint8_t) lp[2];
+        }
+
+        /* The content keys are binary here, not 2001's decimal columns.  FINDIT reads
+           them as eight two-word pairs at starts 0x0F + 2i (0x23C8D), folds each into a
+           little-endian dword and stores them at di+0x1E, +0x22 ... +0x3A -- the same
+           struct slots 2001 fills from its text fields.  Two words at 0x0F + 2i is
+           record bytes 30 + 4i, and the last one ends at byte 61, which is exactly
+           where the guest's reads stop (word 38). */
+        for (int n = 0; n < 8; n++) {
+            const size_t o = 30 + ((size_t) n * 4);
+
+            rec[o]     = (uint8_t) (hd_fields[n].val);
+            rec[o + 1] = (uint8_t) (hd_fields[n].val >> 8);
+            rec[o + 2] = (uint8_t) (hd_fields[n].val >> 16);
+            rec[o + 3] = (uint8_t) (hd_fields[n].val >> 24);
+        }
+    } else {
+        memset(rec, ' ', HD_TEXT);
+
+        if (blen > (HD_BANNER - 1))
+            blen = HD_BANNER - 1;
+        memcpy(rec, banner, blen);
+        rec[blen] = '\0'; /* the parser trims on strlen, so padding must not be copied */
+
+        for (int f = 0; f < HD_FIELDS; f++) {
+            const int n = snprintf(num, sizeof(num), "%lu", hd_fields[f].val);
+
+            if ((n > 0) && (n <= hd_fields[f].cols))
+                memcpy(&rec[hd_fields[f].at + hd_fields[f].cols - n], num, (size_t) n);
+        }
     }
 
-    /* The caller unpacks each word high byte first (0x362DF), so a word is just the next
-       two record bytes in order.  Everything outside the record decodes to zero, which
-       costs nothing and keeps the part looking uniform. */
+    /* 2001 unpacks each word high byte first (0x362DF), so a word is just the next two
+       record bytes in order.  The I.G.O. builds unpack low byte first, and serving them
+       2001's order puts the banner on screen with every byte pair swapped -- "Version
+       2005B (AT)" comes out as "roi n02 50 BA (eV)", which is how this was found.
+       Everything outside the record decodes to zero, which costs nothing and keeps the
+       part looking uniform. */
     for (int i = 0; i < HD_WORDS; i++) {
         const int j     = i - HD_START;
         uint16_t  plain = 0;
 
         if ((j >= 0) && (((j * 2) + 1) < HD_RECORD))
-            plain = (uint16_t) ((rec[j * 2] << 8) | rec[(j * 2) + 1]);
+            plain = swap ? (uint16_t) ((rec[(j * 2) + 1] << 8) | rec[j * 2])
+                         : (uint16_t) ((rec[j * 2] << 8) | rec[(j * 2) + 1]);
 
-        dev->hd_mem[i] = (uint16_t) (plain ^ (uint16_t) (i - HD_START) ^ HD_KEY
+        dev->hd_mem[i] = (uint16_t) (plain ^ (uint16_t) (i - HD_START) ^ key
                                      ^ ((i < HD_START) ? 0xFF00 : 0x0000));
     }
 
-    pp_log("PP: HD2001 EEPROM loaded -- \"%s\" then \"%.53s\", words %d..%d,"
-           " scramble key %04X\n",
-           banner, (const char *) &rec[HD_BANNER], HD_START,
-           HD_START + (HD_RECORD / 2) - 1, HD_KEY);
+    pp_log("PP: HD2001 EEPROM loaded -- record \"%.20s\" (%s layout), words %d..%d,"
+           " scramble key %04X, %s byte order\n",
+           (const char *) rec, hd_keys[rel].fields ? "I.G.O." : "2001",
+           HD_START, HD_START + (HD_RECORD / 2) - 1, key,
+           swap ? "low-first" : "high-first");
 }
 
 /* One DATA write, decoded as Microwire.  Bits are clocked in on the rising edge of SK
@@ -1615,7 +1704,13 @@ pp_read_status(void *priv)
            during that ramp has never been seen.  It picks the size the library then uses
            to address the part, and every later phase agrees with that choice, so it
            stands until a physical dongle says otherwise. */
-        const uint8_t addr = (uint8_t) (dev->last_data >> 1);
+        /* The address is DATA bits 1..6, so mask to six bits rather than taking the
+           whole byte.  2001 drives the ramp as 00, 02 ... 7E and the top bit never
+           appears, but I.G.O. 5 drives the identical sequence with bit 7 set --
+           its sixteen clocked values are 2001's plus 0x80, and its ramp runs 80,
+           82 ... FE.  The guest accumulates the loop index either way, so masking
+           is all that is needed for the same answer to serve both. */
+        const uint8_t addr = (uint8_t) ((dev->last_data >> 1) & 0x3F);
         const int     hit  = ((addr % 3) == 0) != (addr == 14);
 
         /* The library never reads STATUS in the middle of shifting an instruction --
