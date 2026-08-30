@@ -68,6 +68,10 @@
 #include <86box/lpt.h>
 #include <86box/photoplay.h>
 
+/* The 2008 generation's token lives on COM2 rather than the parallel port, so it is a
+   device of its own.  This one brings it up; see dongle_igo8.c. */
+extern const device_t igo8_reader_device;
+
 /* Protocol bring-up: log every transaction.  Remove once this is trusted. */
 #define ENABLE_DONGLE_PHOTOPLAY_LOG 1
 
@@ -1875,6 +1879,12 @@ pp_init(const device_t *info)
     /* Both tokens are mandatory, so bring up the iButton alongside the HASP half. */
     if (device_get_config_int("ibutton"))
         ib_start();
+
+    /* The 2008 generation moved its dongle off the parallel port entirely: a serial
+       smart-card reader on COM2, in dongle_igo8.c.  Bring it up unconditionally --
+       nothing else in the cabinet wants COM2, and a guest from any other generation
+       never says a word to it.  Docs/18. */
+    device_add(&igo8_reader_device);
 
     /* NG-DONGLE sweep: take this run's candidate from the file and leave the next one
        behind, so an unattended reboot loop walks the whole space. */

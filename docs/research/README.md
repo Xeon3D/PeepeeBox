@@ -29,6 +29,8 @@ and the corrections are usually the most interesting part.
 | `14-dongle-dwords-are-database-keys.md` | **The dwords are content keys.** Each photo game reads one to decrypt its picture database |
 | `15-cdongle.md` | **The 2000 generation's second dongle, decoded and emulated.** Transport, licence constant and record read; that generation now boots and runs its games |
 | `16-photo-games-checklist.md` | **Why a photo game shows no pictures.** The two mechanisms, the fixed-offset record rule, and the checklist -- read before diagnosing one again |
+| `17-igo8-keyless-diff.md` | **A keyless IGO8 image, diffed against its original.** Three bytes per game, ten in the menu, and 160 databases turned from ciphertext to plaintext |
+| `18-igo8-serial-dongle.md` | **The 2008 dongle is a serial smart-card reader, not a parallel-port device.** Transport, both keystreams, framing, the APDU set and the record -- corrects 09 |
 
 ## Sibling investigation
 
@@ -68,3 +70,11 @@ Three findings changed the code rather than just the documentation:
    silently broke the 2000 generation's 17-character one, costing FINDIT its
    level database. `16` is the checklist that stops this being re-derived a
    fourth time.
+6. **The 2008 dongle is not on the parallel port** (`18`). It is a serial
+   smart-card reader at `0x2F8` speaking ISO 7816 APDUs under two layers of
+   obfuscation. `09` called this generation's token "NG" and looked for it in the
+   wrong place entirely.
+7. **In 2008 the six content keys are compile-time constants** (`17`), identical
+   in all 61 executables and written into the banner buffer by the game itself.
+   `14`'s "the dwords come from the dongle" holds for 1999 and 2000; in 2008 the
+   dongle supplies only the banner.
