@@ -146,6 +146,7 @@ typedef struct {
     /* 2001 HDONGLE reconnaissance -- see pp_read_status */
     int     hd_probe;
     uint8_t hd_val;
+    int     hd_n;
 
     cd_t    cd;
 
@@ -1269,10 +1270,18 @@ pp_read_status(void *priv)
        all and which bit it is looking at.  It disturbs the 1999 and 2000 paths, so it
        is off unless asked for and belongs on a 2001 rig only. */
     if (dev->hd_probe) {
-        if (dev->n_rs++ < 8)
-            pp_log("PP: HD2001 probe -- answering STATUS %02X\n", dev->hd_val);
-        pp_raw(dev, "read_status", dev->hd_val);
-        return dev->hd_val;
+        /* 0x37E1D accumulates  acc = 0x7E ^ XOR{ addr : bit 5 set at that addr }  over
+           the 64-step ramp, and 0x7E is the FAILURE value -- it selects device type 7,
+           whose handler errors every service.  A constant answer, all ones or all
+           zeros, XORs to zero across the full sweep and so lands exactly on 0x7E.
+           Setting bit 5 at exactly one non-zero address moves it off. */
+        const uint8_t st2001 = (dev->hd_n == dev->hd_val) ? 0x20 : 0x00;
+
+        if ((dev->hd_n < 4) || (dev->hd_n == dev->hd_val))
+            pp_log("PP: HD2001 read %d -> STATUS %02X\n", dev->hd_n, st2001);
+        dev->hd_n++;
+        pp_raw(dev, "read_status", st2001);
+        return st2001;
     }
 
     /* Once the 2000 generation's library has announced itself, it owns this line: it
