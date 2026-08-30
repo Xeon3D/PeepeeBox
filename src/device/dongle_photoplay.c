@@ -109,6 +109,7 @@ typedef struct {
     int     tx_len;
     int     tx_bit;
     int     attn;
+    int     pic_ready;   /* the picture-key reply is built; do not rebuild it */
 } cd_t;
 
 typedef struct {
@@ -488,6 +489,7 @@ cd_reset(cd_t *cd)
     cd->tx_len     = 0;
     cd->tx_bit     = 0;
     cd->attn       = 0;
+    cd->pic_ready  = 0;
 }
 
 /* Reassemble a byte from the five-write nibble pattern: F<lo> C<lo> F<lo> 9<hi> 8<hi>.
@@ -553,10 +555,204 @@ static const struct {
        rather than a refusal.  They are here to get past the query and see what the
        game asks next -- the values are placeholders and the log says so. */
     { 0xA1, { 0xA6, 0x4B, 0xD0 }, { 0x8E, 0x0A } },
-    { 0xA3, { 0x73, 0x07, 0x09 }, { 0x8B, 0x03 } },
-    { 0xA4, { 0x76, 0x02, 0x27 }, { 0x8E, 0x0A } },
+    { 0xA3, { 0x73, 0x07, 0x09 }, { 0x02, 0x00 } }, /* the case 2 tag; see cd_prepare_picture */
+    { 0xA4, { 0x76, 0x02, 0x27 }, { 0x03, 0x00 } }, /* the case 3 tag; see cd_prepare_picture */
 };
 #define CD_NANSWERS ((int) (sizeof(cd_answers) / sizeof(cd_answers[0])))
+
+/* ------------------------------------------------------------------------------------
+ * The picture-key query: library functions 0x11 and 0x12, wire AA and AB.
+ *
+ * A photo game decrypts each PCX header with a Borland LCG seeded by a per-picture key
+ * (Docs/ng-11), and asks the dongle for that key.  The request carries the uppercased
+ * 8-character basename and a 16-bit constant:
+ *
+ *     08 00 | 8B 03 | "100     "
+ *     count   const   name
+ *
+ * The count is 8, so the reply overwrites all eight name bytes, and the game folds those
+ * into the four-byte seed -- XOR for two of its four cases, ADD for the other two.  The
+ * case is chosen by a hash of the filename, and it is the case that picks the constant.
+ *
+ * WHAT IS AND IS NOT KNOWN HERE
+ *
+ * The device's real name-to-key function has not been recovered.  What has been recovered
+ * is the answer it must give, for every picture in the shipped data: every key in AMORE's
+ * COMIX archive was cracked straight out of the ciphertext, because a PCX header begins
+ * with eight known bytes and that pins the LCG seed exactly.  The method was checked
+ * against an archive packed with no dongle at all and recovers the documented vendor
+ * default 0x00012345 on the nose.
+ *
+ * From those 332 keys, two of the four cases fall out as exact closed forms and are
+ * implemented as such below -- each fits all 83 of its files.  The other two do not fit
+ * any rotate/add/xor model tried, and are served from per-character tables instead.
+ *
+ * So cases 2 and 3 are FITTED, NOT EMULATED.  They are right for every character that
+ * appears in the shipped archives (the digits and the space) and have nothing to say
+ * about any other.  An unknown character is logged rather than guessed at, so the gap is
+ * loud instead of silent.  Anyone deriving the real function should be able to reproduce
+ * cd_c2_* and cd_c3_* from it exactly; that is the test it has to pass.
+ *
+ * The two constants for cases 2 and 3 come from the dongle itself, via the A3 and A4
+ * queries, and their real values are unknown.  They do not need to be known: whatever
+ * this device answers is what the game hands back in the request, so the constant is
+ * simply a tag naming the case.  Two values are picked here that cannot collide with the
+ * two the games hardcode.
+ */
+
+#define CD_CONST_CASE0 0x038B /* hardcoded in the game */
+#define CD_CONST_CASE1 0x0A8E /* hardcoded in the game */
+#define CD_CONST_CASE2 0x0002 /* our answer to A3 -- a tag, not a recovered value */
+#define CD_CONST_CASE3 0x0003 /* our answer to A4 -- ditto */
+
+typedef struct {
+    uint8_t ch;
+    uint8_t val;
+} cd_map_t;
+
+static const cd_map_t cd_c2_b0[] = { { 0x31, 0x4C }, { 0x32, 0x6C }, { 0x33, 0x8C }, { 0x34, 0xAC }, { 0x35, 0xCC }, { 0x36, 0xEC }, { 0x37, 0x0C }, { 0x38, 0x2B }, { 0x39, 0x4B }, { 0, 0 } };
+static const cd_map_t cd_c2_b1[] = { { 0x20, 0xF1 }, { 0x30, 0x11 }, { 0x31, 0x13 }, { 0x32, 0x15 }, { 0x33, 0x17 }, { 0x34, 0x09 }, { 0x35, 0x0B }, { 0x36, 0x0D }, { 0x37, 0x0F }, { 0x38, 0x01 }, { 0x39, 0x03 }, { 0, 0 } };
+static const cd_map_t cd_c2_b2[] = { { 0x20, 0xF6 }, { 0x30, 0xF8 }, { 0x31, 0xD8 }, { 0x32, 0xB8 }, { 0x33, 0x98 }, { 0x34, 0x78 }, { 0x35, 0x58 }, { 0x36, 0x38 }, { 0x37, 0x18 }, { 0x38, 0xF7 }, { 0x39, 0xD7 }, { 0, 0 } };
+static const cd_map_t cd_c2_b3[] = { { 0x20, 0x0A }, { 0, 0 } };
+static const cd_map_t cd_c3_b0[] = { { 0x31, 0x76 }, { 0x32, 0xF5 }, { 0x33, 0x75 }, { 0x34, 0xF4 }, { 0x35, 0x74 }, { 0x36, 0xF3 }, { 0x37, 0x73 }, { 0x38, 0xF2 }, { 0x39, 0x72 }, { 0, 0 } };
+static const cd_map_t cd_c3_b1[] = { { 0x20, 0x12 }, { 0x30, 0x92 }, { 0x31, 0x8A }, { 0x32, 0x82 }, { 0x33, 0x7A }, { 0x34, 0xB2 }, { 0x35, 0xAA }, { 0x36, 0xA2 }, { 0x37, 0x9A }, { 0x38, 0xD2 }, { 0x39, 0xCA }, { 0, 0 } };
+static const cd_map_t cd_c3_b2[] = { { 0x20, 0xFC }, { 0x30, 0x7C }, { 0x31, 0x74 }, { 0x32, 0x8C }, { 0x33, 0x84 }, { 0x34, 0x9C }, { 0x35, 0x94 }, { 0x36, 0xAC }, { 0x37, 0xA4 }, { 0x38, 0x3C }, { 0x39, 0x34 }, { 0, 0 } };
+static const cd_map_t cd_c3_b3[] = { { 0x20, 0x98 }, { 0, 0 } };
+
+static const cd_map_t *const cd_tables[2][4] = {
+    { cd_c2_b0, cd_c2_b1, cd_c2_b2, cd_c2_b3 },
+    { cd_c3_b0, cd_c3_b1, cd_c3_b2, cd_c3_b3 }
+};
+
+static uint8_t
+cd_rol(uint8_t v, int r)
+{
+    return (uint8_t) ((v << r) | (v >> (8 - r)));
+}
+
+/* -1 when this character was never seen in the shipped archives. */
+static int
+cd_lookup(const cd_map_t *tab, uint8_t ch)
+{
+    for (int i = 0; tab[i].ch != 0; i++)
+        if (tab[i].ch == ch)
+            return tab[i].val;
+    return -1;
+}
+
+/* The four-byte seed the game must end up with, little-endian in kb[]. */
+static int
+cd_picture_key(int which, const uint8_t *name, uint8_t *kb)
+{
+    switch (which) {
+        case 0: /* exact; fits all 83 of its files */
+            kb[0] = (uint8_t) (0x8F ^ cd_rol(name[0], 1));
+            kb[1] = (uint8_t) (0xF8 ^ cd_rol(name[1], 5));
+            kb[2] = (uint8_t) (0xF8 ^ cd_rol(name[2], 5));
+            kb[3] = (uint8_t) (0x38 ^ name[3]);
+            return 1;
+
+        case 1: /* exact; the aliased fold really does drop name[0] and name[1] */
+            kb[0] = (uint8_t) (0xD7 ^ name[3]);
+            kb[1] = (uint8_t) (0xF7 ^ cd_rol(name[2], 3));
+            kb[2] = (uint8_t) (0x2E ^ cd_rol(name[2], 3));
+            kb[3] = (uint8_t) (0x8A ^ name[3]);
+            return 1;
+
+        default: { /* tabulated */
+            const cd_map_t *const *t = cd_tables[which - 2];
+
+            for (int i = 0; i < 4; i++) {
+                const int v = cd_lookup(t[i], name[i]);
+
+                if (v < 0) {
+                    pp_log("PP: CDONGLE case %d has no tabulated value for '%c' at %d --"
+                           " this name is outside what the shipped archives cover\n",
+                           which, (char) name[i], i);
+                    return 0;
+                }
+                kb[i] = (uint8_t) v;
+            }
+            return 1;
+        }
+    }
+}
+
+/* Build the eight bytes whose fold gives kb.  The fold takes eight inputs to four, so
+   there is slack: zero the second half and let the first carry the answer.  Case 1 is
+   the exception -- it reads back values it has just written (0x1F56E), so its inputs
+   have to be placed to survive that. */
+static void
+cd_fold_inverse(int which, const uint8_t *kb, uint8_t *r)
+{
+    memset(r, 0, 8);
+
+    if (which == 1) {
+        r[3] = kb[0];
+        r[2] = kb[1];
+        r[4] = (uint8_t) (kb[1] ^ kb[2]);
+        r[7] = (uint8_t) (kb[0] ^ kb[3]);
+    } else {
+        /* XOR fold for case 0, ADD fold for 2 and 3; either way x op 0 == x */
+        r[0] = kb[0];
+        r[1] = kb[1];
+        r[2] = kb[2];
+        r[3] = kb[3];
+    }
+}
+
+/* Answer a picture-key request.  Returns 0 if this one cannot be served. */
+static int
+cd_prepare_picture(pp_t *dev)
+{
+    cd_t         *cd    = &dev->cd;
+    const uint16_t konst = (uint16_t) (cd->arg[2] | (cd->arg[3] << 8));
+    const uint8_t *name  = &cd->arg[4];
+    uint8_t        kb[4];
+    uint8_t        r[8];
+    int            which;
+
+    switch (konst) {
+        case CD_CONST_CASE0: which = 0; break;
+        case CD_CONST_CASE1: which = 1; break;
+        case CD_CONST_CASE2: which = 2; break;
+        case CD_CONST_CASE3: which = 3; break;
+        default:
+            pp_log("PP: CDONGLE picture key asked with unknown constant %04X\n", konst);
+            return 0;
+    }
+
+    if (!cd_picture_key(which, name, kb))
+        return 0;
+
+    cd_fold_inverse(which, kb, r);
+
+    /* 0x081D does not hand the caller what it received.  It ends with a backwards
+       nibble-merge (0x08A9): walking down from the last byte,
+
+           seen[i] = (recv[i + 1] & 0xF0) | (recv[i] & 0x0F)
+
+       where recv[8] is one extra byte fetched after the loop by 0x0FCA.  So the bytes
+       the game folds are not the bytes on the wire, and sending the wanted values
+       directly delivers a nibble-shifted mess.  Invert it: each byte carries the low
+       nibble of its own target and the high nibble of the one before. */
+    uint8_t wire[9];
+
+    wire[0] = (uint8_t) (r[0] & 0x0F);
+    for (int i = 1; i < 8; i++)
+        wire[i] = (uint8_t) ((r[i - 1] & 0xF0) | (r[i] & 0x0F));
+    wire[8] = (uint8_t) (r[7] & 0xF0);
+    cd->pic_ready = 1;
+
+    cd->tx_len = 9;
+    cd->tx_bit = 0;
+    for (int i = 0; i < 9; i++)
+        cd->tx[i] = (uint8_t) (wire[i] ^ cd->key);
+
+    pp_log("PP: CDONGLE picture key for \"%.8s\" case %d -> %02X%02X%02X%02X\n",
+           (const char *) name, which, kb[3], kb[2], kb[1], kb[0]);
+    return 1;
+}
 
 /* Queue whatever this command is owed, scrambled with the key the host just told us. */
 static void
@@ -564,7 +760,21 @@ cd_prepare(pp_t *dev)
 {
     cd_t *cd = &dev->cd;
 
+    /* 0x081D interleaves a send with every read: it pushes one byte of the buffer,
+       reads one back, and repeats.  Those sends arrive here as further arguments, and
+       rebuilding the reply for each of them rewinds the stream to its first byte -- the
+       guest then reads byte 0 over and over.  Build it once per command. */
+    if (cd->pic_ready)
+        return;
+
     cd->tx_bit = 0;
+
+    /* The picture-key query carries a 12-byte payload: count, constant, then the
+       8-character name.  Wait for all of it before answering. */
+    if (((cd->cmd == 0xAA) || (cd->cmd == 0xAB)) && (cd->nargs >= 12)) {
+        if (cd_prepare_picture(dev))
+            return;
+    }
 
     for (int a = 0; a < CD_NANSWERS; a++) {
         if ((cd->cmd != cd_answers[a].cmd) || (cd->nargs < 3))
@@ -659,6 +869,7 @@ cd_write_data(pp_t *dev, uint8_t val)
                     cd->key      = (uint8_t) (cd->nonce_raw ^ 0xD3);
                     cd->cmd      = (uint8_t) (cd->pending ^ cd->key);
                     cd->have_cmd = 1;
+                    cd->pic_ready = 0;
                     cd->nargs    = 0;
                     pp_log("PP: CDONGLE command %02X (nonce %02X -> key %02X)\n",
                            cd->cmd, cd->nonce_raw, cd->key);
@@ -730,6 +941,7 @@ cd_write_data(pp_t *dev, uint8_t val)
                        as the record read does -- are read as a fresh nonce and command
                        rather than as more payload for this one. */
                     cd->have_cmd = 0;
+                    cd->pic_ready = 0;
                     cd->nargs    = 0;
                     cd->attn     = 0;
                     cd->state    = CD_IDLE;
