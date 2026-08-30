@@ -66,9 +66,32 @@ pattern is found, and the value is zero. Either the build genuinely calls with n
 passwords, or every IGO 6 image in the collection has been neutered the same way.
 Worth settling before anyone builds on it.
 
-**IGO 4 links no HASP library at all.** The `lhsh` signature is absent from all 43
-executables on the image, so the two-level search has nothing to anchor on. IGO 4
-either uses a different protection library or these images are patched.
+**IGO 4 links no HASP library at all**, and on a closer look that is what it is
+rather than a failed search. The `lhsh` signature is absent from all 43
+executables — neither as the two immediate stores nor as a literal — while every
+IGO 2, 3, 5, 6 and 7 executable has it. The images are not patched: no `KEYN.COM`,
+no `NSB.COM`, and `AUTOPTS.BAT` is the stock 1417 bytes. All three IGO 4 images
+carry the identical 267,616-byte `MENU.EXE`.
+
+What IGO 4 does have:
+
+- **eight dongle messages** — `dongle`, `CDONGLE`, `DS1425`, `DS1982`, `HDONGLE`,
+  `GDONGLE`, `IDONGLE`, `KDONGLE`, plus `wrong dongle version` — dispatched at
+  `0xB8C1` by a message **code 1..8** through a jump table, the way IGO 8 does it
+  and not the bitmask 2001 uses;
+- **`PCXHeader_decode: DONGLE CODE ERROR`**, the same string Docs/11 found in the
+  1999 binaries, so the picture path can still consult a dongle code;
+- all three parallel bases as immediates (`0x378`, `0x278`, `0x3BC`), so it probes
+  the port itself instead of using the HASP library's base table.
+
+But its **pictures are plain `GIF87a`** — the same as IGO 5 and IGO 7 — so nothing
+on the image is actually encrypted with a dongle code.
+
+So IGO 4 is the odd generation: a parallel dongle that is not driven by the HASP
+library the years either side of it use. Its own type is presumably `KDONGLE`, the
+newest letter in its list. Which check it actually requires is not yet established
+— the message code's computation has not been traced — and the cheapest way to
+find out is to boot one of these images and read the screen.
 
 ## Method
 
