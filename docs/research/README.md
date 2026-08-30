@@ -31,6 +31,7 @@ and the corrections are usually the most interesting part.
 | `16-photo-games-checklist.md` | **Why a photo game shows no pictures.** The two mechanisms, the fixed-offset record rule, and the checklist -- read before diagnosing one again |
 | `17-igo8-keyless-diff.md` | **A keyless IGO8 image, diffed against its original.** Three bytes per game, ten in the menu, and 160 databases turned from ciphertext to plaintext |
 | `18-igo8-serial-dongle.md` | **The 2008 dongle is a serial smart-card reader, not a parallel-port device.** Transport, both keystreams, framing, the APDU set and the record -- corrects 09 |
+| `19-hasp-passwords.md` | **The HASP passwords, per generation.** 2001 and IGO 2-7 are HASP4; three password pairs cover six generations, with the anchored method that finds them and the false trail that does not |
 
 ## Sibling investigation
 

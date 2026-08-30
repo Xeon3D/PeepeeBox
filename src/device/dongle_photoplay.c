@@ -79,6 +79,29 @@ extern const device_t igo8_reader_device;
 #define PP_IN_MAX  256
 #define PP_BLOCK   62 /* what KEYN.COM serves; type 3 returns the first 48 */
 
+/* The 2001 generation's dongle -- a Microwire EEPROM.  Sizes and pin map here, the
+   protocol itself over pp_read_status. */
+#define HD_WORDS  256 /* what the identity answer advertises, so addresses are 8 bits */
+#define HD_ABITS  8
+#define HD_BANNER 30  /* the banner's column count; the numeric fields follow it */
+#define HD_RECORD 112 /* 56 words, which is what service 0x32 asks for */
+#define HD_START  8   /* the library adds 8 to the caller's start word */
+#define HD_KEY    0x7477 /* the first password; the record is stored XORed with it */
+
+#define HD_CS 0x02 /* DATA bit 1 */
+#define HD_SK 0x20 /* DATA bit 5 */
+#define HD_DI 0x40 /* DATA bit 6 */
+#define HD_DO 0x20 /* STATUS bit 5 */
+
+enum {
+    HD_IDLE = 0, /* deselected, or waiting for a start bit */
+    HD_OP,
+    HD_ADDR,
+    HD_READ,
+    HD_WRITE,
+    HD_DONE
+};
+
 /* The 2000 generation's second token -- see the CDONGLE section below. */
 #define CD_RECORD 48 /* what the guest asks for, and what the record layout gives */
 
@@ -150,12 +173,19 @@ typedef struct {
     int     ng_data;   /* sweep DATA readback transforms instead */
     int     ng_mode;
 
-    /* 2001 HDONGLE reconnaissance -- see pp_read_status */
-    int     hd_probe;
-    uint8_t hd_val;
-    int     hd_n;
-    int     hd_w;               /* writes since the last status read */
-    int     hd_bit;             /* cursor into the record being streamed */
+    /* 2001 HDONGLE -- a Microwire serial EEPROM.  See the section above pp_read_status. */
+    int      hd_probe;
+    int      hd_sk;             /* the last clock level seen on the data lines */
+    int      hd_ph;             /* which part of an instruction is being clocked in */
+    int      hd_n;              /* bits done in this part */
+    int      hd_op;             /* the two opcode bits */
+    uint8_t  hd_addr;
+    uint16_t hd_sr;             /* the word going out, or the one coming in */
+    int      hd_do;             /* the level this chip is driving on DO */
+    int      hd_wen;            /* EWEN seen, so a write will take */
+    int      hd_ready;          /* a write finished; DO answers the busy poll */
+    int      hd_reads;          /* read instructions decoded, for the log */
+    uint16_t hd_mem[HD_WORDS];
 
     cd_t    cd;
 
@@ -1251,6 +1281,235 @@ pp_raw(pp_t *dev, const char *what, uint8_t val)
     }
 }
 
+/* ------------------------------------------------------------------------------- */
+/* The 2001 generation: HDONGLE is a Microwire serial EEPROM                         */
+/* ------------------------------------------------------------------------------- */
+
+/* Read out of the DE MENU.EXE, whose transport is four small routines that each drive
+   one line through the shadow-register helper at file 0x3767F:
+
+       0x38007   mask 0x02  ->  CS      (DATA bit 1)
+       0x380A1   mask 0x20  ->  SK      (DATA bit 5)
+       0x38344   mask 0x60  ->  DI on bit 6, then a clock pulse on bit 5
+       0x381BA   clock low, high, low, then STATUS bit 5  ->  DO
+
+   and two frames built out of them:
+
+       0x38492   CS low, SK low, CS high, then 1 1 0 = READ, then the address, then
+                 sixteen clocks each sampling DO -- MSB first
+       0x385F2   the same but 1 0 1 = WRITE, address, sixteen data bits, then CS low
+                 and high again and a poll of DO until it reads back ready
+       0x387D8   1 0 0 = the EWEN/EWDS group, sent before any write
+
+   That is Microwire, the 93C46/93C66 shape, and it is the whole of HDONGLE.  There is
+   no challenge and no crypto on the wire: the library reads the record straight out of
+   the part.  Sections 13 to 15 of HANDOFF2001.md read the same 896 status reads as a
+   write-then-read-back memory test.  They are not: they are the 56 words of the block
+   read, sixteen bits each, and the DATA writes that looked like a clock-stretch are the
+   instruction being shifted out, three port writes per bit.
+
+   Addresses are eight bits because the identity answer below advertises 256 words.
+
+   What the part holds is NOT the record in clear.  0x37F6F unscrambles the buffer after
+   a read, and scrambles a word before a write:
+
+       word[idx]  ^=  (idx - 8) ^ password1        and also ^ 0xFF00 when idx < 8
+
+   with password1 = 0x7477, which reaches it as state[+0x08] -- service 0x32 copies the
+   caller's first password there (0x39B53).  The library also adds 8 to the requested
+   start word (0x36FAA), so a game asking for words 0..55 is served words 8..63 and the
+   scramble index cancels back to a plain 0..55.  hd_load() stores the record already
+   scrambled, so the guest's own unscramble hands it the record. */
+
+/* The record's content.  Every one of the 37 executables on the DE image -- the 36
+   games and MENU.EXE -- carries the same field table, once each, and parses the record
+   with the same routine (`0x1F626` in FINDIT.EXE, reached from the dongle read at
+   `0x1F3CF`).  The record is TEXT:
+
+       bytes  0..29   the banner
+             30..35   a number, six columns
+             36..41   a number, six columns
+             42..47   a number, six columns
+             48..53   a number, six columns
+             54..59   a number, six columns
+             60..65   a number, six columns
+             66..71   a number, six columns
+             72..82   a number, ELEVEN columns
+
+   `0x1F626(buf, start, end)` copies that byte range, skips leading spaces, and copies up
+   to the range's strlen into a scratch buffer; `atol` then turns it into the dword the
+   game keeps.  The numbers are right-aligned in their columns, which is what the
+   skip-spaces loop at `0x1F65C` is for, and the banner is copied out by the same routine
+   -- so the banner has to be NUL-terminated (strlen stops there and the trailing padding
+   is dropped) while everything after it must be spaces.
+
+   Two things follow, and both were wrong in the first cut of this device:
+
+   1. **The padding cannot be NUL.**  The unpack loop at `0x1F4D2` stops at the first
+      zero WORD, so a banner NUL-padded to 30 ends the record at byte 18 and every field
+      after it reads as garbage.  That is exactly what a wrong content key looks like on
+      screen: FINDIT stalls loading its level database, AMORE draws scrambled pictures.
+   2. **KEYN.COM is not a copy of the record.**  It answers the patched `int 2Bh` with
+      62 bytes -- banner, then eight little-endian dwords at +0x1E, +0x22 ... +0x3A --
+      which is the PARSED STRUCT this routine produces, not what the dongle holds.  The
+      crack replaces the whole read-and-parse routine, so it never needs the text form.
+      HANDOFF2001.md section 11 read those bytes as the record; they are its output.
+
+   The values are KEYN's, converted back to numbers.  The first six are the same fixed
+   content keys the 1999 dongles carry (0x38B, 0x181CD ... 0x89D, in the same order);
+   160678 and 4259233598 are new in 2001, and the last is the one that needs eleven
+   columns. */
+static const struct {
+    int          at;    /* first byte of the field */
+    int          cols;  /* how wide it is */
+    unsigned long val;
+} hd_fields[] = {
+    { 30,  6,        907UL }, /* = 0x000038B, 1999's v[1] */
+    { 36,  6,      98765UL }, /* = 0x00181CD           v[2] */
+    { 42,  6,     120672UL }, /* = 0x001D760           v[3]  FINDIT's database key */
+    { 48,  6,     170898UL }, /* = 0x0029B92           v[4] */
+    { 54,  6,      75902UL }, /* = 0x001287E           v[5] */
+    { 60,  6,       2205UL }, /* = 0x000089D           v[6] */
+    { 66,  6,     160678UL }, /* = 0x00273A6           2001 only */
+    { 72, 11, 4259233598UL }  /* = 0xFDDEBF3E          2001 only */
+};
+#define HD_FIELDS ((int) (sizeof(hd_fields) / sizeof(hd_fields[0])))
+#define HD_TEXT   83 /* through the last column of the last field */
+
+static void
+hd_load(pp_t *dev, const char *banner)
+{
+    uint8_t rec[HD_RECORD];
+    char    num[16];
+    size_t  blen = strlen(banner);
+
+    /* Spaces everywhere the record has content, zeros after it: the unpack loop reads
+       until it meets a zero word, and byte 83 onwards is where it should stop. */
+    memset(rec, 0, sizeof(rec));
+    memset(rec, ' ', HD_TEXT);
+
+    if (blen > (HD_BANNER - 1))
+        blen = HD_BANNER - 1;
+    memcpy(rec, banner, blen);
+    rec[blen] = '\0'; /* the parser trims on strlen, so the padding must not be copied */
+
+    for (int f = 0; f < HD_FIELDS; f++) {
+        const int n = snprintf(num, sizeof(num), "%lu", hd_fields[f].val);
+
+        if ((n > 0) && (n <= hd_fields[f].cols))
+            memcpy(&rec[hd_fields[f].at + hd_fields[f].cols - n], num, (size_t) n);
+    }
+
+    /* The caller unpacks each word high byte first (0x362DF), so a word is just the next
+       two record bytes in order.  Everything outside the record decodes to zero, which
+       costs nothing and keeps the part looking uniform. */
+    for (int i = 0; i < HD_WORDS; i++) {
+        const int j     = i - HD_START;
+        uint16_t  plain = 0;
+
+        if ((j >= 0) && (((j * 2) + 1) < HD_RECORD))
+            plain = (uint16_t) ((rec[j * 2] << 8) | rec[(j * 2) + 1]);
+
+        dev->hd_mem[i] = (uint16_t) (plain ^ (uint16_t) (i - HD_START) ^ HD_KEY
+                                     ^ ((i < HD_START) ? 0xFF00 : 0x0000));
+    }
+
+    pp_log("PP: HD2001 EEPROM loaded -- \"%s\" then \"%.53s\", words %d..%d,"
+           " scramble key %04X\n",
+           banner, (const char *) &rec[HD_BANNER], HD_START,
+           HD_START + (HD_RECORD / 2) - 1, HD_KEY);
+}
+
+/* One DATA write, decoded as Microwire.  Bits are clocked in on the rising edge of SK
+   while CS is high; taking CS low abandons whatever was in flight. */
+static void
+hd_write_data(pp_t *dev, uint8_t val)
+{
+    /* Not cs/sk/di: cpu.h has macros of those names for the guest's own registers. */
+    const int sel = (val & HD_CS) != 0;
+    const int clk = (val & HD_SK) != 0;
+    const int dat = (val & HD_DI) != 0;
+
+    if (!sel) {
+        dev->hd_ph = HD_IDLE;
+        dev->hd_n  = 0;
+    } else if (clk && !dev->hd_sk) {
+        switch (dev->hd_ph) {
+            case HD_IDLE:
+                /* Leading zeros are not a start bit -- wait for DI high. */
+                if (dat) {
+                    dev->hd_ph    = HD_OP;
+                    dev->hd_n     = 0;
+                    dev->hd_op    = 0;
+                    dev->hd_ready = 0;
+                }
+                break;
+
+            case HD_OP:
+                dev->hd_op = (dev->hd_op << 1) | dat;
+                if (++dev->hd_n == 2) {
+                    dev->hd_ph   = HD_ADDR;
+                    dev->hd_n    = 0;
+                    dev->hd_addr = 0;
+                }
+                break;
+
+            case HD_ADDR:
+                dev->hd_addr = (uint8_t) ((dev->hd_addr << 1) | dat);
+                if (++dev->hd_n == HD_ABITS) {
+                    dev->hd_n = 0;
+                    switch (dev->hd_op) {
+                        case 2: /* READ */
+                            dev->hd_sr = dev->hd_mem[dev->hd_addr];
+                            dev->hd_ph = HD_READ;
+                            if (dev->hd_reads++ < 8)
+                                pp_log("PP: HD2001 read word %02X -> %04X\n",
+                                       dev->hd_addr, dev->hd_sr);
+                            break;
+                        case 1: /* WRITE */
+                            dev->hd_sr = 0;
+                            dev->hd_ph = HD_WRITE;
+                            break;
+                        case 3: /* ERASE */
+                            if (dev->hd_wen)
+                                dev->hd_mem[dev->hd_addr] = 0xFFFF;
+                            dev->hd_ready = 1;
+                            dev->hd_ph    = HD_DONE;
+                            break;
+                        default: /* EWEN/EWDS/ERAL/WRAL, told apart by the top address bits */
+                            dev->hd_wen = (dev->hd_addr >> (HD_ABITS - 2)) == 3;
+                            dev->hd_ph  = HD_DONE;
+                            break;
+                    }
+                }
+                break;
+
+            case HD_READ:
+                /* The host clocks low, high, low and only then samples, so the bit has to
+                   be on the line from this edge on.  Sixteen of them, MSB first. */
+                if (dev->hd_n < 16)
+                    dev->hd_do = (dev->hd_sr >> (15 - dev->hd_n)) & 1;
+                dev->hd_n++;
+                break;
+
+            case HD_WRITE:
+                dev->hd_sr = (uint16_t) ((dev->hd_sr << 1) | dat);
+                if (++dev->hd_n == 16) {
+                    if (dev->hd_wen)
+                        dev->hd_mem[dev->hd_addr] = dev->hd_sr;
+                    dev->hd_ready = 1;
+                    dev->hd_ph    = HD_DONE;
+                }
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    dev->hd_sk = clk;
+}
+
 static void
 pp_write_data(uint8_t val, void *priv)
 {
@@ -1263,7 +1522,8 @@ pp_write_data(uint8_t val, void *priv)
     if (dev->n_wd++ < 300)
         pp_log("PP: raw write_data %02X\n", val);
     pp_raw(dev, "write_data", val);
-    dev->hd_w++;
+    if (dev->hd_probe)
+        hd_write_data(dev, val);
     cd_write_data(dev, val);
     pp_ack_edge(dev, val);
 }
@@ -1316,105 +1576,62 @@ pp_read_status(void *priv)
     pp_t   *dev = (pp_t *) priv;
     uint8_t st  = 0;
 
-    /* 2001 HDONGLE reconnaissance.  That generation drives a third transport -- DATA
-       bit 0 as a clock, then a 64-step address ramp with one STATUS read each -- and
-       every one of those reads currently returns 00, so the guest is reading a line
-       nothing drives and gives up.  With this on, STATUS answers a fixed byte taken
-       from hdsweep.txt, purely to find out whether the guest's behaviour changes at
-       all and which bit it is looking at.  It disturbs the 1999 and 2000 paths, so it
-       is off unless asked for and belongs on a 2001 rig only. */
+    /* The 2001 generation.  Its dongle is a Microwire EEPROM -- see the section above
+       pp_write_data -- and this line is that part's DO.  Three things drive it, in the
+       order the library asks for them.
+
+       Behind the hd2001 option because driving STATUS bit 5 at all disturbs the 1999
+       and 2000 paths, which read this same port for something else. */
     if (dev->hd_probe) {
-        /* The accumulator is not a liveness check after all -- it is an IDENTITY.
-
-           0x37E1D returns  acc = 0x7E ^ XOR{ addr<<1 : bit 5 set at addr }  over a
-           64-step ramp.  0x36B02 rejects 0x7E, then looks acc up in a four-entry
-           table at cs:0x06FC -- 0008, 000C, 0018, 001C -- and the entry that matches
-           selects the dongle's memory size in es:[bx+0x10].  Miss the table and the
-           library gives up exactly as it does on 0x7E, which is why a merely varied
-           answer got no further than a constant one: addr % 3 lands on acc 0, and 0
-           is not in the table.
-
-           0x001C is the value to aim for.  Its handler at 0x36C48 sets the size
-           selector to 4 -- 256 words -- unconditionally, and the guest asks for 56,
-           so the caller's bounds check at 0x36F77 passes.  (0x0018 would do too but
-           its handler is conditional; 0x0008 and 0x000C select size 0 and fail.)
-
-           XOR over { addr : addr % 3 == 0 } is 0x7E, so that alone gives acc 0.
-           Toggling one more address a changes the XOR by a<<1, so adding addr 14
-           contributes 0x1C and lands acc on 0x1C exactly.  23 of the 64 addresses
-           end up set, which also keeps the second gate's line varied. */
-        const uint8_t addr   = (uint8_t) (dev->last_data >> 1);
-        const int     hit    = ((addr % 3) == 0) != (addr == 14);
-        const uint8_t st2001 = hit ? 0x20 : 0x00;
-
-        /* Past the identity gate the library performs the block read itself: 56 words
-           of 16 bits, 896 status reads, one bit each, clocked by DATA bit 5 with about
-           a dozen writes between bits.  It is a plain serial stream -- the value on the
-           bus is a clock, not an address -- so the device just plays the record out in
-           order.  The detection phases before it consume a fixed 321 reads (65 for the
-           reads -- five passes of 64, measured, not the 65 + 4x64 that section 4
-           of the handoff implies -- so the stream starts at read 320.
-
-           The record is the same banner-plus-dwords block the 1999 and 2000 paths
-           already build, zero-padded out to the 112 bytes asked for.  MSB first: the
-           guest shifts each bit in at the bottom of a word and then unpacks the word
-           high byte first, which comes out as a plain MSB-first byte stream. */
-        /* The block read begins after exactly 321 detection reads on the path where
-           detection succeeds, and that is the only path that reaches it.  Counting is
-           crude but it is what the wire supports: keying on the number of writes
-           between reads does NOT work, because the LCG phase also repeats each value
-           about thirty times and would be mistaken for the stream, advancing the
-           cursor before the read even starts. */
-        const int streaming = (dev->hd_n >= 321);
-
-        dev->hd_w = 0;
-
-        if (streaming) {
-            const int     byte = dev->hd_bit >> 3;
-            const uint8_t b    = (byte < PP_BLOCK) ? dev->block[byte] : 0x00;
-            const uint8_t out  = ((b >> (7 - (dev->hd_bit & 7))) & 1) ? 0x20 : 0x00;
-
-            if (dev->hd_bit < 8)
-                pp_log("PP: HD2001 record bit %d of byte %d (%02X) -> %02X\n",
-                       dev->hd_bit & 7, byte, b, out);
-            dev->hd_bit++;
-
-            /* When the stream finishes, read back the guest's own copy.  Everything so
-               far says the record is correct, and the guest still rejects it, so the
-               question is no longer what went on the wire but what landed in memory.
-               MENU.EXE's check buffer is DGROUP:0x8E64, and DGROUP is fixed, but an
-               An all-zero read there could mean the address is wrong just as easily as
-               it could mean nothing was written, so scan for the data instead: the two
-               leading dwords are distinctive enough to find wherever they landed. */
-            if (dev->hd_bit == PP_BLOCK * 8) {
-                static const uint8_t want[8] = { 0x8B, 0x03, 0x00, 0x00,
-                                                 0xCD, 0x81, 0x01, 0x00 };
-                int found = 0;
-
-                for (uint32_t a = 0x10000; (a < 0xA0000) && (found < 4); a++) {
-                    int k = 0;
-
-                    while ((k < 8) && (mem_readb_phys(a + k) == want[k]))
-                        k++;
-                    if (k == 8) {
-                        pp_log("PP: HD2001 record dwords found in RAM at %05X\n", a);
-                        found++;
-                    }
-                }
-                if (!found)
-                    pp_log("PP: HD2001 record is NOWHERE in RAM -- the library dropped it\n");
-            }
-            dev->hd_n++;
-            pp_raw(dev, "read_status", out);
-            return out;
+        /* A read instruction is in progress: the part owns the line and clocks the
+           addressed word out, MSB first. */
+        if (dev->hd_ph == HD_READ) {
+            st = dev->hd_do ? HD_DO : 0x00;
+            pp_raw(dev, "read_status", st);
+            return st;
         }
 
-        if (dev->hd_n < 6)
-            pp_log("PP: HD2001 read %d, addr %02X -> STATUS %02X\n",
-                   dev->hd_n, addr, st2001);
-        dev->hd_n++;
-        pp_raw(dev, "read_status", st2001);
-        return st2001;
+        /* Otherwise the library is still identifying the part.  That scan comes first
+           and is not a liveness check, which is what section 4 of HANDOFF2001.md took
+           it for -- it is an IDENTITY.
+
+           0x37E1D walks a 64-step ramp with one STATUS read each and accumulates
+           acc = 0x7E ^ XOR{ addr<<1 : DO set at addr }.  0x36B02 rejects 0x7E, then
+           looks acc up in a four-entry table at cs:0x06FC -- 0008, 000C, 0018, 001C --
+           and the matching entry sets the part's size in es:[bx+0x10].  Miss the table
+           and the library gives up exactly as it does on 0x7E, which is why a merely
+           varied answer once got no further than a constant one.
+
+           0x001C is the value to aim for: its handler at 0x36C48 sets the size to 4 --
+           256 words -- unconditionally, and the guest asks for 56, so the bounds check
+           at 0x36F77 passes.  (0x0018 would do too, but its handler is conditional;
+           0x0008 and 0x000C select size 0 and fail.)  XOR over { addr : addr % 3 == 0 }
+           is 0x7E on its own, and toggling one further address a moves the result by
+           a << 1, so adding addr 14 contributes 0x1C and lands acc on 0x1C exactly.  23
+           of the 64 addresses end up set, which also keeps the liveness gate at 0x37EA7
+           -- which only rejects a line stuck at one level -- satisfied.
+
+           This signature is synthesised, not measured: what a real 2001 unit puts on DO
+           during that ramp has never been seen.  It picks the size the library then uses
+           to address the part, and every later phase agrees with that choice, so it
+           stands until a physical dongle says otherwise. */
+        const uint8_t addr = (uint8_t) (dev->last_data >> 1);
+        const int     hit  = ((addr % 3) == 0) != (addr == 14);
+
+        /* The library never reads STATUS in the middle of shifting an instruction --
+           only during the sixteen data clocks of a read, which returned above.  So a
+           read here says that whatever the decoder had half-collected was not an
+           instruction, and dropping it stops the identity and liveness phases, which
+           write and read alternately, from ever being taken for one. */
+        dev->hd_ph = HD_IDLE;
+        dev->hd_n  = 0;
+
+        /* A finished write leaves the part busy until it answers ready, which is what
+           0x385F2 polls for after raising CS again. */
+        st = (dev->hd_ready || hit) ? HD_DO : 0x00;
+
+        pp_raw(dev, "read_status", st);
+        return st;
     }
 
     /* Once the 2000 generation's library has announced itself, it owns this line: it
@@ -1908,27 +2125,14 @@ pp_init(const device_t *info)
         pp_log("PP: NG sweep ARMED, this run answers STATUS %02X\n", dev->ng_val);
     }
 
-    /* 2001 probe: take this run's STATUS answer from hdsweep.txt and leave the next
-       one behind, so an unattended reboot loop walks the space. */
+    /* The 2001 transport, which is a different part on the same port -- see the HDONGLE
+       section.  Fill its EEPROM with the record the guest will read out of it.  The
+       sweep this option used to arm is gone: sweeping taught nothing, because neither
+       gate reads a value (HANDOFF2001.md section 4), and the device now answers for
+       real. */
     dev->hd_probe = device_get_config_int("hd2001");
-    if (dev->hd_probe) {
-        FILE *f = fopen("hdsweep.txt", "r");
-        int   v = 0xFF;
-
-        if (f != NULL) {
-            if (fscanf(f, "%d", &v) != 1)
-                v = 0xFF;
-            fclose(f);
-        }
-        dev->hd_val = (uint8_t) (v & 0xFF);
-
-        f = fopen("hdsweep.txt", "w");
-        if (f != NULL) {
-            fprintf(f, "%d\n", (v + 1) & 0xFF);
-            fclose(f);
-        }
-        pp_log("PP: HD2001 probe ARMED, this run answers STATUS %02X\n", dev->hd_val);
-    }
+    if (dev->hd_probe)
+        hd_load(dev, banner);
 
     /* DATA-readback transform sweep: same file, same self-advancing trick.  The 2008
        probe writes 5A/A5 and reads each straight back, so what the cable does to that
@@ -2032,7 +2236,7 @@ static const device_config_t pp_config[] = {
     },
     {
         .name           = "hd2001",
-        .description    = "2001 HDONGLE STATUS probe (research)",
+        .description    = "2001 HDONGLE serial EEPROM (Photo Play 2001)",
         .type           = CONFIG_BINARY,
         .default_string = NULL,
         .default_int    = 0,
