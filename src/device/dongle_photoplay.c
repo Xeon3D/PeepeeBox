@@ -707,7 +707,15 @@ cd_prepare_picture(pp_t *dev)
 {
     cd_t         *cd    = &dev->cd;
     const uint16_t konst = (uint16_t) (cd->arg[2] | (cd->arg[3] << 8));
-    const uint8_t *name  = &cd->arg[4];
+    uint8_t        name[8];
+
+    /* The name is NOT part of the payload.  0x081D sends four header bytes and then
+       repeats: push one name byte, read one reply byte.  So byte i of the reply has to
+       be on the wire when only name[0..i] has been seen -- which works out, because
+       the merge below needs exactly those.  Positions not yet sent stand in as spaces;
+       they are corrected as they arrive, and nothing reads them before then. */
+    for (int i = 0; i < 8; i++)
+        name[i] = ((4 + i) < cd->nargs) ? cd->arg[4 + i] : (uint8_t) 0x20;
     uint8_t        kb[4];
     uint8_t        r[8];
     int            which;
@@ -742,15 +750,22 @@ cd_prepare_picture(pp_t *dev)
     for (int i = 1; i < 8; i++)
         wire[i] = (uint8_t) ((r[i - 1] & 0xF0) | (r[i] & 0x0F));
     wire[8] = (uint8_t) (r[7] & 0xF0);
-    cd->pic_ready = 1;
+    /* Refresh the queued bytes without disturbing how far the guest has read: the
+       stream is being consumed while the name is still arriving. */
+    if (!cd->pic_ready) {
+        cd->tx_bit    = 0;
+        cd->pic_ready = 1;
+    }
 
     cd->tx_len = 9;
-    cd->tx_bit = 0;
     for (int i = 0; i < 9; i++)
         cd->tx[i] = (uint8_t) (wire[i] ^ cd->key);
 
-    pp_log("PP: CDONGLE picture key for \"%.8s\" case %d -> %02X%02X%02X%02X\n",
-           (const char *) name, which, kb[3], kb[2], kb[1], kb[0]);
+    /* The reply is refreshed on every name byte, so only announce the finished one
+       rather than each partial name on the way to it. */
+    if (cd->nargs >= 12)
+        pp_log("PP: CDONGLE picture key for \"%.8s\" case %d -> %02X%02X%02X%02X\n",
+               (const char *) name, which, kb[3], kb[2], kb[1], kb[0]);
     return 1;
 }
 
@@ -760,22 +775,15 @@ cd_prepare(pp_t *dev)
 {
     cd_t *cd = &dev->cd;
 
-    /* 0x081D interleaves a send with every read: it pushes one byte of the buffer,
-       reads one back, and repeats.  Those sends arrive here as further arguments, and
-       rebuilding the reply for each of them rewinds the stream to its first byte -- the
-       guest then reads byte 0 over and over.  Build it once per command. */
-    if (cd->pic_ready)
-        return;
-
-    cd->tx_bit = 0;
-
-    /* The picture-key query carries a 12-byte payload: count, constant, then the
-       8-character name.  Wait for all of it before answering. */
-    if (((cd->cmd == 0xAA) || (cd->cmd == 0xAB)) && (cd->nargs >= 12)) {
+    /* The picture-key header is four bytes: the count, then the 16-bit constant.  The
+       name follows one byte per read, so answer from the header on and keep the reply
+       up to date as the rest lands. */
+    if (((cd->cmd == 0xAA) || (cd->cmd == 0xAB)) && (cd->nargs >= 4)) {
         if (cd_prepare_picture(dev))
             return;
     }
 
+    cd->tx_bit = 0;
     for (int a = 0; a < CD_NANSWERS; a++) {
         if ((cd->cmd != cd_answers[a].cmd) || (cd->nargs < 3))
             continue;
