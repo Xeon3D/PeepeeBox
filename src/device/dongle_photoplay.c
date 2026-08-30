@@ -150,6 +150,8 @@ typedef struct {
     int     hd_probe;
     uint8_t hd_val;
     int     hd_n;
+    int     hd_w;               /* writes since the last status read */
+    int     hd_bit;             /* cursor into the record being streamed */
 
     cd_t    cd;
 
@@ -1224,12 +1226,24 @@ pp_raw(pp_t *dev, const char *what, uint8_t val)
        the caller.  Those stubs open with push bp / mov bp,sp, so the far return address
        sits at [bp+2] (IP) and [bp+4] (CS): report that instead, and the log names the
        routine that actually wanted the port. */
-    const uint32_t frame = ((uint32_t) SS << 4) + BP;
-    const uint16_t from_ip = mem_readw_phys(frame + 2);
-    const uint16_t from_cs = mem_readw_phys(frame + 4);
+    /* Walk the BP chain.  The innermost frame is always one of the three library stubs,
+       and the one above it is the write-N-times or read-N-times primitive, so neither
+       names a protection routine.  Borland keeps a proper frame pointer, so following
+       [bp] upwards gives the actual call stack -- which is the map that five rounds of
+       reading the disassembly were trying to build by hand. */
+    char     stack[96];
+    int      n     = 0;
+    uint16_t bp    = BP;
 
-    pp_log("PPRAW %6d %04X:%04X from %04X:%04X %-10s %02X\n",
-           dev->n_raw, CS, (unsigned) (cpu_state.pc & 0xFFFF), from_cs, from_ip, what, val);
+    for (int f = 0; (f < 4) && bp && (n < (int) sizeof(stack) - 12); f++) {
+        const uint32_t at = ((uint32_t) SS << 4) + bp;
+
+        n += sprintf(stack + n, " %04X:%04X",
+                     mem_readw_phys(at + 4), mem_readw_phys(at + 2));
+        bp = mem_readw_phys(at); /* the saved bp of the caller */
+    }
+
+    pp_log("PPRAW %6d%s %-10s %02X\n", dev->n_raw, stack, what, val);
     }
 }
 
@@ -1245,6 +1259,7 @@ pp_write_data(uint8_t val, void *priv)
     if (dev->n_wd++ < 300)
         pp_log("PP: raw write_data %02X\n", val);
     pp_raw(dev, "write_data", val);
+    dev->hd_w++;
     cd_write_data(dev, val);
     pp_ack_edge(dev, val);
 }
@@ -1305,21 +1320,90 @@ pp_read_status(void *priv)
        all and which bit it is looking at.  It disturbs the 1999 and 2000 paths, so it
        is off unless asked for and belongs on a 2001 rig only. */
     if (dev->hd_probe) {
-        /* Both gates found so far only reject a CONSTANT line.  0x37605 accumulates
-           acc = 0x7E ^ XOR{ addr : bit 5 set there } over a 64-step ramp and fails when
-           it lands back on 0x7E, which any constant answer does.  0x37EA7 reads 64 bits
-           at LCG-chosen addresses and fails when they come out all zero or all one.
-           So answer with something varied: echo one bit of the address the host just
-           wrote.  DATA bit 0 is the clock, so the address is that write shifted down
-           one.  Echoing a single address BIT does not work: every such selector picks
-           a set symmetric in the address bits, whose XOR over the ramp is zero, so the
-           accumulator lands straight back on 0x7E.  A modulus does not have that
-           symmetry -- addr % 3 gives XOR 0x7E, hence acc 0, and leaves about a third of
-           the bits set so the second gate sees a varied line.  hd_val picks the
-           modulus. */
-        const uint8_t addr = (uint8_t) (dev->last_data >> 1);
-        const int     m    = 3 + (dev->hd_val & 7);
-        const uint8_t st2001 = ((addr % m) == 0) ? 0x20 : 0x00;
+        /* The accumulator is not a liveness check after all -- it is an IDENTITY.
+
+           0x37E1D returns  acc = 0x7E ^ XOR{ addr<<1 : bit 5 set at addr }  over a
+           64-step ramp.  0x36B02 rejects 0x7E, then looks acc up in a four-entry
+           table at cs:0x06FC -- 0008, 000C, 0018, 001C -- and the entry that matches
+           selects the dongle's memory size in es:[bx+0x10].  Miss the table and the
+           library gives up exactly as it does on 0x7E, which is why a merely varied
+           answer got no further than a constant one: addr % 3 lands on acc 0, and 0
+           is not in the table.
+
+           0x001C is the value to aim for.  Its handler at 0x36C48 sets the size
+           selector to 4 -- 256 words -- unconditionally, and the guest asks for 56,
+           so the caller's bounds check at 0x36F77 passes.  (0x0018 would do too but
+           its handler is conditional; 0x0008 and 0x000C select size 0 and fail.)
+
+           XOR over { addr : addr % 3 == 0 } is 0x7E, so that alone gives acc 0.
+           Toggling one more address a changes the XOR by a<<1, so adding addr 14
+           contributes 0x1C and lands acc on 0x1C exactly.  23 of the 64 addresses
+           end up set, which also keeps the second gate's line varied. */
+        const uint8_t addr   = (uint8_t) (dev->last_data >> 1);
+        const int     hit    = ((addr % 3) == 0) != (addr == 14);
+        const uint8_t st2001 = hit ? 0x20 : 0x00;
+
+        /* Past the identity gate the library performs the block read itself: 56 words
+           of 16 bits, 896 status reads, one bit each, clocked by DATA bit 5 with about
+           a dozen writes between bits.  It is a plain serial stream -- the value on the
+           bus is a clock, not an address -- so the device just plays the record out in
+           order.  The detection phases before it consume a fixed 321 reads (65 for the
+           reads -- five passes of 64, measured, not the 65 + 4x64 that section 4
+           of the handoff implies -- so the stream starts at read 320.
+
+           The record is the same banner-plus-dwords block the 1999 and 2000 paths
+           already build, zero-padded out to the 112 bytes asked for.  MSB first: the
+           guest shifts each bit in at the bottom of a word and then unpacks the word
+           high byte first, which comes out as a plain MSB-first byte stream. */
+        /* The block read begins after exactly 321 detection reads on the path where
+           detection succeeds, and that is the only path that reaches it.  Counting is
+           crude but it is what the wire supports: keying on the number of writes
+           between reads does NOT work, because the LCG phase also repeats each value
+           about thirty times and would be mistaken for the stream, advancing the
+           cursor before the read even starts. */
+        const int streaming = (dev->hd_n >= 321);
+
+        dev->hd_w = 0;
+
+        if (streaming) {
+            const int     byte = dev->hd_bit >> 3;
+            const uint8_t b    = (byte < PP_BLOCK) ? dev->block[byte] : 0x00;
+            const uint8_t out  = ((b >> (7 - (dev->hd_bit & 7))) & 1) ? 0x20 : 0x00;
+
+            if (dev->hd_bit < 8)
+                pp_log("PP: HD2001 record bit %d of byte %d (%02X) -> %02X\n",
+                       dev->hd_bit & 7, byte, b, out);
+            dev->hd_bit++;
+
+            /* When the stream finishes, read back the guest's own copy.  Everything so
+               far says the record is correct, and the guest still rejects it, so the
+               question is no longer what went on the wire but what landed in memory.
+               MENU.EXE's check buffer is DGROUP:0x8E64, and DGROUP is fixed, but an
+               An all-zero read there could mean the address is wrong just as easily as
+               it could mean nothing was written, so scan for the data instead: the two
+               leading dwords are distinctive enough to find wherever they landed. */
+            if (dev->hd_bit == PP_BLOCK * 8) {
+                static const uint8_t want[8] = { 0x8B, 0x03, 0x00, 0x00,
+                                                 0xCD, 0x81, 0x01, 0x00 };
+                int found = 0;
+
+                for (uint32_t a = 0x10000; (a < 0xA0000) && (found < 4); a++) {
+                    int k = 0;
+
+                    while ((k < 8) && (mem_readb_phys(a + k) == want[k]))
+                        k++;
+                    if (k == 8) {
+                        pp_log("PP: HD2001 record dwords found in RAM at %05X\n", a);
+                        found++;
+                    }
+                }
+                if (!found)
+                    pp_log("PP: HD2001 record is NOWHERE in RAM -- the library dropped it\n");
+            }
+            dev->hd_n++;
+            pp_raw(dev, "read_status", out);
+            return out;
+        }
 
         if (dev->hd_n < 6)
             pp_log("PP: HD2001 read %d, addr %02X -> STATUS %02X\n",
