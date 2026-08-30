@@ -28,6 +28,7 @@ and the corrections are usually the most interesting part.
 | `13-dongle-families.md` | **It is not a HASP.** Corrects the framing running through 01, 04, 07, 09, 10, 11 |
 | `14-dongle-dwords-are-database-keys.md` | **The dwords are content keys.** Each photo game reads one to decrypt its picture database |
 | `15-cdongle.md` | **The 2000 generation's second dongle, decoded and emulated.** Transport, licence constant and record read; that generation now boots and runs its games |
+| `16-photo-games-checklist.md` | **Why a photo game shows no pictures.** The two mechanisms, the fixed-offset record rule, and the checklist -- read before diagnosing one again |
 
 ## Sibling investigation
 
@@ -62,3 +63,8 @@ Three findings changed the code rather than just the documentation:
    corrects itself on the way — the record model in it is wrong, then right for a
    different reason, and the `D0` trailer goes from anomaly to the one thing the
    parser should have been built on.
+5. **The dwords sit at a fixed offset, whatever the banner is** (`16`). The
+   conditional layout `14` introduced worked for 1999's 15-character banner and
+   silently broke the 2000 generation's 17-character one, costing FINDIT its
+   level database. `16` is the checklist that stops this being re-derived a
+   fourth time.

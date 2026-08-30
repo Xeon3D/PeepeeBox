@@ -191,12 +191,21 @@ static const uint32_t pp_dwords[8] = {
     0xBAE8A135  /* v[7]  per-unit */
 };
 
-/* A 1999 banner is "Version 99 (XX)" -- 15 characters, so the 16-byte field is
-   exact.  The later banners offered below do not fit, and they belong to dongle
-   families this device is not (Docs/13); for those the block keeps the old
-   30-byte-banner layout so that whatever worked before still does. */
+/* The dwords sit at a FIXED offset of 16, whatever the banner is.
+ *
+ * The games do not walk a struct -- each one reads one absolute offset into the block
+ * it was handed, hardcoded at compile time: FINDIT +0x1C, MOSAIC +0x20, FMEMO +0x24
+ * (Docs/14).  Those are v[3], v[4] and v[5] of a banner[16] + uint32 v[8] record, which
+ * is what the hardware serves (Docs/12).  KEYN.COM's 30-byte banner is the odd one out,
+ * and copying it is what put every dword 14 bytes late.
+ *
+ * A 1999 banner ("Version 99 (XX)", 15 characters) fits the field exactly.  A 2000 one
+ * ("Version 2000 (DE)", 17) does not, and must still not move the dwords: the banner is
+ * simply written over the start of the block, clipping the first two bytes of v[0].
+ * Nothing reads v[0] -- it is the per-unit word, uninitialised host memory on a real
+ * dongle -- so the collision costs nothing, where moving the dwords costs FINDIT its
+ * level database and leaves the game running with two black picture panels. */
 #define PP_BANNER_1999 16
-#define PP_BANNER_KEYN 30
 
 /* The releases, and the banner each one's MAIN.SET carries.  Where an image was
    available the banner was read out of it directly (Docs/08); the rest follow the
@@ -576,22 +585,38 @@ static const struct {
  *
  * WHAT IS AND IS NOT KNOWN HERE
  *
- * The device's real name-to-key function has not been recovered.  What has been recovered
- * is the answer it must give, for every picture in the shipped data: every key in AMORE's
- * COMIX archive was cracked straight out of the ciphertext, because a PCX header begins
- * with eight known bytes and that pins the LCG seed exactly.  The method was checked
- * against an archive packed with no dongle at all and recovers the documented vendor
- * default 0x00012345 on the nose.
+ * The answer the device must give was recovered from the shipped data rather than from
+ * the dongle: a PCX header begins with eight known bytes, which pins the LCG seed
+ * exactly, so every key can be cracked straight out of the ciphertext.  The method was
+ * checked against an archive packed with no dongle at all and recovers the documented
+ * vendor default 0x00012345 on the nose.  3096 keys over three archives came out that
+ * way, and they are what everything below is fitted to and verified against.
  *
- * From those 332 keys, two of the four cases fall out as exact closed forms and are
- * implemented as such below -- each fits all 83 of its files.  The other two do not fit
- * any rotate/add/xor model tried, and are served from per-character tables instead.
+ * THE STRUCTURE, which is what makes this generalise past the names in those archives:
  *
- * So cases 2 and 3 are FITTED, NOT EMULATED.  They are right for every character that
- * appears in the shipped archives (the digits and the space) and have nothing to say
- * about any other.  An unknown character is logged rather than guessed at, so the gap is
- * loud instead of silent.  Anyone deriving the real function should be able to reproduce
- * cd_c2_* and cd_c3_* from it exactly; that is the test it has to pass.
+ *   1. The reply is EIGHT bytes and the guest folds them itself.  Byte j is a function
+ *      of name[j] alone -- call it S_j -- and the fold pairs j with j+4.  That is why
+ *      per-position models fitted on AMORE collapsed on FINDIT: AMORE's names are so
+ *      short that name[4..7] were always spaces, so S_{j+4} looked like a constant.
+ *      It also makes the reply streamable, since 0x081D wants byte j back before it has
+ *      sent name[j+1].
+ *
+ *   2. Each S_j is SEPARABLE IN THE NIBBLES: S(c) = a[hi] + b[lo] mod 256, exactly, in
+ *      every position of every case, with no contradiction over all 3096 keys.
+ *
+ *   3. b is LINEAR IN THE BITS of the low nibble, so four weights give all sixteen
+ *      entries.  This is the fingerprint the earlier notes kept seeing as
+ *      "nibble-granular with carries", and it is why an affine model in the name BYTES
+ *      was rank-deficient and died: the function is affine in the name's BITS.
+ *
+ * The table below is therefore measured where the archives show a character and filled
+ * in from that law where they do not.  Entries the law cannot reach are -1 and are
+ * logged rather than guessed, so the gap stays loud.  It reproduces all 3096 cracked
+ * keys exactly -- 667, 810, 911 and 708 over the four cases.
+ *
+ * It is still a characterisation, not the dongle's own arithmetic: the closed form
+ * behind a[] is not known, and neither is the constant-to-transform rule that would
+ * yield the real A3 and A4.  Anyone who recovers those must reproduce this table.
  *
  * The two constants for cases 2 and 3 come from the dongle itself, via the A3 and A4
  * queries, and their real values are unknown.  They do not need to be known: whatever
@@ -605,100 +630,251 @@ static const struct {
 #define CD_CONST_CASE2 0x0002 /* our answer to A3 -- a tag, not a recovered value */
 #define CD_CONST_CASE3 0x0003 /* our answer to A4 -- ditto */
 
-typedef struct {
-    uint8_t ch;
-    uint8_t val;
-} cd_map_t;
-
-static const cd_map_t cd_c2_b0[] = { { 0x31, 0x4C }, { 0x32, 0x6C }, { 0x33, 0x8C }, { 0x34, 0xAC }, { 0x35, 0xCC }, { 0x36, 0xEC }, { 0x37, 0x0C }, { 0x38, 0x2B }, { 0x39, 0x4B }, { 0, 0 } };
-static const cd_map_t cd_c2_b1[] = { { 0x20, 0xF1 }, { 0x30, 0x11 }, { 0x31, 0x13 }, { 0x32, 0x15 }, { 0x33, 0x17 }, { 0x34, 0x09 }, { 0x35, 0x0B }, { 0x36, 0x0D }, { 0x37, 0x0F }, { 0x38, 0x01 }, { 0x39, 0x03 }, { 0, 0 } };
-static const cd_map_t cd_c2_b2[] = { { 0x20, 0xF6 }, { 0x30, 0xF8 }, { 0x31, 0xD8 }, { 0x32, 0xB8 }, { 0x33, 0x98 }, { 0x34, 0x78 }, { 0x35, 0x58 }, { 0x36, 0x38 }, { 0x37, 0x18 }, { 0x38, 0xF7 }, { 0x39, 0xD7 }, { 0, 0 } };
-static const cd_map_t cd_c2_b3[] = { { 0x20, 0x0A }, { 0, 0 } };
-static const cd_map_t cd_c3_b0[] = { { 0x31, 0x76 }, { 0x32, 0xF5 }, { 0x33, 0x75 }, { 0x34, 0xF4 }, { 0x35, 0x74 }, { 0x36, 0xF3 }, { 0x37, 0x73 }, { 0x38, 0xF2 }, { 0x39, 0x72 }, { 0, 0 } };
-static const cd_map_t cd_c3_b1[] = { { 0x20, 0x12 }, { 0x30, 0x92 }, { 0x31, 0x8A }, { 0x32, 0x82 }, { 0x33, 0x7A }, { 0x34, 0xB2 }, { 0x35, 0xAA }, { 0x36, 0xA2 }, { 0x37, 0x9A }, { 0x38, 0xD2 }, { 0x39, 0xCA }, { 0, 0 } };
-static const cd_map_t cd_c3_b2[] = { { 0x20, 0xFC }, { 0x30, 0x7C }, { 0x31, 0x74 }, { 0x32, 0x8C }, { 0x33, 0x84 }, { 0x34, 0x9C }, { 0x35, 0x94 }, { 0x36, 0xAC }, { 0x37, 0xA4 }, { 0x38, 0x3C }, { 0x39, 0x34 }, { 0, 0 } };
-static const cd_map_t cd_c3_b3[] = { { 0x20, 0x98 }, { 0, 0 } };
-
-static const cd_map_t *const cd_tables[2][4] = {
-    { cd_c2_b0, cd_c2_b1, cd_c2_b2, cd_c2_b3 },
-    { cd_c3_b0, cd_c3_b1, cd_c3_b2, cd_c3_b3 }
+/* Picture-key transform, one byte per character, per case, per position.
+ *
+ *   371 entries measured directly from cracked keys,
+ *   1092 more filled in by the nibble law, the rest (-1) unknown.
+ */
+#define CD_PIC_LO 0x20
+static const int16_t cd_pic_s[4][8][64] = {
+    { /* case 0 */
+        { /* S_0 */
+             207,  205,  203,  201,  199,  197,  195,  193,  223,  221,  219,  217,  215,  213,  211,  209,
+             239,  237,  235,  233,  231,  229,  227,  225,  255,  253,  251,  249,  247,  245,  243,  241,
+              15,   13,   11,    9,    7,    5,    3,    1,   31,   29,   27,   25,   23,   21,   19,   17,
+              47,   45,   43,   41,   39,   37,   35,   33,   63,   61,   59,   57,   55,   53,   51,   49,
+        },
+        { /* S_1 */
+             252,  220,  188,  156,  124,   92,   60,   28,  253,  221,  189,  157,  125,   93,   61,   29,
+             254,  222,  190,  158,  126,   94,   62,   30,  255,  223,  191,  159,  127,   95,   63,   31,
+             240,  208,  176,  144,  112,   80,   48,   16,  241,  209,  177,  145,  113,   81,   49,   17,
+             242,  210,  178,  146,  114,   82,   50,   18,  243,  211,  179,  147,  115,   83,   51,   19,
+        },
+        { /* S_2 */
+             252,  220,  188,  156,  124,   92,   60,   28,  253,  221,  189,  157,  125,   93,   61,   29,
+             254,  222,  190,  158,  126,   94,   62,   30,  255,  223,  191,  159,  127,   95,   63,   31,
+             240,  208,  176,  144,  112,   80,   48,   16,  241,  209,  177,  145,  113,   81,   49,   17,
+             242,  210,  178,  146,  114,   82,   50,   18,  243,  211,  179,  147,  115,   83,   51,   19,
+        },
+        { /* S_3 */
+              24,   56,   88,  120,  152,  184,  216,  248,   25,   57,   89,  121,  153,  185,  217,  249,
+              26,   58,   90,  122,  154,  186,  218,  250,   27,   59,   91,  123,  155,  187,  219,  251,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+        },
+        { /* S_4 */
+               0,    2,    4,    6,    8,   10,   12,   14,   16,   18,   20,   22,   24,   26,   28,   30,
+              32,   34,   36,   38,   40,   42,   44,   46,   48,   50,   52,   54,   56,   58,   60,   62,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+        },
+        { /* S_5 */
+               0,   32,   64,   96,  128,  160,  192,  224,    1,   33,   65,   97,  129,  161,  193,  225,
+               2,   34,   66,   98,  130,  162,  194,  226,    3,   35,   67,   99,  131,  163,  195,  227,
+              12,   44,   76,  108,  140,  172,  204,  236,   13,   45,   77,  109,  141,  173,  205,  237,
+              14,   46,   78,  110,  142,  174,  206,  238,   15,   47,   79,  111,  143,  175,  207,  239,
+        },
+        { /* S_6 */
+               0,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   34,   66,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   76,   -1,   -1,  172,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,  205,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+        },
+        { /* S_7 */
+               0,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+        },
+    },
+    { /* case 1 */
+        { /* S_0 */
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+        },
+        { /* S_1 */
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+        },
+        { /* S_2 */
+             246,  254,  230,  238,  214,  222,  198,  206,  182,  190,  166,  174,  150,  158,  134,  142,
+             118,  126,  102,  110,   86,   94,   70,   78,   54,   62,   38,   46,   22,   30,    6,   14,
+             245,  253,  229,  237,  213,  221,  197,  205,  181,  189,  165,  173,  149,  157,  133,  141,
+             117,  125,  101,  109,   85,   93,   69,   77,   53,   61,   37,   45,   21,   29,    5,   13,
+        },
+        { /* S_3 */
+             247,  255,  231,  239,  215,  223,  199,  207,  183,  191,  167,  175,  151,  159,  135,  143,
+             119,  127,  103,  111,   87,   95,   71,   79,   55,   63,   39,   47,   23,   31,    7,   15,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,  132,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+        },
+        { /* S_4 */
+             217,  209,  201,  193,  249,  241,  233,  225,  153,  145,  137,  129,  185,  177,  169,  161,
+              89,   81,   73,   65,  121,  113,  105,   97,   25,   17,    9,    1,   57,   49,   41,   33,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+        },
+        { /* S_5 */
+               0,  128,    1,  129,    2,  130,    3,  131,    4,  132,    5,  133,    6,  134,    7,  135,
+               8,  136,    9,  137,   10,  138,   11,  139,   12,  140,   13,  141,   14,  142,   15,  143,
+              48,  176,   49,  177,   50,  178,   51,  179,   52,  180,   53,  181,   54,  182,   55,  183,
+              56,  184,   57,  185,   58,  186,   59,  187,   60,  188,   61,  189,   62,  190,   63,  191,
+        },
+        { /* S_6 */
+               0,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,  136,  144,  152,  160,  168,  176,  184,  192,  200,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   19,   -1,   -1,   43,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,  115,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+        },
+        { /* S_7 */
+              93,   85,   77,   69,  125,  117,  109,  101,   29,   21,   13,    5,   61,   53,   45,   37,
+             221,  213,  205,  197,  253,  245,  237,  229,  157,  149,  141,  133,  189,  181,  173,  165,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+        },
+    },
+    { /* case 2 */
+        { /* S_0 */
+              46,   78,  110,  142,  174,  206,  238,   14,   45,   77,  109,  141,  173,  205,  237,   13,
+              44,   76,  108,  140,  172,  204,  236,   12,   43,   75,  107,  139,  171,  203,  235,   11,
+              34,   66,   98,  130,  162,  194,  226,    2,   33,   65,   97,  129,  161,  193,  225,    1,
+              32,   64,   96,  128,  160,  192,  224,    0,   31,   63,   95,  127,  159,  191,  223,  255,
+        },
+        { /* S_1 */
+             241,  243,  245,  247,  233,  235,  237,  239,  225,  227,  229,  231,  217,  219,  221,  223,
+              17,   19,   21,   23,    9,   11,   13,   15,    1,    3,    5,    7,  249,  251,  253,  255,
+             177,  179,  181,  183,  169,  171,  173,  175,  161,  163,  165,  167,  153,  155,  157,  159,
+             209,  211,  213,  215,  201,  203,  205,  207,  193,  195,  197,  199,  185,  187,  189,  191,
+        },
+        { /* S_2 */
+             246,  214,  182,  150,  118,   86,   54,   22,  245,  213,  181,  149,  117,   85,   53,   21,
+             248,  216,  184,  152,  120,   88,   56,   24,  247,  215,  183,  151,  119,   87,   55,   23,
+             242,  210,  178,  146,  114,   82,   50,   18,  241,  209,  177,  145,  113,   81,   49,   17,
+             244,  212,  180,  148,  116,   84,   52,   20,  243,  211,  179,  147,  115,   83,   51,   19,
+        },
+        { /* S_3 */
+              10,   42,   74,  106,  138,  170,  202,  234,    9,   41,   73,  105,  137,  169,  201,  233,
+               8,   40,   72,  104,  136,  168,  200,  232,    7,   39,   71,  103,  135,  167,  199,  231,
+              22,   54,   86,  118,  150,  182,  214,  246,   21,   53,   85,  117,  149,  181,  213,  245,
+              20,   52,   84,  116,  148,  180,  212,  244,   19,   51,   83,  115,  147,  179,  211,  243,
+        },
+        { /* S_4 */
+               0,   32,   64,   96,  128,  160,  192,  224,  255,   31,   63,   95,  127,  159,  191,  223,
+             254,   30,   62,   94,  126,  158,  190,  222,  253,   29,   61,   93,  125,  157,  189,  221,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+        },
+        { /* S_5 */
+               0,    2,    4,    6,  248,  250,  252,  254,  240,  242,  244,  246,  232,  234,  236,  238,
+              32,   34,   36,   38,   24,   26,   28,   30,   16,   18,   20,   22,    8,   10,   12,   14,
+              64,   66,   68,   70,   56,   58,   60,   62,   48,   50,   52,   54,   40,   42,   44,   46,
+              96,   98,  100,  102,   88,   90,   92,   94,   80,   82,   84,   86,   72,   74,   76,   78,
+        },
+        { /* S_6 */
+               0,  224,  192,  160,  128,   96,   64,   32,  255,  223,  191,  159,  127,   95,   63,   31,
+               2,  226,  194,  162,  130,   98,   66,   34,    1,  225,  193,  161,  129,   97,   65,   33,
+             244,  212,  180,  148,  116,   84,   52,   20,  243,  211,  179,  147,  115,   83,   51,   19,
+             246,  214,  182,  150,  118,   86,   54,   22,  245,  213,  181,  149,  117,   85,   53,   21,
+        },
+        { /* S_7 */
+               0,   32,   64,   96,  128,  160,  192,  224,  255,   31,   63,   95,  127,  159,  191,  223,
+             254,   30,   62,   94,  126,  158,  190,  222,  253,   29,   61,   93,  125,  157,  189,  221,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+        },
+    },
+    { /* case 3 */
+        { /* S_0 */
+             254,  126,  253,  125,  252,  124,  251,  123,  250,  122,  249,  121,  248,  120,  247,  119,
+             246,  118,  245,  117,  244,  116,  243,  115,  242,  114,  241,  113,  240,  112,  239,  111,
+             238,  110,  237,  109,  236,  108,  235,  107,  234,  106,  233,  105,  232,  104,  231,  103,
+             230,  102,  229,  101,  228,  100,  227,   99,  226,   98,  225,   97,  224,   96,  223,   95,
+        },
+        { /* S_1 */
+              18,   10,    2,  250,   50,   42,   34,   26,   82,   74,   66,   58,  114,  106,   98,   90,
+             146,  138,  130,  122,  178,  170,  162,  154,  210,  202,  194,  186,  242,  234,  226,  218,
+              19,   11,    3,  251,   51,   43,   35,   27,   83,   75,   67,   59,  115,  107,   99,   91,
+             147,  139,  131,  123,  179,  171,  163,  155,  211,  203,  195,  187,  243,  235,  227,  219,
+        },
+        { /* S_2 */
+             252,  244,   12,    4,   28,   20,   44,   36,  188,  180,  204,  196,  220,  212,  236,  228,
+             124,  116,  140,  132,  156,  148,  172,  164,   60,   52,   76,   68,   92,   84,  108,  100,
+             251,  243,   11,    3,   27,   19,   43,   35,  187,  179,  203,  195,  219,  211,  235,  227,
+             123,  115,  139,  131,  155,  147,  171,  163,   59,   51,   75,   67,   91,   83,  107,   99,
+        },
+        { /* S_3 */
+             152,  144,  168,  160,  120,  112,  136,  128,  216,  208,  232,  224,  184,  176,  200,  192,
+              24,   16,   40,   32,  248,  240,    8,    0,   88,   80,  104,   96,   56,   48,   72,   64,
+             155,  147,  171,  163,  123,  115,  139,  131,  219,  211,  235,  227,  187,  179,  203,  195,
+              27,   19,   43,   35,  251,  243,   11,    3,   91,   83,  107,   99,   59,   51,   75,   67,
+        },
+        { /* S_4 */
+               0,  128,  255,  127,  254,  126,  253,  125,  252,  124,  251,  123,  250,  122,  249,  121,
+             248,  120,  247,  119,  246,  118,  245,  117,  244,  116,  243,  115,  242,  114,  241,  113,
+              48,  176,   47,  175,   46,  174,   45,  173,   44,  172,   43,  171,   42,  170,   41,  169,
+              40,  168,   39,  167,   38,  166,   37,  165,   36,  164,   35,  163,   34,  162,   33,  161,
+        },
+        { /* S_5 */
+               0,  248,  240,  232,  224,  216,  208,  200,  192,  184,  176,  168,  160,  152,  144,  136,
+             128,  120,  112,  104,   96,   88,   80,   72,   64,   56,   48,   40,   32,   24,   16,    8,
+               1,  249,  241,  233,  225,  217,  209,  201,  193,  185,  177,  169,  161,  153,  145,  137,
+             129,  121,  113,  105,   97,   89,   81,   73,   65,   57,   49,   41,   33,   25,   17,    9,
+        },
+        { /* S_6 */
+               0,  248,   16,    8,  224,  216,  240,  232,   64,   56,   80,   72,   32,   24,   48,   40,
+             128,  120,  144,  136,   96,   88,  112,  104,  192,  184,  208,  200,  160,  152,  176,  168,
+             255,  247,   15,    7,  223,  215,  239,  231,   63,   55,   79,   71,   31,   23,   47,   39,
+             127,  119,  143,  135,   95,   87,  111,  103,  191,  183,  207,  199,  159,  151,  175,  167,
+        },
+        { /* S_7 */
+               0,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   -1,   -1,   -1,  219,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+              -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
+        },
+    },
 };
 
-static uint8_t
-cd_rol(uint8_t v, int r)
+/* The transform for one name position.  -1 when this character was never seen and the
+   nibble law could not supply it either. */
+static int
+cd_pic_transform(int which, int pos, uint8_t ch)
 {
-    return (uint8_t) ((v << r) | (v >> (8 - r)));
+    if ((ch < CD_PIC_LO) || (ch > (CD_PIC_LO + 63)))
+        return -1;
+    return cd_pic_s[which][pos][ch - CD_PIC_LO];
 }
 
-/* -1 when this character was never seen in the shipped archives. */
+/* Which of the eight the game's fold actually consumes.  Case 1 aliases: it never
+   reads the first two, which is why no amount of data ever determined them. */
+static const uint8_t cd_pic_used[4] = { 0xFF, 0xFC, 0xFF, 0xFF };
+
+/* The eight bytes the dongle answers with.  The game folds them itself -- that is the
+   whole point of doing it this way round: byte j depends only on name[j], so it can go
+   out while the rest of the name is still arriving. */
 static int
-cd_lookup(const cd_map_t *tab, uint8_t ch)
+cd_pic_reply(int which, const uint8_t *name, uint8_t *r)
 {
-    for (int i = 0; tab[i].ch != 0; i++)
-        if (tab[i].ch == ch)
-            return tab[i].val;
-    return -1;
-}
+    for (int j = 0; j < 8; j++) {
+        const int v = cd_pic_transform(which, j, name[j]);
 
-/* The four-byte seed the game must end up with, little-endian in kb[]. */
-static int
-cd_picture_key(int which, const uint8_t *name, uint8_t *kb)
-{
-    switch (which) {
-        case 0: /* exact; fits all 83 of its files */
-            kb[0] = (uint8_t) (0x8F ^ cd_rol(name[0], 1));
-            kb[1] = (uint8_t) (0xF8 ^ cd_rol(name[1], 5));
-            kb[2] = (uint8_t) (0xF8 ^ cd_rol(name[2], 5));
-            kb[3] = (uint8_t) (0x38 ^ name[3]);
-            return 1;
-
-        case 1: /* exact; the aliased fold really does drop name[0] and name[1] */
-            kb[0] = (uint8_t) (0xD7 ^ name[3]);
-            kb[1] = (uint8_t) (0xF7 ^ cd_rol(name[2], 3));
-            kb[2] = (uint8_t) (0x2E ^ cd_rol(name[2], 3));
-            kb[3] = (uint8_t) (0x8A ^ name[3]);
-            return 1;
-
-        default: { /* tabulated */
-            const cd_map_t *const *t = cd_tables[which - 2];
-
-            for (int i = 0; i < 4; i++) {
-                const int v = cd_lookup(t[i], name[i]);
-
-                if (v < 0) {
-                    pp_log("PP: CDONGLE case %d has no tabulated value for '%c' at %d --"
-                           " this name is outside what the shipped archives cover\n",
-                           which, (char) name[i], i);
-                    return 0;
-                }
-                kb[i] = (uint8_t) v;
+        if (v < 0) {
+            if (!((cd_pic_used[which] >> j) & 1)) {
+                r[j] = 0; /* folded away; anything will do */
+                continue;
             }
-            return 1;
+            pp_log("PP: CDONGLE case %d has no transform for '%c' at position %d --"
+                   " this name is outside what the cracked keys cover\n",
+                   which, (char) name[j], j);
+            return 0;
         }
+        r[j] = (uint8_t) v;
     }
-}
-
-/* Build the eight bytes whose fold gives kb.  The fold takes eight inputs to four, so
-   there is slack: zero the second half and let the first carry the answer.  Case 1 is
-   the exception -- it reads back values it has just written (0x1F56E), so its inputs
-   have to be placed to survive that. */
-static void
-cd_fold_inverse(int which, const uint8_t *kb, uint8_t *r)
-{
-    memset(r, 0, 8);
-
-    if (which == 1) {
-        r[3] = kb[0];
-        r[2] = kb[1];
-        r[4] = (uint8_t) (kb[1] ^ kb[2]);
-        r[7] = (uint8_t) (kb[0] ^ kb[3]);
-    } else {
-        /* XOR fold for case 0, ADD fold for 2 and 3; either way x op 0 == x */
-        r[0] = kb[0];
-        r[1] = kb[1];
-        r[2] = kb[2];
-        r[3] = kb[3];
-    }
+    return 1;
 }
 
 /* Answer a picture-key request.  Returns 0 if this one cannot be served. */
@@ -711,12 +887,12 @@ cd_prepare_picture(pp_t *dev)
 
     /* The name is NOT part of the payload.  0x081D sends four header bytes and then
        repeats: push one name byte, read one reply byte.  So byte i of the reply has to
-       be on the wire when only name[0..i] has been seen -- which works out, because
-       the merge below needs exactly those.  Positions not yet sent stand in as spaces;
-       they are corrected as they arrive, and nothing reads them before then. */
+       be on the wire when only name[0..i] has been seen.  That is exactly why the
+       device answers S_j(name[j]) and lets the guest fold: reply byte j depends on
+       name[j] and nothing later.  Positions not yet sent stand in as spaces; they are
+       corrected as they arrive, and nothing reads them before then. */
     for (int i = 0; i < 8; i++)
         name[i] = ((4 + i) < cd->nargs) ? cd->arg[4 + i] : (uint8_t) 0x20;
-    uint8_t        kb[4];
     uint8_t        r[8];
     int            which;
 
@@ -730,10 +906,8 @@ cd_prepare_picture(pp_t *dev)
             return 0;
     }
 
-    if (!cd_picture_key(which, name, kb))
+    if (!cd_pic_reply(which, name, r))
         return 0;
-
-    cd_fold_inverse(which, kb, r);
 
     /* 0x081D does not hand the caller what it received.  It ends with a backwards
        nibble-merge (0x08A9): walking down from the last byte,
@@ -764,8 +938,9 @@ cd_prepare_picture(pp_t *dev)
     /* The reply is refreshed on every name byte, so only announce the finished one
        rather than each partial name on the way to it. */
     if (cd->nargs >= 12)
-        pp_log("PP: CDONGLE picture key for \"%.8s\" case %d -> %02X%02X%02X%02X\n",
-               (const char *) name, which, kb[3], kb[2], kb[1], kb[0]);
+        pp_log("PP: CDONGLE picture key for \"%.8s\" case %d -> %02X %02X %02X %02X"
+               " %02X %02X %02X %02X\n", (const char *) name, which,
+               r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]);
     return 1;
 }
 
@@ -1505,14 +1680,14 @@ pp_init(const device_t *info)
     strncpy(banner, full, sizeof(banner) - 1);
     banner[sizeof(banner) - 1] = 0;
 
-    /* Lay the record out the way the hardware does. */
+    /* Lay the record out the way the hardware does: dwords first at their fixed offset,
+       then the banner written over the start.  A banner longer than the field clips the
+       first bytes of v[0], which nothing reads -- see the note by PP_BANNER_1999. */
     const size_t blen = strlen(banner);
-    const size_t voff = (blen < PP_BANNER_1999) ? PP_BANNER_1999 : PP_BANNER_KEYN;
 
     memset(dev->block, 0, sizeof(dev->block));
-    memcpy(dev->block, banner, blen);
     for (size_t n = 0; n < 8; n++) {
-        const size_t o = voff + (n * 4);
+        const size_t o = PP_BANNER_1999 + (n * 4);
 
         if ((o + 4) > sizeof(dev->block))
             break;
@@ -1521,9 +1696,13 @@ pp_init(const device_t *info)
         dev->block[o + 2] = (uint8_t) (pp_dwords[n] >> 16);
         dev->block[o + 3] = (uint8_t) (pp_dwords[n] >> 24);
     }
+    memcpy(dev->block, banner, blen);
+    dev->block[blen] = 0;
 
-    pp_log("PP: Photo Play dongle attached, banner \"%s\", dwords at +%02X\n",
-           banner, (unsigned) voff);
+    pp_log("PP: Photo Play dongle attached, banner \"%s\" (%u chars), dwords at +%02X;"
+           " FINDIT reads +1C = %02X%02X%02X%02X\n",
+           banner, (unsigned) blen, PP_BANNER_1999,
+           dev->block[0x1F], dev->block[0x1E], dev->block[0x1D], dev->block[0x1C]);
 
     dev->lpt = lpt_attach(pp_write_data, pp_write_ctrl, pp_strobe,
                           pp_read_status, pp_read_ctrl, NULL, NULL, dev);
