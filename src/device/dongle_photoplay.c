@@ -60,6 +60,8 @@
 #include <stdarg.h>
 #define HAVE_STDARG_H
 #include <86box/86box.h>
+#include "cpu.h"   /* CS and cpu_state.pc, so the trace can name the caller */
+#include <86box/mem.h>
 #include <86box/timer.h>
 #include <86box/device.h>
 #include <86box/io.h>
@@ -126,6 +128,7 @@ typedef struct {
     int     n_cmd;
     int     n_wd, n_wc, n_rs, n_rd;
     int     n_raw;             /* full raw-wire trace, see pp_raw() */
+    int     dumped_cs;         /* the code dump above happens once */
 
     /* dongle -> host, as a queue of nibbles */
     uint8_t out[PP_OUT_MAX];
@@ -1194,8 +1197,40 @@ pp_raw(pp_t *dev, const char *what, uint8_t val)
 {
     if (pp_raw_want < 0)
         pp_raw_want = (getenv("PEEPEEBOX_LPT_TRACE") != NULL);
-    if (pp_raw_want && dev->n_raw++ < 400000)
-        pp_log("PPRAW %6d %-10s %02X\n", dev->n_raw, what, val);
+    /* Log the guest's CS:IP alongside the access.  Static disassembly of the 2001
+       library has repeatedly mapped the wrong routine -- the device-type table is
+       error reporting, 0x39FF4 is port resolution -- because nothing said which code
+       actually drives the wire.  This does: one boot names every routine that touches
+       the port, in the order it does so. */
+    /* The first time a non-BIOS segment drives the port, dump the code there.  Which
+       routine this is cannot be settled by pattern-searching the binary -- EC and EE
+       occur constantly as ModRM bytes -- but the bytes themselves identify it exactly. */
+    if (pp_raw_want && (CS < 0xC000) && !dev->dumped_cs) {
+        dev->dumped_cs = 1;
+        pp_log("PPCODE segment %04X, 64 bytes at %05X:\n", CS, CS << 4);
+        for (int r = 0; r < 4; r++) {
+            char line[80];
+            int  n = 0;
+            for (int b = 0; b < 16; b++)
+                n += sprintf(line + n, "%02X", mem_readb_phys((CS << 4) + r * 16 + b));
+            pp_log("PPCODE +%02X %s\n", r * 16, line);
+        }
+    }
+
+    if (pp_raw_want && dev->n_raw++ < 400000) {
+    /* All 2001 protection I/O goes through Borland's inportb/outportb -- three far-called
+       stubs in their own segment -- which is why no port instruction could be found in
+       the protection segment itself.  CS:IP therefore always names the stub and never
+       the caller.  Those stubs open with push bp / mov bp,sp, so the far return address
+       sits at [bp+2] (IP) and [bp+4] (CS): report that instead, and the log names the
+       routine that actually wanted the port. */
+    const uint32_t frame = ((uint32_t) SS << 4) + BP;
+    const uint16_t from_ip = mem_readw_phys(frame + 2);
+    const uint16_t from_cs = mem_readw_phys(frame + 4);
+
+    pp_log("PPRAW %6d %04X:%04X from %04X:%04X %-10s %02X\n",
+           dev->n_raw, CS, (unsigned) (cpu_state.pc & 0xFFFF), from_cs, from_ip, what, val);
+    }
 }
 
 static void
