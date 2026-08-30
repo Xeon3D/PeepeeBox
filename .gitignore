@@ -72,8 +72,6 @@ CMakeLists.txt.user
 # Jetbrains CLion
 .idea
 
-# Disk images and folders of them.  These are gigabytes each and are not ours to
-# redistribute.
+# Disk images.  These are gigabytes each and are not ours to redistribute.
+# PP2000/ and PP2001/ hold nothing but these, so the one pattern covers them.
 *.img
-PP2000/
-PP2001/
