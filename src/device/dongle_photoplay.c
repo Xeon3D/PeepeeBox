@@ -1270,15 +1270,25 @@ pp_read_status(void *priv)
        all and which bit it is looking at.  It disturbs the 1999 and 2000 paths, so it
        is off unless asked for and belongs on a 2001 rig only. */
     if (dev->hd_probe) {
-        /* 0x37E1D accumulates  acc = 0x7E ^ XOR{ addr : bit 5 set at that addr }  over
-           the 64-step ramp, and 0x7E is the FAILURE value -- it selects device type 7,
-           whose handler errors every service.  A constant answer, all ones or all
-           zeros, XORs to zero across the full sweep and so lands exactly on 0x7E.
-           Setting bit 5 at exactly one non-zero address moves it off. */
-        const uint8_t st2001 = (dev->hd_n == dev->hd_val) ? 0x20 : 0x00;
+        /* Both gates found so far only reject a CONSTANT line.  0x37605 accumulates
+           acc = 0x7E ^ XOR{ addr : bit 5 set there } over a 64-step ramp and fails when
+           it lands back on 0x7E, which any constant answer does.  0x37EA7 reads 64 bits
+           at LCG-chosen addresses and fails when they come out all zero or all one.
+           So answer with something varied: echo one bit of the address the host just
+           wrote.  DATA bit 0 is the clock, so the address is that write shifted down
+           one.  Echoing a single address BIT does not work: every such selector picks
+           a set symmetric in the address bits, whose XOR over the ramp is zero, so the
+           accumulator lands straight back on 0x7E.  A modulus does not have that
+           symmetry -- addr % 3 gives XOR 0x7E, hence acc 0, and leaves about a third of
+           the bits set so the second gate sees a varied line.  hd_val picks the
+           modulus. */
+        const uint8_t addr = (uint8_t) (dev->last_data >> 1);
+        const int     m    = 3 + (dev->hd_val & 7);
+        const uint8_t st2001 = ((addr % m) == 0) ? 0x20 : 0x00;
 
-        if ((dev->hd_n < 4) || (dev->hd_n == dev->hd_val))
-            pp_log("PP: HD2001 read %d -> STATUS %02X\n", dev->hd_n, st2001);
+        if (dev->hd_n < 6)
+            pp_log("PP: HD2001 read %d, addr %02X -> STATUS %02X\n",
+                   dev->hd_n, addr, st2001);
         dev->hd_n++;
         pp_raw(dev, "read_status", st2001);
         return st2001;
