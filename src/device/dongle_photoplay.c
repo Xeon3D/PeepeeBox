@@ -143,6 +143,10 @@ typedef struct {
     int     ng_data;   /* sweep DATA readback transforms instead */
     int     ng_mode;
 
+    /* 2001 HDONGLE reconnaissance -- see pp_read_status */
+    int     hd_probe;
+    uint8_t hd_val;
+
     cd_t    cd;
 
     uint8_t block[PP_BLOCK];
@@ -1257,6 +1261,20 @@ pp_read_status(void *priv)
     pp_t   *dev = (pp_t *) priv;
     uint8_t st  = 0;
 
+    /* 2001 HDONGLE reconnaissance.  That generation drives a third transport -- DATA
+       bit 0 as a clock, then a 64-step address ramp with one STATUS read each -- and
+       every one of those reads currently returns 00, so the guest is reading a line
+       nothing drives and gives up.  With this on, STATUS answers a fixed byte taken
+       from hdsweep.txt, purely to find out whether the guest's behaviour changes at
+       all and which bit it is looking at.  It disturbs the 1999 and 2000 paths, so it
+       is off unless asked for and belongs on a 2001 rig only. */
+    if (dev->hd_probe) {
+        if (dev->n_rs++ < 8)
+            pp_log("PP: HD2001 probe -- answering STATUS %02X\n", dev->hd_val);
+        pp_raw(dev, "read_status", dev->hd_val);
+        return dev->hd_val;
+    }
+
     /* Once the 2000 generation's library has announced itself, it owns this line: it
        reads nothing but bit 6, and the 1999 half would otherwise put nibble data on the
        very same bit. */
@@ -1742,6 +1760,28 @@ pp_init(const device_t *info)
         pp_log("PP: NG sweep ARMED, this run answers STATUS %02X\n", dev->ng_val);
     }
 
+    /* 2001 probe: take this run's STATUS answer from hdsweep.txt and leave the next
+       one behind, so an unattended reboot loop walks the space. */
+    dev->hd_probe = device_get_config_int("hd2001");
+    if (dev->hd_probe) {
+        FILE *f = fopen("hdsweep.txt", "r");
+        int   v = 0xFF;
+
+        if (f != NULL) {
+            if (fscanf(f, "%d", &v) != 1)
+                v = 0xFF;
+            fclose(f);
+        }
+        dev->hd_val = (uint8_t) (v & 0xFF);
+
+        f = fopen("hdsweep.txt", "w");
+        if (f != NULL) {
+            fprintf(f, "%d\n", (v + 1) & 0xFF);
+            fclose(f);
+        }
+        pp_log("PP: HD2001 probe ARMED, this run answers STATUS %02X\n", dev->hd_val);
+    }
+
     /* DATA-readback transform sweep: same file, same self-advancing trick.  The 2008
        probe writes 5A/A5 and reads each straight back, so what the cable does to that
        echo is what decides presence -- see Docs/09. */
@@ -1834,6 +1874,17 @@ static const device_config_t pp_config[] = {
     {
         .name           = "ngdata",
         .description    = "NG-DONGLE data-readback sweep (research)",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "hd2001",
+        .description    = "2001 HDONGLE STATUS probe (research)",
         .type           = CONFIG_BINARY,
         .default_string = NULL,
         .default_int    = 0,
