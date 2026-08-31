@@ -54,15 +54,45 @@ window of the 2001 dump as the security table (187 of them), five password
 encodings, both directions, and both readings of the table's bit index — is 3740
 combinations and produces no hit; the best is 2 bytes of 8, which is chance.
 
-## 4. The next experiment, precisely
+## 4. Both key paths are now ruled out, for this framing
 
-The **password-zero path was never tested**, because `column_mask` and
-`crypt_init_vect` are not known and are not obviously in the dump. They are one
-byte each and only six bits of the second are used, so the whole space is at most
-16384 keys against a fixed security table — a few minutes of brute force against
-eight known plaintext bytes, and decisive either way.
+The password-zero path was brute-forced: **every 8-byte window of the 719-byte dump as
+the security table (711 of them), both readings of the table's bit index, and all 256 x
+256 column_mask / crypt_init_vect pairs** -- about 93 million keys, in C. **No hit.** The
+best partial is 4 bytes of 8, and at 93 million trials chance alone predicts about one
+such near-miss, so there is no signal in it.
 
-After that, in order: how the caller derives the 32-bit password from the pair;
-whether `use_chained_blocks` is on, which changes the framing from ECB; and
-whether the 4 KB buffer split in `0x2EB26` means only the first block of each
-buffer takes this path, as `HANDOFF2001.md` § 24 found.
+Together with the earlier 3740-combination password sweep, that closes both paths against
+the pair we have.
+
+The transliteration itself is not in doubt. `HaspDeriveUniversalSecTable` reproduces the
+project's own test vector exactly -- password `0x1234ABCD` gives
+`C7 05 C3 01 F6 34 F2 30` -- which also confirms the 32-bit password is
+`(pass1 << 16) | pass2`. (That universal table is a fallback for dongles with no dumped
+table; it does not match ours, as expected, and using it does not decrypt either.)
+
+## 5. So the algorithm is right and the framing is wrong
+
+What the sweep actually rules out is narrow: that **the file's first eight bytes, fed to
+this transform, yield the PCX header**. One of those two ends must be wrong, and the
+evidence says it is the input.
+
+The 2001 and 2000 archives hold the same 1397 pictures at **identical sizes**, so every
+block is a known plaintext/ciphertext pair once the 2000 LCG header layer is undone. Over
+one picture's 8637 blocks, one plaintext block appears with **two different ciphertexts**.
+The cipher is therefore position-dependent, not ECB -- which is exactly `HANDOFF2001.md`
+section 24's model: 4 KB buffers, only the first block of each taking the dongle path,
+the rest going through the software round at `0x2E682`.
+
+So the block that reaches `0x2D04C` is not simply the file's first eight bytes. Section
+24.1 already found `0x2E44D` marshalling **two** buffers and setting `state[+0x16] = 2`
+before dispatching, and that marshalling is now the thing to read -- with the advantage,
+new today, that its output can be checked against a working software model instead of
+guessed at.
+
+## 6. What this is worth anyway
+
+Even unfinished, the find removes the reason the cipher was called unsolvable. It was
+recorded as something only the dongle could compute; it is not. It is 39 LFSR steps over
+an 8-byte table, and it runs anywhere. What remains is bookkeeping about which bytes go
+in -- a tractable problem, and one this project has the known-plaintext corpus to settle.
