@@ -2235,3 +2235,37 @@ So one of these is wrong, and the sweep says it is not a simple transposition:
 
 The last is worth checking first and is cheap: `[bp-0x4]:[bp-0x2]` is the loop
 counter, and what resets it between buffers has not been read.
+
+### 24.8 The counter and the boundaries are confirmed -- so that suspect is out
+
+§ 24.7 offered three possibilities and called the third the cheapest to check. It is
+now checked, and it is **not** the answer.
+
+**The counter resets per call.** `0x2EBA9` zeroes `[bp-0x4]:[bp-0x2]` immediately
+before the block loop, `0x2ECF6` increments it, and `0x2ECFE` runs it to
+`blockcount - 1`. `0x2EB26` is entered once per decode service call, so index 0 is
+the first block of that call's buffer, exactly as assumed.
+
+**The buffers are 4096 bytes of the BODY, starting at 128.** `0x17237` computes
+`min(remaining, 4096)` and passes it as `p2`; `0x1724E` subtracts it from the
+remaining count. The header is not part of it: `0x17121` reads 128 bytes separately
+into `DS:0x5AD2` and `0x17011` decrypts them with the LCG.
+
+Confirmed against the data rather than only read: strip the LCG layer from the 2001
+file's first 128 bytes and they are **byte-identical to the plaintext**
+(`0a05010800000000`), so the block cipher never touched the header. Chunk
+boundaries are therefore 128, 4224, 8320 -- which is what § 24.7 already tried.
+
+So the remaining suspects are the two that matter:
+
+- **the `(acc, D)` model.** The first-block algebra is self-consistent and yields a
+  unique candidate, but nothing downstream confirms it. If `0x2D04C`'s two LFSR
+  results are not what lands in the caller's 8 bytes -- or land in the other order --
+  every candidate is wrong in the same way. `0x2D282` writes `[bp-0xa]:[bp-0xc]` to
+  `dest[0]` and `[bp-6]:[bp-8]` to `dest[4]`; which of those is `D` and which is
+  `acc` has been assumed, not tested. **Swapping them is a one-line experiment and
+  is the next thing to try.**
+- **the software round.** 128 readings were swept, but the sweep varied structure,
+  not the key indices: `0x2E6C1` computes `(2i+1)*4` and `0x2E755` computes `(2i)*4`
+  with `i` from `[bp-0x4]` counting 12 down to 1, and whether that `i` is the same
+  counter as the block index has not been verified.
