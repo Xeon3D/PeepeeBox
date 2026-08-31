@@ -2269,3 +2269,56 @@ So the remaining suspects are the two that matter:
   not the key indices: `0x2E6C1` computes `(2i+1)*4` and `0x2E755` computes `(2i)*4`
   with `i` from `[bp-0x4]` counting 12 down to 1, and whether that `i` is the same
   counter as the block index has not been verified.
+
+### 24.9 `[bp-0x4]` is just the round counter -- but the round has a step that was missing
+
+**The counter.** `0x2E682`'s prologue: `[bp-0x8]:[bp-0x6]` is the block pointer,
+`[bp-0x4]:[bp-0x2]` is a 32-bit counter set to **12** at `0x2E69A`. `0x2E69F` jumps
+straight to the test at `0x2E7D0`, the body is `0x2E6A2`, and `0x2E7C8` decrements at
+the end of it. The loop continues while the counter is above zero, so the body runs
+with `i` = 12, 11 ... 1 -- twelve iterations, key indices 25,24 down to 3,2. Exactly
+as § 24.5 had it, so that suspect is out as well.
+
+**What was missing.** After the loop, `0x2E7E4`:
+
+```
+    L -= schedule[1]        /* 0x2E7F2 */
+    R -= schedule[0]        /* 0x2E806 */
+```
+
+A final whitening subtraction, and `schedule[1]` is precisely the entry the key
+schedule XORs the rotated `D` into. So the full software round is
+
+```
+    for i = 12 .. 1:
+        rot1 = (R >> 7) & 0x1F ;  L = ROR32(L - schedule[2i+1], rot1) ^ R
+        rot2 = (L >> 4) & 0x1F ;  R = ROR32(R + schedule[2i],   rot2) ^ L
+    L -= schedule[1]
+    R -= schedule[0]
+```
+
+Adding it does **not** make block 1 verify (`scratchpad/solved2.c`).
+
+### 24.10 What is left
+
+Eliminated by measurement, not argument: the buffer boundaries (§ 24.8), the block
+counter and the round counter (§ 24.9), the `D`/`acc` order (a swap changes nothing),
+128 structural readings of the round (§ 24.7), and the missing whitening step above.
+
+That leaves **the first-block model** -- the `(acc, D)` values themselves. The
+suspects inside it, in order:
+
+1. **What actually lands in the caller's 8 bytes.** `0x2D282` writes
+   `[bp-0xa]:[bp-0xc]` and `[bp-0x6]:[bp-0x8]`, and those slots are reused across the
+   routine: `[bp-0xa]:[bp-0xc]` holds the block's L before the *second* LFSR call and
+   is then overwritten by that call, while `[bp-0x6]:[bp-0x8]` holds the first call's
+   result. Whether either is still what the schedule wants by the time `0x2D2A0`
+   returns has been assumed throughout and never traced instruction by instruction.
+2. **Whether `0x2D04C` is even the routine that runs.** `0x2B66D` picks it for opcode
+   `0x13D` and `0x2CDFD` for `0x13C`; the picture path was read as decode, but the
+   archives could as well have been produced by the encode routine, in which case the
+   guest runs the other one and its stage order is the mirror of what is modelled.
+
+(2) is cheap to settle: disassemble `0x2CDFD` and compare its stage order with
+`0x2D04C`'s. If they are mirrors, the model has the stages backwards and every
+extraction so far inherits that.
