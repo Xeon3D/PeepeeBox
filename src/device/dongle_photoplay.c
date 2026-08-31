@@ -270,7 +270,7 @@ static const char *pp_banners[] = {
     "Version 2003",  /* IGO 3                             - read from an image */
     "Version 2004",  /* IGO 4                                                  */
     "Version 2005B", /* IGO 5                             - read from an image */
-    "Version 2006",  /* IGO 6                                                  */
+    "Version 2006A", /* IGO 6  - the dumped dongle says 2006A, as 2005 says B  */
     "Version 2007",  /* IGO 7                                                  */
     "Version 2008"   /* IGO 8, and IGO Italy with territory IT                 */
 };
@@ -1384,17 +1384,37 @@ static const struct {
    IGO 6's pair reads as 0000/0000 in every image to hand, which Docs/19 argues is
    a neutered copy rather than a real value, so it is left out and falls through to
    the default. */
+/* Nine dongles were dumped with h5dmp (PhotoPlay2000_h5dmp), which settles all of
+   this against hardware rather than inference.  Each dump opens with the two
+   passwords little-endian -- agreeing with the values Docs/19 lifted out of the
+   binaries, including 2006, whose images all carry 0000/0000 and are therefore the
+   neutered copies that doc suspected.
+
+   The dumps also confirm the byte order independently: a 2001 dump reads as its
+   record only after every word is byte-swapped, while an I.G.O. dump reads
+   directly, which is exactly the high-first / low-first split the guests use.
+
+   And they show three record shapes, not one. */
+enum {
+    HD_R2001 = 0, /* 30-column right-aligned banner, then decimal columns */
+    HD_RSION,     /* territory, NUL, "sion 2000 (SP)", then binary dwords */
+    HD_RVERS      /* territory, '-', "Version", the token, then binary dwords */
+};
+
 static const struct {
     const char *banner;
     uint16_t    pass1;
-    int         swap;   /* unpacks each word low byte first -- see hd_load() */
-    int         fields; /* record shape: 0 = 2001's text columns, 1 = the I.G.O. one */
+    int         swap;  /* the guest unpacks each word low byte first */
+    int         shape;
+    int32_t     v6;    /* the last two dwords vary by generation */
+    int32_t     v7;    /* per-unit; no game is known to read it */
 } hd_keys[] = {
-    { "Version 2001",  0x7477, 0, 0 },
-    { "Version 2002",  0x68BB, 1, 1 }, /* I.G.O. 2 */
-    { "Version 2003",  0x6B91, 1, 1 }, /* I.G.O. 3 */
-    { "Version 2005",  0x6B91, 1, 1 }, /* I.G.O. 5, whose banner is "Version 2005B" */
-    { "Version 2007",  0x68BB, 1, 1 }  /* I.G.O. 7 */
+    { "Version 2001",  0x7477, 0, HD_R2001, 160678,     -35733698 },
+    { "Version 2002",  0x68BB, 1, HD_RSION, 160678,   -371202944 }, /* I.G.O. 2 */
+    { "Version 2003",  0x6B91, 1, HD_RSION, 160678,   -738037894 }, /* I.G.O. 3 */
+    { "Version 2005",  0x6B91, 1, HD_RVERS,      0,            0 }, /* I.G.O. 5 */
+    { "Version 2006",  0x68BB, 1, HD_RVERS,      0,            0 }, /* I.G.O. 6 */
+    { "Version 2007",  0x68BB, 1, HD_RVERS,      0,            0 }  /* I.G.O. 7 */
 };
 
 static int
@@ -1422,65 +1442,86 @@ hd_load(pp_t *dev, const char *banner)
        until it meets a zero word, and byte 83 onwards is where it should stop. */
     memset(rec, 0, sizeof(rec));
 
-    if (hd_keys[rel].fields) {
-        /* The I.G.O. record is not 2001's column layout at all.  IGO 5's MENU.EXE
-           parses it at 0x3B300 as three pieces and formats them with "%s %s (%c%c)"
-           (DS:0x4CB7), then strstr's the result for its own version:
+    if (hd_keys[rel].shape == HD_R2001) {
+        /* The 2001 dongle holds its banner RIGHT-aligned in the 30-column field --
+           "Version 2001 (ES)" is 17 characters after 13 spaces -- which is what the
+           extractor's skip-leading-spaces loop at 0x1F65C is for.  The numbers after
+           it are zero-padded, and the last is written signed: the hardware says
+           " -35733698", not 4259233598, and an atol of the unsigned form would
+           overflow. */
+        memset(rec, ' ', HD_TEXT);
+        if (blen > HD_BANNER)
+            blen = HD_BANNER;
+        memcpy(&rec[HD_BANNER - blen], banner, blen);
 
-               bytes 0..1    the territory, as two characters
-               byte  2       unused -- the parser starts at 3
-               bytes 3..9    the release word, seven characters: "Version"
-               bytes 10..14  the version token, five: "2005B"
+        for (int f = 0; f < HD_FIELDS; f++) {
+            const int32_t v = (f == 6) ? hd_keys[rel].v6
+                            : (f == 7) ? hd_keys[rel].v7
+                                       : (int32_t) hd_fields[f].val;
+            int n;
 
-           which assembles to "Version 2005B (AT)".  Feeding this parser 2001's
-           record puts "sion 20 05B ( (Ve)" on screen, which is how the layout was
-           found: those are exactly bytes 3..9, 10..14 and 0..1 of the 2001 form. */
-        const char *sp = strchr(banner, ' ');
-        const char *lp = strchr(banner, '(');
-
-        memset(rec, ' ', 15);
-        memcpy(&rec[3], banner, (blen < 7) ? blen : 7);
-        if (sp != NULL) {
-            size_t vl = strlen(sp + 1);
-
-            if ((lp != NULL) && (lp > sp + 1))
-                vl = (size_t) (lp - (sp + 1));
-            while (vl && (sp[vl] == ' '))
-                vl--;
-            memcpy(&rec[10], sp + 1, (vl < 5) ? vl : 5);
+            if (f == 7)
+                n = snprintf(num, sizeof(num), "%ld", (long) v);
+            else
+                n = snprintf(num, sizeof(num), "%0*ld", hd_fields[f].cols, (long) v);
+            if ((n > 0) && (n <= hd_fields[f].cols))
+                memcpy(&rec[hd_fields[f].at + hd_fields[f].cols - n], num, (size_t) n);
         }
+    } else {
+        /* The I.G.O. record is not a banner at all.  MENU.EXE 0x3B300 and FINDIT.EXE
+           0x23C0B read the territory from bytes 0..1, the release word from 3..9 and
+           the version token from 10..14, and format the three with "%s %s (%c%c)".
+           The 2005, 2006 and 2007 dongles hold
+
+               "PT" '-' "Version" "2005B" 00 ')' 00
+
+           and the 2002 and 2003 ones hold the older form, where the territory has been
+           written over the first three characters of a 2000-era banner:
+
+               "PT" 00 "sion 2000 (SP)" 00
+
+           Both are copied verbatim from the dumps.  Feeding this parser 2001's record
+           instead prints "sion 20 05B" with the territory as the first two characters,
+           which is how the layout was found before the dumps existed. */
+        const char *lp = strchr(banner, '(');
+        const char *sp = strchr(banner, ' ');
+
         if ((lp != NULL) && lp[1] && lp[2]) {
             rec[0] = (uint8_t) lp[1];
             rec[1] = (uint8_t) lp[2];
         }
+        if (hd_keys[rel].shape == HD_RSION) {
+            memcpy(&rec[3], "sion 2000 (SP)", 14);
+        } else {
+            rec[2] = '-';
+            memcpy(&rec[3], "Version", 7);
+            if (sp != NULL) {
+                size_t vl = strlen(sp + 1);
 
-        /* The content keys are binary here, not 2001's decimal columns.  FINDIT reads
-           them as eight two-word pairs at starts 0x0F + 2i (0x23C8D), folds each into a
-           little-endian dword and stores them at di+0x1E, +0x22 ... +0x3A -- the same
-           struct slots 2001 fills from its text fields.  Two words at 0x0F + 2i is
-           record bytes 30 + 4i, and the last one ends at byte 61, which is exactly
-           where the guest's reads stop (word 38). */
-        for (int n = 0; n < 8; n++) {
-            const size_t o = 30 + ((size_t) n * 4);
-
-            rec[o]     = (uint8_t) (hd_fields[n].val);
-            rec[o + 1] = (uint8_t) (hd_fields[n].val >> 8);
-            rec[o + 2] = (uint8_t) (hd_fields[n].val >> 16);
-            rec[o + 3] = (uint8_t) (hd_fields[n].val >> 24);
+                if ((lp != NULL) && (lp > sp + 1))
+                    vl = (size_t) (lp - (sp + 1));
+                while (vl && (sp[vl] == ' '))
+                    vl--;
+                memcpy(&rec[10], sp + 1, (vl < 5) ? vl : 5);
+            }
+            rec[16] = ')';
         }
-    } else {
-        memset(rec, ' ', HD_TEXT);
 
-        if (blen > (HD_BANNER - 1))
-            blen = HD_BANNER - 1;
-        memcpy(rec, banner, blen);
-        rec[blen] = '\0'; /* the parser trims on strlen, so padding must not be copied */
+        /* The content keys are binary here: eight little-endian dwords at byte 30,
+           which the guest reads as two-word pairs at start 0x0F + 2i (0x23C8D) and
+           files at di+0x1E onwards -- the same slots 2001 fills from its columns.
+           v0..v5 are identical on every dongle dumped; v6 is 160678 up to 2003 and
+           zero from 2005 on. */
+        for (int n = 0; n < 8; n++) {
+            const size_t  o = 30 + ((size_t) n * 4);
+            const uint32_t v = (n == 6) ? (uint32_t) hd_keys[rel].v6
+                             : (n == 7) ? (uint32_t) hd_keys[rel].v7
+                                        : (uint32_t) hd_fields[n].val;
 
-        for (int f = 0; f < HD_FIELDS; f++) {
-            const int n = snprintf(num, sizeof(num), "%lu", hd_fields[f].val);
-
-            if ((n > 0) && (n <= hd_fields[f].cols))
-                memcpy(&rec[hd_fields[f].at + hd_fields[f].cols - n], num, (size_t) n);
+            rec[o]     = (uint8_t) (v);
+            rec[o + 1] = (uint8_t) (v >> 8);
+            rec[o + 2] = (uint8_t) (v >> 16);
+            rec[o + 3] = (uint8_t) (v >> 24);
         }
     }
 
@@ -1504,7 +1545,9 @@ hd_load(pp_t *dev, const char *banner)
 
     pp_log("PP: HD2001 EEPROM loaded -- record \"%.20s\" (%s layout), words %d..%d,"
            " scramble key %04X, %s byte order\n",
-           (const char *) rec, hd_keys[rel].fields ? "I.G.O." : "2001",
+           (const char *) rec,
+           (hd_keys[rel].shape == HD_R2001) ? "2001"
+           : (hd_keys[rel].shape == HD_RSION) ? "I.G.O. sion" : "I.G.O.",
            HD_START, HD_START + (HD_RECORD / 2) - 1, key,
            swap ? "low-first" : "high-first");
 }
