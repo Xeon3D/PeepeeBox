@@ -57,28 +57,31 @@ dongles (`docs/research/20`), not from inference.
 | Photo Play 99 | funworld two-chip, parallel | encrypted, per-picture key | **runs** — games and photo games |
 | Photo Play 2000 | CDONGLE, parallel | encrypted, per-picture key | **runs** — games and photo games |
 | Photo Play 2001 / I.G.O. 1 | HASP4 `7477/7D57` | encrypted, dongle-computed | boots and plays; **pictures scramble** |
-| I.G.O. 2 (2002) | HASP4 `68BB/1329` | encrypted, dongle-computed | untried; expect the 2001 wall |
+| I.G.O. 2 (2002) | HASP4 `68BB/1329` | encrypted, dongle-computed | boots and plays; **pictures scramble** |
 | I.G.O. 3 (2003) | HASP4 `6B91/24A3` | encrypted, dongle-computed | **fails at boot** — needs the cipher to start |
 | I.G.O. 4 (2004) | CDONGLE, parallel | plain GIF | **runs** — games and photo games |
 | I.G.O. 5 (2005) | HASP4 `6B91/24A3` | plain GIF | menu and photo games run; **menu buttons garbled** |
-| I.G.O. 6 (2006) | HASP4 `68BB/1329` | plain GIF | untried; record known, expect I.G.O. 5's result |
+| I.G.O. 6 (2006) | HASP4, probed | plain GIF | **runs** — games and photo games |
 | I.G.O. 7 (2007) | HASP4 `68BB/1329` | plain GIF | **runs** — games and photo games |
 | I.G.O. 8 (2008) | serial reader, COM2 | plain GIF | **runs** — games and photo games |
-| I.G.O. Italy (2008-era) | **NDONGLE** — not the HASP | plain GIF | **`NDONGLE not found`** — a token we do not answer |
+| I.G.O. Italy (2008-era) | HASP4, probed | plain GIF | **`NDONGLE not found`** — retest pending |
 
 Two things gate the rest.
 
-**The record**, which the device now serves for every HASP generation: 2001 uses a
-30-column banner and decimal text fields, while I.G.O. 2 and 3 use one structured
-form and 5, 6 and 7 another, each with eight binary content dwords. That work is
-done, and it is what brought up I.G.O. 5.
+**The record**, which the device serves for every HASP generation. Three shapes:
+2001 holds a 30-column banner and decimal text fields; I.G.O. 2 and 3 hold a
+territory and little else, because those builds supply the version text from their
+own literal and read only two characters and a NUL off the dongle; 5, 6, 7 and
+Italy hold a territory, `"Version"` and a token, formatted with `"%s %s (%c%c)"`.
+All three carry eight binary content dwords. That work is done, and it is what
+brought up I.G.O. 2, 5, 6 and 7.
 
-I.G.O. Italy asks for a token neither half of the device provides. It reports
-`NDONGLE not found`, so it is not on the HASP (HDONGLE) path at all -- which is why
-its images carry `0000/0000` HASP passwords and why serving it a HASP record changes
-nothing. Marcos reports the hardware resembles I.G.O. 8's, and the serial reader is
-consulted during its boot, so `NDONGLE` is likely a near relative of I.G.O. 8's
-`NG-DONGLE` rather than a parallel part.
+Two releases — I.G.O. 6 and Italy — do not carry their passwords as literals.
+`MENU.EXE` tries `7477/7D57`, falls back to `68BB/1329`, and zeroes both if neither
+answers service 5. A real HASP discriminates there; a synthesised part cannot, so
+the probe always reaches that last branch and the descramble key is `0x0000`. The
+device serves the key the guest will use, and keeps the dumped password on record
+(`docs/research/21`).
 
 **The picture cipher**, which is not.  2001 through I.G.O. 3 encrypt their photo
 archives with a cipher the dongle itself computes -- the library shifts a byte out
