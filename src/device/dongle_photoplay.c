@@ -1414,7 +1414,24 @@ static const struct {
     { "Version 2003",  0x6B91, 1, HD_RSION, 160678,   -738037894 }, /* I.G.O. 3 */
     { "Version 2005",  0x6B91, 1, HD_RVERS,      0,            0 }, /* I.G.O. 5 */
     { "Version 2006",  0x68BB, 1, HD_RVERS,      0,            0 }, /* I.G.O. 6 */
-    { "Version 2007",  0x68BB, 1, HD_RVERS,      0,            0 }  /* I.G.O. 7 */
+    { "Version 2007",  0x68BB, 1, HD_RVERS,      0,            0 }, /* I.G.O. 7 */
+    /* I.G.O. Italy reports NDONGLE rather than HDONGLE, which was read as meaning it is
+       not on this path at all.  It is, and it is not even a special case: MENU.EXE
+       0x3C322 is the same filler every other I.G.O. build uses, down to the format
+       string -- read 15 words from word 0, then sprintf "%s %s (%c%c)" from record
+       bytes 3..9, 10..13, 0 and 1.  What is special is only the needle it then looks
+       for, "Version 08IT" at DG+0x4D63, and the bit it sets on failure, 0x400.  So the
+       record wants "Version" and the token "08IT" in the usual slots and the space
+       arrives from the format; writing the banner in as text cannot match, because
+       byte 0 would be 'V' and the territory is taken from bytes 0 and 1.
+       Its passwords are not in the image as literals, which is why scanning for them
+       found 0000/0000: 0x3C252 writes them at runtime, and it writes two pairs, not
+       one.  It probes 7477/7D57 first and falls back to 68BB/1329, keeping whichever
+       pair service 5 answers 1 to -- so two dongle variants shipped for this release.
+       pass1 is the scramble key, and the pair also fixes the byte order the library
+       unpacks with: every 7477 build is high-byte-first, every 68BB build is low.
+       7477/high was tried and the strstr still missed, so this is the other variant. */
+    { "Version 08",    0x7477, 1, HD_RVERS,      0,            0 }  /* I.G.O. Italy */
 };
 
 static int
@@ -1594,7 +1611,7 @@ hd_write_data(pp_t *dev, uint8_t val)
                         case 2: /* READ */
                             dev->hd_sr = dev->hd_mem[dev->hd_addr];
                             dev->hd_ph = HD_READ;
-                            if (dev->hd_reads++ < 8)
+                            if (dev->hd_reads++ < 32)
                                 pp_log("PP: HD2001 read word %02X -> %04X\n",
                                        dev->hd_addr, dev->hd_sr);
                             break;

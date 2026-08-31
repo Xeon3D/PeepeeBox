@@ -383,34 +383,35 @@ again:
  * ---------------------------------------------------------------------------------- */
 
 /* "Version 2008 (ES)" -> "IGO 08", which is what the 2008 games compare the record's
-   title field against.  The release number's last two digits are the whole of it. */
+   title field against.
+ *
+ * Take the version TOKEN -- the text between "Version " and the territory -- and drop
+ * a leading "20" from it.  For every 2008 image that is "2008" -> "08", exactly what
+ * the digit-run rule produced before, so those records are unchanged.  It also carries
+ * a suffix, which the digit rule silently dropped: the I.G.O. Italy image asks for
+ * "Version 08IT (IT)" and needs the token "08IT", where "IGO 08" composed
+ * "Version 08 (IT)" and the guest reported NDONGLE not found. */
 static void
 sc_title_from_banner(const char *banner, char *out, size_t outsz)
 {
-    const char *p     = banner;
-    const char *digit = NULL;
-    size_t      run   = 0;
+    const char *v = strstr(banner, "Version ");
+    char        tok[16];
+    size_t      n = 0;
 
-    /* the longest digit run in the banner is the release number */
-    while (*p) {
-        if ((*p >= '0') && (*p <= '9')) {
-            const char *s = p;
-            size_t      k = 0;
-
-            while ((*p >= '0') && (*p <= '9')) {
-                p++;
-                k++;
-            }
-            if (k > run) {
-                run   = k;
-                digit = s;
-            }
-        } else
-            p++;
+    if (v != NULL) {
+        v += 8;
+        while (v[n] && (v[n] != ' ') && (v[n] != '(') && (n < sizeof(tok) - 1))
+            n++;
+        memcpy(tok, v, n);
     }
+    tok[n] = 0;
 
-    if ((digit != NULL) && (run >= 2))
-        snprintf(out, outsz, "IGO %.2s", digit + (run - 2));
+    /* "2008" -> "08"; a bare "08IT" is already the token */
+    if ((n > 2) && (tok[0] == '2') && (tok[1] == '0'))
+        memmove(tok, tok + 2, n - 1);
+
+    if (tok[0])
+        snprintf(out, outsz, "IGO %s", tok);
     else
         snprintf(out, outsz, "IGO 08");
 }
@@ -436,7 +437,7 @@ sc_build_record(sc_t *sc)
     memset(sc->record, 0, sizeof(sc->record));
     memcpy(sc->record + 0x00, "IGO", 3);
     memcpy(sc->record + 0x03, code, strlen(code));
-    memcpy(sc->record + 0x13, title, (strlen(title) > 6) ? 6 : strlen(title));
+    memcpy(sc->record + 0x13, title, (strlen(title) > 8) ? 8 : strlen(title));
 
     sc_log("SC: record \"IGO\" / \"%s\" / \"%s\", so the guest composes"
            " \"Version %s (%s)\"\n",
