@@ -1401,20 +1401,34 @@ enum {
     HD_RVERS      /* territory, '-', "Version", the token, then binary dwords */
 };
 
+/* Two of these releases do not carry their passwords as literals: MENU.EXE writes them
+   at runtime and probes, keeping whichever pair the part answers service 5 with a 1 to.
+   I.G.O. 6 does it at 0x3B2C8 and I.G.O. Italy at 0x3C252, and the sequence is the same
+   in both -- try 7477/7D57, fall back to 68BB/1329, and if neither answers, set BOTH
+   passwords to zero and carry on.
+
+   This part answers service 1 with a 1 and service 5 with neither, so the probe always
+   takes that last branch.  pass1 is the descramble key, so what those releases actually
+   decode the record with is 0x0000, not the password their dongle holds -- measured, not
+   inferred: I.G.O. 6 DE put ">ÞÈ" on screen where "Vers" belongs, which is
+   record bytes 3..6 XORed byte-wise with 0x68BB, i.e. our scramble undone with zero.
+   `probe` keeps the dumped password on record while serving the key the guest will use.
+   Make service 5 answer and this flips back to pass1. */
 static const struct {
     const char *banner;
     uint16_t    pass1;
+    int         probe; /* MENU.EXE hunts for the pair; against this part it finds none */
     int         swap;  /* the guest unpacks each word low byte first */
     int         shape;
     int32_t     v6;    /* the last two dwords vary by generation */
     int32_t     v7;    /* per-unit; no game is known to read it */
 } hd_keys[] = {
-    { "Version 2001",  0x7477, 0, HD_R2001, 160678,     -35733698 },
-    { "Version 2002",  0x68BB, 1, HD_RSION, 160678,   -371202944 }, /* I.G.O. 2 */
-    { "Version 2003",  0x6B91, 1, HD_RSION, 160678,   -738037894 }, /* I.G.O. 3 */
-    { "Version 2005",  0x6B91, 1, HD_RVERS,      0,            0 }, /* I.G.O. 5 */
-    { "Version 2006",  0x68BB, 1, HD_RVERS,      0,            0 }, /* I.G.O. 6 */
-    { "Version 2007",  0x68BB, 1, HD_RVERS,      0,            0 }, /* I.G.O. 7 */
+    { "Version 2001",  0x7477, 0, 0, HD_R2001, 160678,     -35733698 },
+    { "Version 2002",  0x68BB, 0, 1, HD_RSION, 160678,   -371202944 }, /* I.G.O. 2 */
+    { "Version 2003",  0x6B91, 0, 1, HD_RSION, 160678,   -738037894 }, /* I.G.O. 3 */
+    { "Version 2005",  0x6B91, 0, 1, HD_RVERS,      0,            0 }, /* I.G.O. 5 */
+    { "Version 2006",  0x68BB, 1, 1, HD_RVERS,      0,            0 }, /* I.G.O. 6 */
+    { "Version 2007",  0x68BB, 0, 1, HD_RVERS,      0,            0 }, /* I.G.O. 7 */
     /* I.G.O. Italy reports NDONGLE rather than HDONGLE, which was read as meaning it is
        not on this path at all.  It is, and it is not even a special case: MENU.EXE
        0x3C322 is the same filler every other I.G.O. build uses, down to the format
@@ -1424,14 +1438,10 @@ static const struct {
        record wants "Version" and the token "08IT" in the usual slots and the space
        arrives from the format; writing the banner in as text cannot match, because
        byte 0 would be 'V' and the territory is taken from bytes 0 and 1.
-       Its passwords are not in the image as literals, which is why scanning for them
-       found 0000/0000: 0x3C252 writes them at runtime, and it writes two pairs, not
-       one.  It probes 7477/7D57 first and falls back to 68BB/1329, keeping whichever
-       pair service 5 answers 1 to -- so two dongle variants shipped for this release.
-       pass1 is the scramble key, and the pair also fixes the byte order the library
-       unpacks with: every 7477 build is high-byte-first, every 68BB build is low.
-       7477/high was tried and the strstr still missed, so this is the other variant. */
-    { "Version 08",    0x7477, 1, HD_RVERS,      0,            0 }  /* I.G.O. Italy */
+       Its passwords are not literals either -- 0x3C252 is the same probe I.G.O. 6 runs,
+       so the key is zero here too.  The 2008 pair is on record for when service 5 can
+       tell the two apart. */
+    { "Version 08",    0x68BB, 1, 1, HD_RVERS,      0,            0 }  /* I.G.O. Italy */
 };
 
 static int
@@ -1448,7 +1458,7 @@ static void
 hd_load(pp_t *dev, const char *banner)
 {
     const int      rel  = hd_release(banner);
-    const uint16_t key  = hd_keys[rel].pass1;
+    const uint16_t key  = hd_keys[rel].probe ? 0x0000 : hd_keys[rel].pass1;
     const int      swap = hd_keys[rel].swap;
 
     uint8_t rec[HD_RECORD];

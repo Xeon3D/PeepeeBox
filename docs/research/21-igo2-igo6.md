@@ -101,3 +101,42 @@ dongle costs nothing.
 
 All fifteen folders now carry the current build and `hd2001 = 1`. Nothing else
 was changed in them.
+
+## 5. The probe lands on zero — measured
+
+I.G.O. 6 DE booted to `wrong dongle version` with `>Þ·È` where the version string
+belongs. Those four bytes are record bytes 3..6 — `"Vers"` — XORed byte-wise with
+`0x68BB` (even bytes `^0xBB`, odd `^0x68`), which is our scramble undone with a key of
+**zero**. So the runtime probe took its last branch: our part answers service 1 with
+`p1 == 1` and answers service 5 with `p1 != 1` for *both* pairs, and `0x3B384` sets both
+passwords to `0`.
+
+`pass1` is the descramble key, so I.G.O. 6 and I.G.O. Italy — the two releases that probe
+— decode with `0x0000`, whatever their dongle holds. `hd_keys[]` gains a `probe` column
+that keeps the dumped password on record and serves the key the guest will actually use.
+
+Marcos reports that I.G.O. 2 and I.G.O. 6 do carry real HASP dongles, which is consistent
+with this: a genuine HASP validates the passwords in its service-5 response, and a
+synthesised Microwire part cannot. Making service 5 answer would flip both releases back
+to `pass1`, and the `probe` column is where that change lands.
+
+## 6. What KEYN does, and what it confirms
+
+`PPIGO6DE/` is a KEYN'd I.G.O. 6 DE that runs. Its `MENU.EXE` differs from the original in
+**two bytes**: `0xC40E`, `75 03` (`jne`) → `90 90`. That is the guard on
+`if (mask != 0) show the copy-protection screen`, so NOPping it skips the error screen
+unconditionally — KEYN defeats the check rather than passing it.
+
+`MENU\KEYN.COM` is 114 bytes: a TSR that hooks **INT 2Bh** and, on entry, `rep movsb`s
+`0x3E` = **62 bytes** from its own image to `es:di`:
+
+```
++00  "Version 2006 (DE)" NUL, padded to 30 bytes
++1E  8B 03 00 00  CD 81 01 00  60 D7 01 00  92 9B 02 00
+     7E 28 01 00  9D 08 00 00  A6 73 02 00  3E BF DE FD
+```
+
+= 907, 98765, 120672, 170898, 75902, 2205, 160678, -35733698 — `hd_fields[]` exactly,
+`v6` and `v7` included, and the same 30-byte-banner-then-dwords struct the fillers build
+at `si+0` and `si+0x1E`. Independent confirmation of the record's consumer-side layout,
+from a third source after the disassembly and the dumps.
