@@ -62,9 +62,9 @@ dongles (`docs/research/20`), not from inference.
 | I.G.O. 4 (2004) | CDONGLE, parallel | plain GIF | **runs** — games and photo games |
 | I.G.O. 5 (2005) | HASP4 `6B91/24A3` | plain GIF | menu and photo games run; **menu buttons garbled** |
 | I.G.O. 6 (2006) | HASP4 `68BB/1329` | plain GIF | untried; record known, expect I.G.O. 5's result |
-| I.G.O. 7 (2007) | HASP4 `68BB/1329` | plain GIF | untried; record known, expect I.G.O. 5's result |
+| I.G.O. 7 (2007) | HASP4 `68BB/1329` | plain GIF | **record accepted, games launch** — screen not yet checked |
 | I.G.O. 8 (2008) | serial reader, COM2 | plain GIF | **runs** — games and photo games |
-| I.G.O. Italy (2008-era) | HASP4, parallel | — | untried |
+| I.G.O. Italy (2008-era) | HASP4, parallel | — | reads the record and rejects it; **passwords unknown** |
 
 Two things gate the rest.
 
@@ -72,6 +72,12 @@ Two things gate the rest.
 30-column banner and decimal text fields, while I.G.O. 2 and 3 use one structured
 form and 5, 6 and 7 another, each with eight binary content dwords. That work is
 done, and it is what brought up I.G.O. 5.
+
+I.G.O. Italy is blocked on evidence rather than analysis: its banner (`Version 08IT
+(IT)`) matches no dongle we have, every Italy image carries `0000/0000` passwords --
+the neutered pattern -- and there is no 2008 parallel dongle among the nine dumped.
+It reads the record over the wire and rejects it, so only the key and layout are
+missing.
 
 **The picture cipher**, which is not.  2001 through I.G.O. 3 encrypt their photo
 archives with a cipher the dongle itself computes -- the library shifts a byte out
