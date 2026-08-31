@@ -2189,3 +2189,49 @@ Routes worth trying, cheapest first:
    share them, far fewer unknowns exist than 64 bits per buffer suggests.
 
 The § 23.6 collision test stays the gate on anything built from this.
+
+### 24.7 The solve was attempted and did NOT work
+
+`scratchpad/solved.c` implements § 24.6's route 2. For the first block of a buffer
+the dongle path does not involve `0x2E682` at all, so guessing `acc` gives a 32-bit
+test and `D` falls out:
+
+```
+    (L1,R1) = A(ciphertext)
+    L3, R3  = B(R1 ^ acc, L1)
+    require L3 == plaintext.high      /* 32 bits */
+    then      D = plaintext.low ^ R3
+```
+
+It runs 2^32 in about a minute and returns **exactly one candidate per buffer**:
+
+| first block at | acc | D |
+|---|---|---|
+| 128 | `5EB5B48C` | `5444A619` |
+| 4096 | `AC2FD990` | `E243EC89` |
+| 4224 | `790ABE78` | `D3574250` |
+
+**One survivor is not evidence.** A 32-bit filter over 2^32 candidates yields about
+one survivor whether or not the model means anything, so this says nothing on its
+own. The real test is whether the candidate decrypts the rest of the buffer, and it
+does not: block 1 fails for every boundary tried.
+
+`scratchpad/sweep.py` then held `(acc, D)` fixed -- they do not depend on the
+software round -- and swept 128 readings of `0x2E682` and the schedule against
+block 1: key index order, ascending or descending rounds, add/subtract swapped,
+which word the rotate amount comes from, forward or inverse, the XOR into
+`schedule[1]`, the progression form, and three choices of IV. **Nothing reproduces
+block 1.**
+
+So one of these is wrong, and the sweep says it is not a simple transposition:
+
+- the `(acc, D)` pair, which would mean the first-block model is wrong despite § 23.2's
+  algebra being self-consistent;
+- the buffer boundaries -- 128, 4096 and 4224 were tried, but the game's 4 KB reads
+  may not align with the file the way assumed;
+- or blocks 1.. do not use `0x2E682` with this schedule at all, in which case
+  `0x2EBD4`'s "index == 0" test means something other than "first block of the
+  buffer".
+
+The last is worth checking first and is cheap: `[bp-0x4]:[bp-0x2]` is the loop
+counter, and what resets it between buffers has not been read.
