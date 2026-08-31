@@ -2030,3 +2030,35 @@ The dumped tables (Docs/20) are the other half: three 166-byte tables, one per
 password pair. If the oracle is a lookup into that table rather than something
 derived, 256 unknown bits collapse to a known 166-byte constant and the whole thing
 falls out. **That comparison has not been tried yet and is the cheapest next step.**
+
+### 23.6 The extraction is WRONG, and here is the test that shows it
+
+Two corrections and one validator, all from trying to use § 23.2's pairs.
+
+**The polynomial is `0x80500062`, not `0x00628050`.** `0x2CD12` stores `0x8050` at
+`[bp-2]` and `0x0062` at `[bp-4]`, and `0x2CD94` XORs `[bp-4]` into the value's LOW
+word and `[bp-2]` into its HIGH word. The halves were transposed here, which also
+retires § 23.4: with a 32-bit-wide polynomial the reachable span is the full 32
+dimensions, so the "must lie in a 23-dimensional subspace" argument is vacuous too.
+Four for four on vacuous validators in this section.
+
+**The one that works: input collisions.** `f` must be a function, so if two blocks
+give the same extracted input they must give the same output. Over 150 pictures --
+2,516,766 pairs, 2,516,055 distinct inputs -- there are **711 collisions and 0
+agreements**. Chance agreement would be ~0, so this cannot be luck: the extraction
+in § 23.2 is wrong. Any future reading of this cipher should be run through this
+test first; it is cheap, it scales with the corpus, and unlike everything else tried
+here it can fail.
+
+**What is most likely wrong.** Not the known-plaintext premise: 1397 entries match
+byte-for-byte in size between the 2000 and 2001 archives, which for re-encrypted
+identical plaintexts is expected and for different images would be a miracle. So the
+error is in the cipher reading -- the stage order, the Feistel parameters, or more
+likely something in `0x2E44D`'s marshalling that transforms the buffer before
+`0x2D04C` sees it. Twelve variants of L/R assignment, direction and CBC placement
+were swept and all sit at chance, so it is not a simple transposition.
+
+Where that leaves the oracle: the byte -> bit function cannot be tested against the
+dumped tables until the extraction is right, because every candidate is checked
+against pairs that are themselves wrong. A 32-byte-bitmap-in-the-dump hypothesis was
+tried anyway and found nothing, which means nothing yet.
