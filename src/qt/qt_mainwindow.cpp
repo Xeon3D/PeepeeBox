@@ -324,7 +324,14 @@ MainWindow::MainWindow(QWidget *parent)
     QString vmname(vm_name);
     if (vmname.at(vmname.size() - 1) == '"' || vmname.at(vmname.size() - 1) == '\'')
         vmname.truncate(vmname.size() - 1);
-    this->setWindowTitle(QString("%1 - %2 %3").arg(vmname, EMU_NAME, EMU_VERSION_FULL));
+    /* The commit the build came from, on the end after a dash.  Several builds of this
+       fork are usually in flight at once across the rig folders, and the title is the
+       only place that says which one is on screen. */
+    QString title = QString("%1 - %2 %3").arg(vmname, EMU_NAME, EMU_VERSION_FULL);
+#ifdef EMU_GIT_HASH
+    title += QString(" - %1").arg(EMU_GIT_HASH);
+#endif
+    this->setWindowTitle(title);
 
     connect(this, &MainWindow::forceInterpretationCompleted, this, [this]() {
         const auto fi_icon      = cpu_force_interpreter ? QIcon(":/menuicons/qt/icons/recompiler.ico") :

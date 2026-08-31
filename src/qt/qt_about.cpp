@@ -49,7 +49,9 @@ About::About(QWidget *parent)
 #    define DYNAREC_STR "no dynarec"
 #endif
     versioninfo.append(QString(" [%1, %2]").arg(QSysInfo::buildCpuArchitecture(), tr(DYNAREC_STR)));
-    setText(QString("<b>%1 v%2%3</b>").arg(EMU_NAME, EMU_VERSION_FULL, versioninfo));
+    /* Release first, then the 86Box version the fork is built on. */
+    setText(QString("<b>%1 Release %2 - v%3%4</b>")
+                .arg(EMU_NAME, PEEPEEBOX_RELEASE, EMU_VERSION_FULL, versioninfo));
     setInformativeText(QString("<b>%1</b><br><br>%2")
                            .arg(tr("%1 is a fork of %2, adding emulation of the funworld "
                                    "Photo Play / I.G.O. protection hardware: the "

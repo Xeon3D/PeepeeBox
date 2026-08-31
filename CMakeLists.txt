@@ -242,6 +242,39 @@ endif()
 if(NOT EMU_BUILD_NUM)
     set(EMU_BUILD_NUM 0)
 endif()
+# PeepeeBox's own release number.  The project version above is 86Box's and tracks
+# upstream; this one counts the releases of the fork, and is what the About box and any
+# release folder are named after.
+if(NOT PEEPEEBOX_RELEASE)
+    set(PEEPEEBOX_RELEASE "1.4")
+endif()
+
+# The commit the binary was built from, so a window title identifies the build exactly.
+# Resolved at configure time -- reconfigure after committing if the title must name the
+# release commit.  A source tree with no git, or with uncommitted changes, still builds:
+# the hash is simply absent or suffixed.
+if(NOT EMU_GIT_HASH)
+    find_package(Git QUIET)
+    if(GIT_FOUND)
+        execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short=7 HEAD
+                        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                        OUTPUT_VARIABLE PP_GIT_HASH
+                        OUTPUT_STRIP_TRAILING_WHITESPACE
+                        ERROR_QUIET)
+        execute_process(COMMAND ${GIT_EXECUTABLE} diff --quiet HEAD
+                        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                        RESULT_VARIABLE PP_GIT_DIRTY
+                        ERROR_QUIET)
+        if(PP_GIT_HASH)
+            if(PP_GIT_DIRTY)
+                set(EMU_GIT_HASH "${PP_GIT_HASH}+")
+            else()
+                set(EMU_GIT_HASH "${PP_GIT_HASH}")
+            endif()
+        endif()
+    endif()
+endif()
+
 if(NOT EMU_COPYRIGHT_YEAR)
     set(EMU_COPYRIGHT_YEAR 2026)
 endif()
