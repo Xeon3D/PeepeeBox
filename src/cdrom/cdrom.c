@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <wchar.h>
 #include <86box/86box.h>
+#include <86box/version.h>
 #include <86box/device.h>
 #include <86box/config.h>
 #include <86box/cdrom.h>
@@ -1435,7 +1436,7 @@ cdrom_get_from_name(const char *s)
 
     if (!found) {
         if (strcmp(s, "none"))
-            warning("WARNING: CD-ROM \"%s\" not found - contact 86Box support\n", s);
+            warning("WARNING: CD-ROM \"%s\" not found - report it against " EMU_NAME "\n", s);
         c = -1;
     }
 

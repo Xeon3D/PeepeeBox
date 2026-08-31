@@ -246,7 +246,7 @@ endif()
 # upstream; this one counts the releases of the fork, and is what the About box and any
 # release folder are named after.
 if(NOT PEEPEEBOX_RELEASE)
-    set(PEEPEEBOX_RELEASE "1.4")
+    set(PEEPEEBOX_RELEASE "1.5")
 endif()
 
 # The commit the binary was built from, so a window title identifies the build exactly.

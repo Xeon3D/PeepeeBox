@@ -724,8 +724,8 @@ main(int argc, char *argv[])
         FindWindowExW(winbox, NULL, L"TTabSheet", NULL))
 #    endif
     {
-        QMessageBox warningbox(QMessageBox::Icon::Warning, QObject::tr("WinBox is no longer supported"),
-                               QObject::tr("Development of the WinBox manager stopped in 2022 due to a lack of maintainers. As we direct our efforts towards making 86Box even better, we have made the decision to no longer support WinBox as a manager.\n\nNo further updates will be provided through WinBox, and you may encounter incorrect behavior should you continue using it with newer versions of 86Box. Any bug reports related to WinBox behavior will be closed as invalid.\n\nGo to 86box.net for a list of other managers you can use."),
+        QMessageBox warningbox(QMessageBox::Icon::Warning, QObject::tr("WinBox does not manage this emulator"),
+                               QObject::tr("WinBox is a manager for the emulator this one is forked from, and it cannot configure or launch %1.\n\nRun %1 directly instead: put a cabinet's HardDisk.img next to the executable and start it from there.").arg(EMU_NAME),
                                QMessageBox::NoButton);
         warningbox.addButton(QObject::tr("Continue"), QMessageBox::AcceptRole);
         warningbox.addButton(QObject::tr("Exit"), QMessageBox::RejectRole);

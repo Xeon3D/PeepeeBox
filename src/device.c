@@ -46,6 +46,7 @@
 #include <wchar.h>
 #define HAVE_STDARG_H
 #include <86box/86box.h>
+#include <86box/version.h>
 #include <86box/ini.h>
 #include <86box/config.h>
 #include <86box/device.h>
@@ -670,7 +671,7 @@ static const device_config_bios_t *
 device_get_bios(const device_t *dev, const char *internal_name)
 {
     if (internal_name == NULL) {
-        fatal("Failed to get the default BIOS for this device, please update your ROM set and contact 86Box support if it still occurs\n");
+        fatal("Failed to get the default BIOS for this device, please update your ROM set and report it against " EMU_NAME " if it still occurs\n");
         return NULL;
     }
 

@@ -694,7 +694,7 @@ pc_show_usage(void)
     char p[8192] = { 0 };
 
     sprintf(p,
-            "\nUsage: 86box [options] [cfg-file]\n\n"
+            "\nUsage: " EMU_NAME " [options] [cfg-file]\n\n"
             "Valid options are:\n\n"
             "-? or --help\t\t\t- show this information\n"
             "-A or --assetpath path\t\t- set 'path' to be asset path\n"

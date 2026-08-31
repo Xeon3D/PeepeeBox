@@ -56,6 +56,7 @@
 #define CONFIG_SPINNER      (4 | CONFIG_TYPE_INT)      /* config_get_int() */
 #define CONFIG_MIDI_IN      (5 | CONFIG_TYPE_INT)      /* config_get_int() */
 #define CONFIG_MEMORY       (6 | CONFIG_TYPE_INT)      /* config_get_int() */
+#define CONFIG_LABEL        (7 | CONFIG_TYPE_INT)      /* N/A -- static text, no ini key */
 
 #define CONFIG_STRING       (0 | CONFIG_TYPE_STRING)     /* config_get_string() */
 #define CONFIG_FNAME        (1 | CONFIG_TYPE_STRING)     /* config_get_string() */

@@ -288,6 +288,13 @@ static const char *pp_terrs[] = {
 };
 #define PP_NTERRS ((int) (sizeof(pp_terrs) / sizeof(pp_terrs[0])))
 
+/* What the settings dialog says this dongle currently is.  Both fields default to Auto
+   and are read out of the disk image, so without this the dialog shows two boxes reading
+   "Auto" and nothing at all about what that resolved to -- and the release decides the
+   record layout, the scramble key and whether the part answers on the port. Filled by
+   pp_init(), which runs at machine start, well before the dialog can be opened. */
+static char pp_ident_text[256] = "Attach the dongle and start the machine to identify it.";
+
 #ifdef ENABLE_DONGLE_PHOTOPLAY_LOG
 int dongle_photoplay_do_log = ENABLE_DONGLE_PHOTOPLAY_LOG;
 
@@ -1444,14 +1451,27 @@ static const struct {
     { "Version 08",    0x68BB, 1, 1, HD_RVERS,      0,            0 }  /* I.G.O. Italy */
 };
 
+/* The row this banner belongs to, or -1 if no release in the table claims it.  That
+   answer is also what says whether the parallel HASP part should be on the port at all:
+   the generations with a row are exactly the generations that have one. */
 static int
-hd_release(const char *banner)
+hd_release_opt(const char *banner)
 {
     for (int n = 0; n < (int) (sizeof(hd_keys) / sizeof(hd_keys[0])); n++) {
         if (!strncmp(banner, hd_keys[n].banner, strlen(hd_keys[n].banner)))
             return n;
     }
-    return 0; /* 2001 */
+    return -1;
+}
+
+/* Which row to build the record from.  Callers that have already decided the part is
+   present want a row whatever happens, so an unrecognised banner falls back to 2001. */
+static int
+hd_release(const char *banner)
+{
+    const int n = hd_release_opt(banner);
+
+    return (n < 0) ? 0 : n;
 }
 
 static void
@@ -2295,9 +2315,45 @@ pp_init(const device_t *info)
        sweep this option used to arm is gone: sweeping taught nothing, because neither
        gate reads a value (HANDOFF2001.md section 4), and the device now answers for
        real. */
-    dev->hd_probe = device_get_config_int("hd2001");
+    /* Whether the parallel HASP part is on the port at all.  Auto is the right default
+       and now the shipped one: the releases that carry that part are exactly the ones
+       hd_keys[] has a row for, and the banner is already resolved here.  Photo Play 99
+       and 2000 must have it off -- driving STATUS bit 5 disturbs their own use of the
+       same line -- and I.G.O. 4 and I.G.O. 8 do not want it either, the first being a
+       CDONGLE and the second a reader on COM2.  A hand-set value still wins, so an image
+       can be run against the wrong part deliberately.
+
+       The ini key stays "hd2001" so rigs staged before this keep working: their
+       "hd2001 = 1" still reads as On.  Its label no longer says 2001, because the part
+       it switches on is used by every generation from 2001 to Italy. */
+    const int hd_opt = device_get_config_int("hd2001");
+    const int hd_rel = hd_release_opt(banner);
+
+    dev->hd_probe = (hd_opt < 0) ? (hd_rel >= 0) : (hd_opt != 0);
     if (dev->hd_probe)
         hd_load(dev, banner);
+
+    /* Say what all of that resolved to, where the user can see it. */
+    {
+        const char *src = (have_img && (bi < 0) && (ti < 0)) ? "read from the disk image"
+                        : (have_img && ((bi < 0) || (ti < 0))) ? "part image, part pinned by hand"
+                                                               : "pinned by hand";
+        char        how[96];
+
+        if (!dev->hd_probe)
+            snprintf(how, sizeof(how), "no parallel HASP part on the port%s",
+                     (hd_opt < 0) ? " (Auto: this release does not use one)" : " (switched off)");
+        else if (hd_keys[hd_rel < 0 ? 0 : hd_rel].probe)
+            snprintf(how, sizeof(how), "parallel HASP, record key 0000"
+                                       " (this release probes for its passwords and finds none)");
+        else
+            snprintf(how, sizeof(how), "parallel HASP, record key %04X",
+                     hd_keys[hd_rel < 0 ? 0 : hd_rel].pass1);
+
+        snprintf(pp_ident_text, sizeof(pp_ident_text),
+                 "Reporting \"%s\" (%s).%c%s.", banner, src, '\n', how);
+        pp_log("PP: %s\n", pp_ident_text);
+    }
 
     /* DATA-readback transform sweep: same file, same self-advancing trick.  The 2008
        probe writes 5A/A5 and reads each straight back, so what the cable does to that
@@ -2337,6 +2393,17 @@ pp_close(void *priv)
 
 static const device_config_t pp_config[] = {
     // clang-format off
+    {
+        .name           = "identity",
+        .description    = pp_ident_text,
+        .type           = CONFIG_LABEL,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
     {
         .name           = "banner",
         .description    = "Version",
@@ -2400,14 +2467,22 @@ static const device_config_t pp_config[] = {
         .bios           = { { 0 } }
     },
     {
+        /* Named for 2001 because that was the only release using it when it was added;
+           every generation from 2001 to Italy does.  The key stays "hd2001" so rigs
+           staged before Auto existed keep reading as On. */
         .name           = "hd2001",
-        .description    = "2001 HDONGLE serial EEPROM (Photo Play 2001)",
-        .type           = CONFIG_BINARY,
+        .description    = "Parallel HASP dongle (2001 to 2007, and Italy)",
+        .type           = CONFIG_SELECTION,
         .default_string = NULL,
-        .default_int    = 0,
+        .default_int    = -1,
         .file_filter    = NULL,
         .spinner        = { 0 },
-        .selection      = { { 0 } },
+        .selection      = {
+            { .description = "Auto (on for the releases that have one)", .value = -1 },
+            { .description = "Off",                                      .value =  0 },
+            { .description = "On",                                       .value =  1 },
+            { .description = ""                                                       }
+        },
         .bios           = { { 0 } }
     },
     {

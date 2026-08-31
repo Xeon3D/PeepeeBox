@@ -188,6 +188,17 @@ DeviceConfig::ProcessConfig(void *dc, const void *c, const bool is_dep)
         switch (config->type) {
             default:
                 break;
+            case CONFIG_LABEL:
+                {
+                    /* Static text spanning both columns, with no value and no ini key --
+                       for a device that knows something the user cannot otherwise see.
+                       The text is built at runtime, so it is not run through tr(). */
+                    auto *text = new QLabel(QString::fromUtf8(config->description));
+                    text->setWordWrap(true);
+                    text->setTextFormat(Qt::PlainText);
+                    this->ui->formLayout->addRow(text);
+                    break;
+                }
             case CONFIG_BINARY:
                 {
                     auto *cbox = new QCheckBox();
