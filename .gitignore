@@ -75,3 +75,6 @@ CMakeLists.txt.user
 # Disk images.  These are gigabytes each and are not ours to redistribute.
 # PP2000/ and PP2001/ hold nothing but these, so the one pattern covers them.
 *.img
+
+# Packaged release folders -- an 80 MB binary each, built from a tag
+/Release */
