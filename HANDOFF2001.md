@@ -2133,3 +2133,59 @@ The attack this opens is much better than chasing the oracle directly:
    emulation goal -- the oracle only has to be right in so far as it produces `D`.
 
 Do step 1 before anything else, and keep § 23.6's collision test as the gate.
+
+### 24.5 The software round in full, and a correction: the dongle returns TWO dwords
+
+§ 24.3 said the dongle contributes one dword. It contributes **two**. `[bp-0x28]` is
+not a local -- it is `[bp-0x2C] + 4`, the second half of the 8-byte buffer
+`0x2E44D` hands to the dongle and copies back, and `0x2D04C` writes both of its LFSR
+results there. So:
+
+```
+    D   = out[0]      acc = out[1]
+    schedule[0] = D
+    for i = 1 .. 0x19:                       /* 26 round keys */
+        schedule[i]  = schedule[i-1] + acc
+        D            = ROR32(D, schedule[i-1] & 0x1F)
+        schedule[1] ^= D
+```
+
+The `[bp-0x98]` that looked like a separate source array is just `schedule[i-1]`:
+`&[bp-0x98] + 4i` is `&[bp-0x94] + 4(i-1)`.
+
+`0x2E682`, decoded end to end -- block as two little-endian dwords, L at +0, R at +4,
+`i` counting down from 12:
+
+```
+    rot1 = (R >> 7) & 0x1F
+    L    = ROR32(L - schedule[2i+1], rot1) ^ R      /* subtract */
+    rot2 = (L >> 4) & 0x1F                          /* the NEW L */
+    R    = ROR32(R + schedule[2i],   rot2) ^ L      /* add */
+```
+
+Two half-rounds per iteration, 26 keys in all, and every step is invertible.
+
+### 24.6 What is solved and what is not
+
+**Solved:** the entire software half. Given `D` and `acc`, every block of a buffer
+after the first can be decrypted with no dongle at all.
+
+**Not solved:** `D` and `acc` themselves. Last turn's framing -- "one 32-bit unknown
+constrained by 511 blocks" -- was wrong: it is **64 bits**, and the round function
+mixes adds with data-dependent rotates, so it is not a linear solve. One known block
+gives 64 bits of constraint, which is enough information in principle, but not by
+brute force.
+
+Routes worth trying, cheapest first:
+
+1. **Meet in the middle on the last iteration.** `i = 1` uses `schedule[2]` and
+   `schedule[3]`, both `D + k*acc`; inverting the final half-round from known
+   plaintext constrains `D + 3*acc` directly.
+2. **Guess `acc`, derive `D`.** For a fixed `acc` the schedule is an arithmetic
+   progression and the first half-round may invert to a unique `D` -- 2^32 candidates
+   with an immediate reject, which is a C-sized job rather than a Python one.
+3. **Check whether `D` and `acc` repeat across buffers.** The dongle answers per
+   first-block, so identical first blocks give identical pairs; if a picture's buffers
+   share them, far fewer unknowns exist than 64 bits per buffer suggests.
+
+The § 23.6 collision test stays the gate on anything built from this.
