@@ -2062,3 +2062,74 @@ Where that leaves the oracle: the byte -> bit function cannot be tested against 
 dumped tables until the extraction is right, because every candidate is checked
 against pairs that are themselves wrong. A 32-byte-bitmap-in-the-dump hypothesis was
 tried anyway and found nothing, which means nothing yet.
+
+---
+
+## 24. Only the first block of each buffer touches the dongle
+
+This is what § 23.6 was looking for, and it invalidates the model that section
+tested rather than any of its arithmetic.
+
+### 24.1 `0x2E44D` — the dongle path, and it carries TWO buffers
+
+```
+    0x2E44D(buf1, buf2, unused, state)
+      if buf2 != NULL:
+          memcpy(local_A = [bp-0x10], buf1, 8)      ; local_A and local_B are
+          memcpy(local_B = [bp-0x08], buf2, 8)      ; ADJACENT in the frame
+          state[+0x16] = 2 ; state[+0x12] = &local_A
+      else:
+          state[+0x16] = 1 ; state[+0x12] = buf1
+      dispatch                                       ; -> 0x2B572 -> 0x2D04C
+      if buf2 != NULL: copy local_A and local_B back
+```
+
+So with sub-op 2 the crypto sees **16 contiguous bytes**, and `0x2D04C`'s tail
+(`0x2D282`) writes its two LFSR results into the second half. `0x2B646`'s
+`dest = data + 8` is the same thing seen from the handler's side.
+
+`0x2EBF4` calls it as `0x2E44D(block, &[bp-0x2C], 0, state)` — so `[bp-0x2C]`
+receives the dongle's output, and the caller reads it straight back.
+
+### 24.2 `0x2E682` — every other block, in software
+
+Twelve rounds, add/subtract and data-dependent rotates, keyless **except for a
+round-key array passed in `[bp+0xA]`**, indexed `4*(2i+1)`. In `0x2ECA9` that array
+is the caller's local at `[bp-0x94]`.
+
+### 24.3 The dongle contributes ONE dword per buffer
+
+`0x2EBFB`..`0x2EC8B`, immediately after the first block's dongle call:
+
+```
+    schedule[0] = D                       ; D = the dword the dongle returned
+    for i = 1 .. 0x19:                    ; 26 round keys in all
+        schedule[i] = src[i] + acc
+        D = ROR32(D, src[i].byte0 & 0x1F)
+        schedule[1] ^= D
+```
+
+built from `D`, a source array at `[bp-0x98]` and an accumulator. **Everything after
+the first block is software keyed by that one 32-bit value.**
+
+### 24.4 Why § 23.2 could not work, and the better attack
+
+That extraction ran the Feistel/LFSR model over *every* block. Only the first block
+of each 4 KB buffer goes that way; the other 511 go through `0x2E682` with the
+schedule. So the pairs it produced were mostly nonsense, which is exactly what the
+collision test reported.
+
+The attack this opens is much better than chasing the oracle directly:
+
+1. `0x2E682` is invertible and keyless apart from the schedule, and the schedule is a
+   published function of one unknown dword `D`. For a 4 KB buffer with known
+   plaintext, **`D` is a single 32-bit unknown constrained by 511 blocks** — solvable,
+   and self-verifying: the wrong `D` fails immediately, the right one decrypts the
+   whole buffer.
+2. That yields clean `(first-block input -> D)` pairs, which is what an attack on the
+   byte -> bit oracle actually needs. Every earlier attempt was scoring candidates
+   against pairs that were themselves wrong.
+3. And a device that can produce `D` is enough to decrypt everything, which is the
+   emulation goal -- the oracle only has to be right in so far as it produces `D`.
+
+Do step 1 before anything else, and keep § 23.6's collision test as the gate.
