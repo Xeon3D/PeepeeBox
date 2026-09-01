@@ -78,3 +78,7 @@ CMakeLists.txt.user
 
 # Packaged release folders -- an 80 MB binary each, built from a tag
 /Release */
+
+# Python bytecode from running the evidence helpers in place
+__pycache__/
+*.pyc
