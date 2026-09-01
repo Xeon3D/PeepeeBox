@@ -54,6 +54,7 @@ dongles (`docs/research/20`), not from inference.
 
 | Release | Dongle | Pictures | Status |
 |---|---|---|---|
+| Photo Play 2.0 | Microcosm CopyControl (disk layout) | plain PCX | **runs** — games and photo games |
 | Photo Play 99 | funworld two-chip, parallel | encrypted, per-picture key | **runs** — games and photo games |
 | Photo Play 2000 | CDONGLE, parallel | encrypted, per-picture key | **runs** — games and photo games |
 | Photo Play 2001 / I.G.O. 1 | HASP4 `7477/7D57` | encrypted, dongle-computed | boots and plays; **pictures scramble** |
@@ -65,6 +66,14 @@ dongles (`docs/research/20`), not from inference.
 | I.G.O. 7 (2007) | HASP4 `68BB/1329` | plain GIF | **runs** — games and photo games |
 | I.G.O. 8 (2008) | serial reader, COM2 | plain GIF | **runs** — games and photo games |
 | I.G.O. Italy (2008-era) | HASP4, probed | plain GIF | **runs** — games and photo games |
+
+Photo Play 2.0 is the odd one out: no dongle at all.  Its games are wrapped in
+Microcosm CopyControl, whose key is the **physical layout of the disk** -- where
+two files sit, and a pattern hidden in the slack past the end of one of them.
+Copying a cabinet's disk file-by-file destroys both, which is why the images that
+survive refuse to start a game.  PeepeeBox spots an affected image and puts the
+layout back before the machine starts, without altering a single game file
+(`docs/research/24`).
 
 Two things gate the rest.
 

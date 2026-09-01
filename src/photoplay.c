@@ -66,6 +66,7 @@
 #include <86box/scsi_device.h>
 #include <86box/cdrom.h>
 #include <86box/fdd.h>
+#include <86box/ui.h>
 #include <86box/photoplay.h>
 #include "cpu.h"
 
@@ -193,6 +194,402 @@ pp_apply_ports(void)
     }
 }
 
+/* ------------------------------------------------------------------------------------
+ * Photo Play 2.0: Microcosm CopyControl.
+ *
+ * 2.0 carries no dongle.  It is protected by CopyControl v1.66, and its hard-disk key is
+ * not inside any file -- it is the *physical layout* of the disk.  Two things have to be
+ * true, and a file-by-file copy destroys both:
+ *
+ *   - PP2000.CCC's last cluster must end with a run of a particular byte, written into
+ *     the slack past the end of the file.  The engine extends the file into that slack,
+ *     reads it back and requires every byte to match (docs/research/24, service 6).
+ *   - CCONTROL.SYS and PP2000.CCC must each start at the exact cluster CCMOVE recorded.
+ *
+ * Every 2.0 image found so far has been imaged in a way that lost both, which is why they
+ * all stop with "Run CCMOVE to create a working copy" the moment a game is started.  The
+ * files themselves are untouched originals; only where they sit had been lost.
+ *
+ * The expected values live in PP2000.CCC's encrypted licence region and cannot be read
+ * back yet -- the keystream has no period and is keyed per install.  So they are tabulated
+ * against the two serials in the .CCC header, which is plaintext.  An install we have no
+ * row for is left alone and said so, rather than guessed at.
+ */
+
+#define PP_CC_PATH1 "EXE        "
+#define PP_CC_PATH2 "PP2000  081"
+#define PP_CC_FILE1 "CCONTROLSYS"
+#define PP_CC_FILE2 "PP2000  CCC"
+
+static const struct {
+    uint16_t cc_serial;   /* PP2000.CCC + 0x04 */
+    uint16_t prod_serial; /* PP2000.CCC + 0x06 */
+    uint16_t ccontrol_cl; /* the cluster CCONTROL.SYS must start at */
+    uint16_t ccc_cl;      /* the cluster PP2000.CCC must start at   */
+    uint8_t  slack;       /* the byte the slack check wants         */
+    const char *name;
+} pp_cc_installs[] = {
+    { 0x0821, 0x0014, 54523, 54525, 0x5A, "PP20NL" }
+};
+
+typedef struct {
+    FILE    *f;
+    uint32_t part;      /* partition start, in sectors */
+    uint32_t bps;
+    uint32_t spc;
+    uint32_t fat_lba;
+    uint32_t root_lba;
+    uint32_t data_lba;
+    uint32_t root_secs;
+    uint32_t nfat;
+    uint32_t spf;
+    uint8_t *fat;
+} pp_fat_t;
+
+static uint16_t
+pp_rd16(const uint8_t *p)
+{
+    return (uint16_t) (p[0] | (p[1] << 8));
+}
+
+static uint32_t
+pp_rd32(const uint8_t *p)
+{
+    return (uint32_t) (p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24));
+}
+
+static int
+pp_sec_read(pp_fat_t *v, uint32_t lba, uint32_t count, uint8_t *buf)
+{
+    if (fseeko64(v->f, (uint64_t) lba * v->bps, SEEK_SET) != 0)
+        return 0;
+    return fread(buf, v->bps, count, v->f) == count;
+}
+
+static int
+pp_sec_write(pp_fat_t *v, uint32_t lba, uint32_t count, const uint8_t *buf)
+{
+    if (fseeko64(v->f, (uint64_t) lba * v->bps, SEEK_SET) != 0)
+        return 0;
+    return fwrite(buf, v->bps, count, v->f) == count;
+}
+
+static uint16_t
+pp_fat_get(const pp_fat_t *v, uint16_t cl)
+{
+    return pp_rd16(&v->fat[cl * 2]);
+}
+
+static void
+pp_fat_set(pp_fat_t *v, uint16_t cl, uint16_t val)
+{
+    v->fat[cl * 2]       = (uint8_t) val;
+    v->fat[(cl * 2) + 1] = (uint8_t) (val >> 8);
+}
+
+static uint32_t
+pp_clus_lba(const pp_fat_t *v, uint16_t cl)
+{
+    return v->data_lba + ((uint32_t) (cl - 2) * v->spc);
+}
+
+/* Open the image and fill in the FAT16 geometry.  Returns 0 if this is not a plain
+   FAT16 partition, which is all any Photo Play image has ever been. */
+static int
+pp_fat_open(pp_fat_t *v, const char *fn)
+{
+    uint8_t sec[512];
+
+    memset(v, 0, sizeof(pp_fat_t));
+    v->bps = 512;
+    v->f   = plat_fopen64((char *) fn, "r+b");
+    if (v->f == NULL)
+        return 0;
+
+    if (!pp_sec_read(v, 0, 1, sec) || (pp_rd16(&sec[510]) != 0xAA55))
+        return 0;
+    v->part = pp_rd32(&sec[0x1BE + 8]);
+    if ((v->part == 0) || (v->part > (1U << 24)))
+        return 0;
+
+    if (!pp_sec_read(v, v->part, 1, sec))
+        return 0;
+    v->bps = pp_rd16(&sec[0x0B]);
+    v->spc = sec[0x0D];
+    v->nfat = sec[0x10];
+    v->spf  = pp_rd16(&sec[0x16]);
+    if ((v->bps != 512) || (v->spc == 0) || (v->nfat == 0) || (v->spf == 0))
+        return 0;
+
+    v->fat_lba  = v->part + pp_rd16(&sec[0x0E]);
+    v->root_lba = v->fat_lba + (v->nfat * v->spf);
+    v->root_secs = ((uint32_t) pp_rd16(&sec[0x11]) * 32) / v->bps;
+    v->data_lba = v->root_lba + v->root_secs;
+
+    v->fat = (uint8_t *) malloc(v->spf * v->bps);
+    if (v->fat == NULL)
+        return 0;
+    return pp_sec_read(v, v->fat_lba, v->spf, v->fat);
+}
+
+static void
+pp_fat_close(pp_fat_t *v)
+{
+    if (v->fat != NULL)
+        free(v->fat);
+    if (v->f != NULL)
+        fclose(v->f);
+    v->fat = NULL;
+    v->f   = NULL;
+}
+
+/* Find an 11-byte "NAME    EXT" entry in a directory.  dir_lba/dir_secs describe the
+   root; for a subdirectory pass its first cluster in dir_cl instead.  On success returns
+   the byte offset of the entry in the image, and its start cluster in *cl_out. */
+static uint64_t
+pp_dir_find(pp_fat_t *v, uint32_t dir_lba, uint32_t dir_secs, uint16_t dir_cl,
+            const char *name11, uint16_t *cl_out, uint32_t *size_out)
+{
+    uint8_t *buf = (uint8_t *) malloc(v->spc * v->bps);
+    uint64_t hit = 0;
+
+    if (buf == NULL)
+        return 0;
+
+    for (int pass = 0; (pass < 64) && !hit; pass++) {
+        uint32_t lba;
+        uint32_t secs;
+
+        if (dir_cl == 0) {
+            if (pass > 0)
+                break;
+            lba  = dir_lba;
+            secs = dir_secs;
+        } else {
+            lba  = pp_clus_lba(v, dir_cl);
+            secs = v->spc;
+        }
+
+        if (!pp_sec_read(v, lba, secs, buf))
+            break;
+
+        for (uint32_t i = 0; i < ((secs * v->bps) / 32); i++) {
+            const uint8_t *e = &buf[i * 32];
+
+            if ((e[0] == 0x00) || (e[0] == 0xE5))
+                continue;
+            if (!memcmp(e, name11, 11)) {
+                hit = ((uint64_t) lba * v->bps) + (i * 32);
+                if (cl_out != NULL)
+                    *cl_out = pp_rd16(&e[0x1A]);
+                if (size_out != NULL)
+                    *size_out = pp_rd32(&e[0x1C]);
+                break;
+            }
+        }
+
+        if (dir_cl == 0)
+            break;
+        dir_cl = pp_fat_get(v, dir_cl);
+        if ((dir_cl < 2) || (dir_cl >= 0xFFF0))
+            break;
+    }
+
+    free(buf);
+    return hit;
+}
+
+/* Where the slack check looks: the tail of the file's last cluster, at most 512 bytes. */
+static uint32_t
+pp_slack_off(const pp_fat_t *v, uint32_t size, uint32_t *len_out)
+{
+    const uint32_t cl_bytes = v->spc * v->bps;
+    uint32_t       rem      = size % cl_bytes;
+    uint32_t       len      = cl_bytes - rem;
+
+    if (len > 512)
+        len = 512;
+    *len_out = len;
+    return cl_bytes - len;
+}
+
+/* Move a single-cluster file to a given cluster, carrying its slack pattern.  Returns 1
+   if the move happened. */
+static int
+pp_cc_relocate(pp_fat_t *v, uint64_t ent_off, uint16_t from, uint16_t to,
+               uint32_t size, uint8_t slack)
+{
+    const uint32_t cl_bytes = v->spc * v->bps;
+    uint8_t       *buf;
+    uint32_t       slen;
+    uint32_t       soff;
+    uint8_t        ent[32];
+
+    if ((from == to) || (to < 2))
+        return 0;
+    if (pp_fat_get(v, from) < 0xFFF8) /* only ever single-cluster here */
+        return 0;
+    if (pp_fat_get(v, to) != 0x0000)  /* refuse to tread on allocated data */
+        return 0;
+
+    buf = (uint8_t *) malloc(cl_bytes);
+    if (buf == NULL)
+        return 0;
+    if (!pp_sec_read(v, pp_clus_lba(v, from), v->spc, buf)) {
+        free(buf);
+        return 0;
+    }
+
+    soff = pp_slack_off(v, size, &slen);
+    memset(&buf[soff], slack, slen);
+
+    if (!pp_sec_write(v, pp_clus_lba(v, to), v->spc, buf)) {
+        free(buf);
+        return 0;
+    }
+    free(buf);
+
+    pp_fat_set(v, to, 0xFFFF);
+    pp_fat_set(v, from, 0x0000);
+    for (uint32_t n = 0; n < v->nfat; n++)
+        pp_sec_write(v, v->fat_lba + (n * v->spf), v->spf, v->fat);
+
+    if (fseeko64(v->f, (int64_t) ent_off, SEEK_SET) != 0)
+        return 0;
+    if (fread(ent, 1, 32, v->f) != 32)
+        return 0;
+    ent[0x1A] = (uint8_t) to;
+    ent[0x1B] = (uint8_t) (to >> 8);
+    if (fseeko64(v->f, (int64_t) ent_off, SEEK_SET) != 0)
+        return 0;
+    if (fwrite(ent, 1, 32, v->f) != 32)
+        return 0;
+
+    fflush(v->f);
+    return 1;
+}
+
+/* Make sure the slack of a file's cluster carries the pattern.  Returns 1 if written. */
+static int
+pp_cc_fill_slack(pp_fat_t *v, uint16_t cl, uint32_t size, uint8_t fill)
+{
+    uint32_t slen;
+    uint32_t soff = pp_slack_off(v, size, &slen);
+    uint32_t lba  = pp_clus_lba(v, cl) + (soff / v->bps);
+    uint8_t  sec[512];
+    int      ok = 1;
+
+    if (!pp_sec_read(v, lba, 1, sec))
+        return 0;
+    for (uint32_t i = 0; i < slen; i++)
+        if (sec[(soff % v->bps) + i] != fill) {
+            ok = 0;
+            break;
+        }
+    if (ok)
+        return 0; /* already right */
+
+    memset(&sec[soff % v->bps], fill, slen);
+    if (!pp_sec_write(v, lba, 1, sec))
+        return 0;
+    fflush(v->f);
+    return 1;
+}
+
+/* Detect a Photo Play 2.0 image whose CopyControl layout has been lost, and put it back.
+   Called once, before the machine starts. */
+static void
+pp_check_copycontrol(const char *fn)
+{
+    pp_fat_t v;
+    uint16_t dir_exe = 0;
+    uint16_t dir_cc  = 0;
+    uint16_t cl_sys  = 0;
+    uint16_t cl_ccc  = 0;
+    uint32_t sz_sys  = 0;
+    uint32_t sz_ccc  = 0;
+    uint64_t ent_sys;
+    uint64_t ent_ccc;
+    uint8_t  hdr[512];
+    int      row  = -1;
+    int      done = 0;
+
+    if (!pp_fat_open(&v, fn)) {
+        pp_fat_close(&v);
+        return;
+    }
+
+    if (!pp_dir_find(&v, v.root_lba, v.root_secs, 0, PP_CC_PATH1, &dir_exe, NULL) ||
+        !pp_dir_find(&v, 0, 0, dir_exe, PP_CC_PATH2, &dir_cc, NULL)) {
+        pp_fat_close(&v);
+        return; /* not a 2.0 image */
+    }
+
+    pp_profile_log("PP: Photo Play 2.0 image -- checking the CopyControl layout\n");
+
+    ent_sys = pp_dir_find(&v, 0, 0, dir_cc, PP_CC_FILE1, &cl_sys, &sz_sys);
+    ent_ccc = pp_dir_find(&v, 0, 0, dir_cc, PP_CC_FILE2, &cl_ccc, &sz_ccc);
+    if ((ent_sys == 0) || (ent_ccc == 0) || (cl_sys < 2) || (cl_ccc < 2)) {
+        pp_profile_log("PP: CCONTROL.SYS/PP2000.CCC not both found -- leaving it alone\n");
+        pp_fat_close(&v);
+        return;
+    }
+
+    /* The .CCC header is plaintext and names the install. */
+    if (pp_sec_read(&v, pp_clus_lba(&v, cl_ccc), 1, hdr)) {
+        const uint16_t ccser = pp_rd16(&hdr[4]);
+        const uint16_t pdser = pp_rd16(&hdr[6]);
+
+        for (int i = 0; i < (int) (sizeof(pp_cc_installs) / sizeof(pp_cc_installs[0])); i++)
+            if ((pp_cc_installs[i].cc_serial == ccser) &&
+                (pp_cc_installs[i].prod_serial == pdser))
+                row = i;
+
+        if (row < 0) {
+            pp_profile_log("PP: CopyControl install %04X/%04X is not one this build knows;"
+                           " leaving the image alone\n", ccser, pdser);
+            pp_fat_close(&v);
+            return;
+        }
+    }
+
+    if (row < 0) {
+        pp_fat_close(&v);
+        return;
+    }
+
+    /* Put the two files back where CCMOVE recorded them, and restore the slack. */
+    if (cl_sys != pp_cc_installs[row].ccontrol_cl)
+        done += pp_cc_relocate(&v, ent_sys, cl_sys, pp_cc_installs[row].ccontrol_cl,
+                               sz_sys, pp_cc_installs[row].slack);
+    if (cl_ccc != pp_cc_installs[row].ccc_cl)
+        done += pp_cc_relocate(&v, ent_ccc, cl_ccc, pp_cc_installs[row].ccc_cl,
+                               sz_ccc, pp_cc_installs[row].slack);
+
+    done += pp_cc_fill_slack(&v, pp_cc_installs[row].ccc_cl, sz_ccc,
+                             pp_cc_installs[row].slack);
+    done += pp_cc_fill_slack(&v, pp_cc_installs[row].ccontrol_cl, sz_sys,
+                             pp_cc_installs[row].slack);
+
+    pp_fat_close(&v);
+
+    if (done) {
+        pp_profile_log("PP: CopyControl layout restored for %s -- CCONTROL.SYS at %u,"
+                       " PP2000.CCC at %u, slack %02X\n", pp_cc_installs[row].name,
+                       pp_cc_installs[row].ccontrol_cl, pp_cc_installs[row].ccc_cl,
+                       pp_cc_installs[row].slack);
+        ui_msgbox_header(MBX_INFO, (char *) "Photo Play 2.0 image repaired",
+                         (char *) "This image's CopyControl layout had been lost, so the "
+                                  "games would have refused to start with \"Run CCMOVE to "
+                                  "create a working copy\".\n\n"
+                                  "The protection keys on where two files physically sit on "
+                                  "the disk, and on a pattern hidden past the end of one of "
+                                  "them -- none of which survives copying an image file by "
+                                  "file. Both have been put back.\n\n"
+                                  "No game file was modified.");
+    }
+}
+
 /* Always mount HardDisk.img from the emulator's own directory as the single
    IDE master, with the geometry implied by its size. */
 static void
@@ -238,6 +635,10 @@ pp_apply_disk(void)
     strcpy(hdd[0].fn, fn);
 
     pp_profile_log("PP: disk %s, %u/%u/%u\n", fn, hdd[0].tracks, hdd[0].hpc, hdd[0].spt);
+
+    /* 2.0 images arrive with their CopyControl layout destroyed by imaging; put it
+       back before the machine starts.  No other release is touched by this. */
+    pp_check_copycontrol(fn);
 
     /* Name the window after what the image actually is, rather than after
        whatever the working directory happens to be called -- with -P . that
