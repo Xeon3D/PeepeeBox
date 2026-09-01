@@ -214,3 +214,77 @@ state. Reading this binary does not give up its key material.
 2. Re-run the Phase 24 consistency test with whatever it does. The extractor is validated
    and the corpus is 72 MB, so it is one run to confirm or kill.
 3. The oracle's key material remains separate, and nothing in `FINDIT.EXE` will supply it.
+
+---
+
+# Phase 25b — the loop, found
+
+`0x30EC6` was a red herring: the packet layer never reaches the generic dispatcher for
+this service. At `0x35171` it branches on the service byte in the request:
+
+```
+035174  cmp byte es:[bx+0x16], 0x3C ; call 0x349A0     EncodeData walker
+035196  cmp byte es:[bx+0x16], 0x3D ; call 0x34CC0     DecodeData walker
+0351B8  else                          call 0x3328A     the generic one-request path
+```
+
+## The walker — `0x34CC0`
+
+```
+034CC8  block_count = (length + 7) >> 3            lcall 0,0x13D0 with cl=3
+034CE1  remainder   = length & 7 ; if 0 then 8
+034D0D  prevL = prevR = 0                          the IV is zero
+034D2F  if block_count < 2: skip the whole loop
+034D43  i = 0
+loop:
+  034D50  save the block's ORIGINAL ciphertext:  Cl = [bx+0], Cr = [bx+4]
+  034D6E  if i != 0 goto 0x34E50
+          -- i == 0 --
+  034D8F  call 0x34629(buffer, &[bp-0x2c], state)   the dongle path; returns D and acc
+  034DA3  j = 1
+  034DB0  while j < 0x1A:                            build a TWENTY-SIX entry schedule
+            sched[j]  = sched[j-1] + acc            [bp-0x28]:[bp-0x26] is acc
+            cl        = sched_bytes[j] & 0x1F
+            D         = ROR32(D, cl)                shr by cl, shl by 32-cl, OR
+            running  ^= D
+            j++
+          -- i != 0 --
+  034E5D  call 0x3483D(buffer, &[bp-0x94])           a pure SOFTWARE round on the schedule
+          -- both --
+  034E63  block.L ^= prevL ;  block.R ^= prevR       <-- the combination
+  034E81  prevL, prevR = the original ciphertext saved at the top
+  034E99  buffer += 8 ; i++
+034EA5  while i < block_count - 2                    the last two blocks are NOT transformed
+```
+
+## What this settles
+
+1. **The mode is CBC with a zero IV**, and it is applied *after* the transform:
+   `P_i = T(C_i) ^ C_{i-1}`, with `prev` seeded to zero and updated from the block's
+   original ciphertext. That much Phase 24 guessed right.
+
+2. **`T` is not one function.** Block 0 goes through `0x34629` — the dongle path, the
+   Feistel-and-keyed-round chain of Phase 25 — and returns **two dwords**. Blocks 1
+   onwards go through `0x3483D`, a **pure software round** driven by a **26-entry
+   schedule** built from those two dwords. That is why Phase 24 found zero agreement
+   everywhere: it applied the Feistel transform to every block, and it is right for
+   exactly one block in 512.
+
+3. **The last two blocks are left alone** (`i < block_count - 2`), which is why entries
+   measured 99.6% different rather than 100%.
+
+This is `HANDOFF2001.md` § 24's model — first block to the dongle, the rest through a
+software round over a 26-entry schedule derived from two dongle dwords — confirmed here
+for I.G.O. 2 from its own binary, having been derived for 2001.
+
+## Why this is the way in
+
+Only **two dwords per 4 KB buffer** come from the dongle. Everything else is arithmetic
+this project can run. And all 1397 entries share ciphertext block 0, so the first buffer's
+pair is the *same for every picture in the archive*.
+
+With I.G.O. 4's plaintext, `D` and `acc` are recoverable by solving rather than guessing —
+blocks 1 and 2 give 128 bits of known plaintext against a 64-bit unknown — and once
+recovered, the whole archive decrypts with no dongle at all.
+
+Next: transcribe `0x3483D`, then solve for `D` and `acc` against the corpus.
