@@ -75,6 +75,12 @@
 #define CONFIG_DEP          (16 << CONFIG_SHIFT)
 #define CONFIG_TYPE_MASK    (CONFIG_DEP - 1)
 
+/* PeepeeBox: an option that stays in the ini and keeps its default, but is not
+   drawn in the device dialog.  Research switches and settings the cabinets have
+   no choice about are still read by the device; they are just not the user's
+   business.  Above CONFIG_TYPE_MASK, so the type itself still reads normally. */
+#define CONFIG_HIDDEN       (32 << CONFIG_SHIFT)
+
 // #define CONFIG_ONBOARD    256      /* only avaialble on the on-board variant */
 // #define CONFIG_STANDALONE 257      /* not available on the on-board variant */
 

@@ -151,6 +151,12 @@ DeviceConfig::ProcessConfig(void *dc, const void *c, const bool is_dep)
     while (config->type != CONFIG_END) {
         const int config_type = config->type & CONFIG_TYPE_MASK;
 
+        /* Not the user's business: still read, still saved, just not drawn. */
+        if (config->type & CONFIG_HIDDEN) {
+            ++config;
+            continue;
+        }
+
         /* Ignore options of the wrong class. */
         if (!!(config->type & CONFIG_DEP) != is_dep)
             continue;
@@ -503,6 +509,11 @@ DeviceConfig::ConfigureDevice(const _device_ *device, int instance, QWidget *par
 
         config = device->config;
         while (config->type != CONFIG_END) {
+            if (config->type & CONFIG_HIDDEN) {
+                ++config;
+                continue;
+            }
+
             const int config_type       = config->type & CONFIG_TYPE_MASK;
             const int config_major_type = (config_type >> CONFIG_SHIFT) << CONFIG_SHIFT;
 

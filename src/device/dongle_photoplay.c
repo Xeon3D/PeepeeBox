@@ -281,10 +281,15 @@ static const char *pp_banners[] = {
    the 2003 Spanish image's MAIN.SET says "Version 2003 (ES)".  funworld changed
    the code between generations, and the banner has to match the image exactly,
    so both have to be offered.  SE is included because an IGO 3 image reads
-   "Version 2003 (SE)". */
+   "Version 2003 (SE)".
+
+   SA is appended rather than sorted in: these are indices, and a config that pinned
+   a territory before SA existed still has to mean what it meant.  The dialog lists
+   them alphabetically regardless. */
 static const char *pp_terrs[] = {
     "AT", "BE", "CY", "CZ", "DE", "ES", "FR",
-    "GR", "IT", "NL", "PT", "SE", "SP"
+    "GR", "IT", "NL", "PT", "SE", "SP",
+    "SA"
 };
 #define PP_NTERRS ((int) (sizeof(pp_terrs) / sizeof(pp_terrs[0])))
 
@@ -2350,8 +2355,18 @@ pp_init(const device_t *info)
             snprintf(how, sizeof(how), "parallel HASP, record key %04X",
                      hd_keys[hd_rel < 0 ? 0 : hd_rel].pass1);
 
-        snprintf(pp_ident_text, sizeof(pp_ident_text),
-                 "Reporting \"%s\" (%s).%c%s.", banner, src, '\n', how);
+        /* With nothing read from the image and nothing pinned, the banner is only
+           this device's fallback.  Photo Play 2.0 is the case that matters: it has no
+           MAIN.SET to be identified from and no dongle either, so saying it reports
+           "Version 99 (AT)" invents a machine that is not there.  Only the line about
+           the port is true then, and only that is shown. */
+        if (!have_img && (bi < 0) && (ti < 0)) {
+            if ((how[0] >= 'a') && (how[0] <= 'z'))
+                how[0] = (char) (how[0] - ('a' - 'A'));
+            snprintf(pp_ident_text, sizeof(pp_ident_text), "%s.", how);
+        } else
+            snprintf(pp_ident_text, sizeof(pp_ident_text),
+                     "Reporting \"%s\" (%s).%c%s.", banner, src, '\n', how);
         pp_log("PP: %s\n", pp_ident_text);
     }
 
@@ -2449,6 +2464,7 @@ static const device_config_t pp_config[] = {
             { .description = "IT - Italy",                .value =  8 },
             { .description = "NL - Netherlands",          .value =  9 },
             { .description = "PT - Portugal",             .value = 10 },
+            { .description = "SA - South Africa",        .value = 13 },
             { .description = "SE - Sweden",               .value = 11 },
             { .description = "SP - Spain (1999)",         .value = 12 },
             { .description = ""                                       }
@@ -2458,7 +2474,7 @@ static const device_config_t pp_config[] = {
     {
         .name           = "ngdata",
         .description    = "NG-DONGLE data-readback sweep (research)",
-        .type           = CONFIG_BINARY,
+        .type           = CONFIG_BINARY | CONFIG_HIDDEN,
         .default_string = NULL,
         .default_int    = 0,
         .file_filter    = NULL,
@@ -2488,7 +2504,7 @@ static const device_config_t pp_config[] = {
     {
         .name           = "ngsweep",
         .description    = "NG-DONGLE probe sweep (research)",
-        .type           = CONFIG_BINARY,
+        .type           = CONFIG_BINARY | CONFIG_HIDDEN,
         .default_string = NULL,
         .default_int    = 0,
         .file_filter    = NULL,
@@ -2499,7 +2515,7 @@ static const device_config_t pp_config[] = {
     {
         .name           = "ibutton",
         .description    = "Emulate the DS1982 iButton at I/O 268h",
-        .type           = CONFIG_BINARY,
+        .type           = CONFIG_BINARY | CONFIG_HIDDEN,
         .default_string = NULL,
         .default_int    = 1,
         .file_filter    = NULL,
