@@ -25,3 +25,8 @@ set_target_properties(ppfix PROPERTIES
 # ppfix.rc pulls in ppfix.manifest and ppfix.ico from beside it.
 set_source_files_properties(ppfix.rc PROPERTIES
     OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/ppfix.manifest;${CMAKE_CURRENT_SOURCE_DIR}/ppfix.ico")
+
+# It ships with the emulator: the warning PeepeeBox shows for an unrepaired 2.0
+# image tells the user to run the tool sitting next to it, so a release archive
+# without ppfix.exe in it is a release that cannot follow its own instructions.
+install(TARGETS ppfix DESTINATION ".")
