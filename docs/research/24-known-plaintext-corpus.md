@@ -97,6 +97,63 @@ The bit index is worth naming, because io.hasp4's is not standard. It reads
 indexing of the same table reads 0, 1, 2, 3. Both were swept, along with LSB-first and a
 plain `(i >> 2) & 7`.
 
+## 6. The chaining test, run properly
+
+### 6.1 The first run was measuring duplicates
+
+Merging the two f-streams gave ECB 88.2% agreement and CBC 99.5%, which looked like an
+answer. It was not: **6,925 of the observations were duplicates** — the same
+`(c0, c1, d0, d1)` seen again — and each contributed two guaranteed self-agreements,
+2 x 6,925 = 13,850, which is almost exactly the agreement count every mode reported.
+After deduplicating, **every mode scores zero**.
+
+### 6.2 The machinery is sound — checked against a known key
+
+Before trusting a negative that strong, the extractor was run on a synthetic corpus built
+with `hasp4.py` under a known key, with deliberate plaintext repeats:
+
+```
+extracted f values that do NOT equal transform_word:   0 of 800
+input collisions 272, of which agree                 272
+```
+
+So the extractor recovers `f` exactly when the model is right. The negatives below are
+about the data, not the tool.
+
+### 6.3 Result: the assumed block function is refuted
+
+Deduplicated, over 100 entries, for every chaining mode and every way of mapping the
+eight bytes onto the two dwords:
+
+| block reading | cbc | pcbc |
+|---|---|---|
+| LE, `b0` = bytes 0–3 | 182 collisions, **0** agree | 203, **0** |
+| LE, dwords swapped | 260, **0** | 274, **0** |
+| BE | 200, **0** | 192, **0** |
+| BE, dwords swapped | 276, **0** | 270, **0** |
+
+ECB was refuted separately and more strongly (1,771 collisions, 0 agree). Every cell has
+enough collisions to be decisive — a correct model agrees on all of them, as the synthetic
+run shows.
+
+**`HaspDecodeBlock`'s two-keyed-round Feistel is not I.G.O. 2's picture cipher.**
+
+### 6.4 What the corpus does establish about the mode
+
+Two measurements, both independent of any assumption about the block function:
+
+* **Block size is 8.** Take pairs of entries and compare how far their plaintexts agree
+  against how far their ciphertexts agree. In every pair tried the plaintext prefix is 13
+  bytes and the ciphertext prefix is exactly **8** — `8 * floor(13 / 8)`. A byte-wise
+  stream would have tracked 13.
+* **It chains, and starts from a fixed state.** All 1397 entries share ciphertext block 0,
+  so block 0 is a pure function of plaintext block 0 and the chain begins the same way
+  every time. By blocks 97 and 98 the same plaintext gives eight different ciphertexts
+  across eight files, so by then the state carries history.
+
+That is CBC-shaped: `C_0 = E(P_0 ^ IV)` with a fixed IV, and later blocks depending on
+what came before. What is wrong is `E`, not the mode.
+
 ## 6. Where that leaves it
 
 The algorithm is not in doubt — four constants and both rotation schedules match the
@@ -106,13 +163,16 @@ or the key material is not in the dump in a form these readings reach.
 
 Next, in order:
 
-1. **Settle the chaining with a test that can fail.** Under CBC on a zero-plaintext run,
-   `C_i = E(C_{i-1})`, so blocks 74–96 give 23 chained observations of `E` per entry, over
-   1397 entries. Two entries whose runs ever collide would confirm it outright.
-2. **Solve for the IV.** With the chaining known, block 0 and block 1 together constrain
-   both key and IV, and the corpus supplies 1397 independent instances of block 0.
-3. **Read `0x2E44D`'s marshalling** in I.G.O. 2's `FINDIT.EXE` rather than 2001's, now
-   that its plaintext is known exactly and any candidate can be checked against 72 MB.
+1. **Read the block function out of I.G.O. 2's `FINDIT.EXE`.** Guessing is now exhausted:
+   the mode is known, the block size is known, and the one thing left is `E`, which the
+   binary contains. 2001's cipher was read at `0x2E44D` / `0x2D04C`; the equivalent in
+   I.G.O. 2 has never been looked at, and the container changed from PCX to GIF between
+   the two releases, so the asset pipeline plainly changed with it.
+2. **Check any candidate against the corpus immediately.** 72 MB of exact plaintext under
+   two keys, and the extractor is validated, so a proposed `E` is confirmed or killed in
+   one run.
+3. Only if that fails: revisit whether the 2001 archives use the same `E` as I.G.O. 2's,
+   which was assumed here and never tested.
 
 ## Data
 
