@@ -296,6 +296,12 @@ if(CDROM_MITSUMI)
     target_compile_definitions(ui PRIVATE USE_CDROM_MITSUMI)
 endif()
 
+# The cabinet is a touchscreen kiosk, so the renderer's touch-event path is
+# always built.  Upstream leaves it behind an undefined TOUCH_PR and falls back
+# to the mouse events Qt synthesises from a finger; here a real touch is the
+# only way anyone ever drives the machine, so it gets handled as one.
+target_compile_definitions(ui PRIVATE TOUCH_PR)
+
 if(WIN32)
     enable_language(RC)
     target_sources(86Box PUBLIC 86Box-qt.rc)
