@@ -288,3 +288,65 @@ blocks 1 and 2 give 128 bits of known plaintext against a 64-bit unknown — and
 recovered, the whole archive decrypts with no dongle at all.
 
 Next: transcribe `0x3483D`, then solve for `D` and `acc` against the corpus.
+
+---
+
+# Phase 25c — `0x3483D` transcribed
+
+```
+di = 12
+do {
+    L = ROR32(L - sched[2i+1], (R >> 7) & 31) ^ R
+    R = ROR32(R + sched[2i],   (L >> 4) & 31) ^ L
+} while (--di > 0)          ; `or di,di / jbe`, so di = 12 down to 1
+L -= sched[1]               ; 0x34975, sub against [bx+4]/[bx+6]
+R -= sched[0]               ; 0x3498C, sub against [bx+0]/[bx+2]
+```
+
+Each 32-bit rotate is the usual 16-bit-code pair: `lcall 0,0x13D0` to shift right by
+`n`, `lcall 0,0x13AF` to shift left by `32 - n`, then `or` the halves. The rotate
+amounts are **data-dependent** — `(R >> 7) & 31` for the L half and `(L >> 4) & 31` for
+the R half, the latter taken from the *already updated* L. That asymmetry, together with
+one half subtracting its key while the other adds, is what makes the round
+non-involutive.
+
+The loop touches schedule entries 25, 24 down to 3, 2; the whitening uses 1 and 0. All
+26 are accounted for.
+
+And the schedule, from `0x34DA3` in the walker:
+
+```
+sched[0] = D
+for j in 1..25:
+    sched[j]  = sched[j-1] + acc
+    sched[1] ^= ROR32(D, sched[j-1] & 31)
+```
+
+`D` is re-read from its slot each iteration, so the rotate is always of the *original*
+`D` and not a cumulative fold — worth stating because `scratchpad/solved.c` assumed the
+cumulative form, which is one reason its 2^32 search never verified.
+
+`scratchpad/softround.py` implements both, and its decode/encode round-trip is
+**500/500** on random keys and blocks.
+
+## The solve this opens up
+
+Block 0 of a buffer is the only part the dongle touches, and it hands back exactly these
+two dwords. Writing the dongle path out, with `f1` and `f2` the two keyed-round outputs:
+
+```
+(L1,R1) = A_rounds(C_0)
+(L2,R2) = (f1 ^ R1, L1)
+(L3,R3) = B_rounds(L2,R2)
+P_0     = (f2 ^ R3, L3)
+```
+
+`P_0` is known from I.G.O. 4, and its second dword is `L3` — which does not involve `f2`
+at all. So guessing `f1` is a **2^32 search with an immediate 32-bit filter**, about one
+survivor expected, and `f2` falls straight out as `P_0.lo ^ R3`. Then blocks 1 and 2,
+through the software round above, confirm or reject the pair on 128 bits.
+
+That search was tried before and failed, but against reconstructed plaintext and with the
+wrong software round and schedule. All three are now correct and independently checked,
+and all 1397 entries share block 0, so one solve covers the first 4 KB of every picture in
+the archive.
