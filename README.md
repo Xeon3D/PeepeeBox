@@ -64,7 +64,7 @@ dongles (`docs/research/20`), not from inference.
 | I.G.O. 6 (2006) | HASP4, probed | plain GIF | **runs** — games and photo games |
 | I.G.O. 7 (2007) | HASP4 `68BB/1329` | plain GIF | **runs** — games and photo games |
 | I.G.O. 8 (2008) | serial reader, COM2 | plain GIF | **runs** — games and photo games |
-| I.G.O. Italy (2008-era) | HASP4, probed | plain GIF | **`NDONGLE not found`** — retest pending |
+| I.G.O. Italy (2008-era) | HASP4, probed | plain GIF | **runs** — games and photo games |
 
 Two things gate the rest.
 
@@ -74,7 +74,7 @@ territory and little else, because those builds supply the version text from the
 own literal and read only two characters and a NUL off the dongle; 5, 6, 7 and
 Italy hold a territory, `"Version"` and a token, formatted with `"%s %s (%c%c)"`.
 All three carry eight binary content dwords. That work is done, and it is what
-brought up I.G.O. 2, 5, 6 and 7.
+brought up I.G.O. 2, 5, 6, 7 and Italy.
 
 Two releases — I.G.O. 6 and Italy — do not carry their passwords as literals.
 `MENU.EXE` tries `7477/7D57`, falls back to `68BB/1329`, and zeroes both if neither
