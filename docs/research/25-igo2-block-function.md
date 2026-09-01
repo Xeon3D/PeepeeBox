@@ -156,33 +156,61 @@ The second pointer is conditional:
 It becomes `block + 8` only when those two flags hold, and is passed as zero otherwise —
 io.hasp4's `use_chained_blocks`, decided per call.
 
-## 5. What this settles, and what it does not
+## 7. The dispatch table, and the handler's own checks
+
+The handlers are reached through a table at file `0x038AF8`, three words per entry —
+offset, segment, function code:
+
+```
+09E1 2B33 012F
+1231 2B33 013C      EncodeData  -> 0x30D61
+1396 2B33 013D      DecodeData  -> 0x30EC6
+1396 2B33 013B      also        -> 0x30EC6
+150B 2B33 FFFF      terminator
+```
+
+`0x30EC6` is therefore the DecodeData handler, and it reads its parameters out of the
+request state:
+
+| state | meaning |
+|---|---|
+| `+0x08`, `+0x0C` | the two buffer pointers |
+| `+0x16` | the operation — must be **1 or 2**, else it returns error `0x0A` |
+| `+0x18` | the function code, compared against `0x13D` |
+| `+0x1A` | the status it writes back |
+
+and the chaining test is `[bp-0xa] == 0 && [bp-0xc] == 2`, i.e. **chaining is on only when
+the operation is 2**. Operation 1 — decode — never sets the second pointer.
+
+The handler transforms **one block per call**; nothing in it loops over 512 of them.
+
+## 8. What this settles, and what it does not
 
 **Settled.** The cipher is HASP DecodeData; the unit is a 4 KB buffer; the keyed round is
-the 40-step LFSR with polynomial `0x80500062`; the Feistel stages use `0x5B2C004A` and
-`0x803425C3` over six rounds with shifts `5i` and (at the other stage) the second
-constant; a chaining write into a following block exists; and buffers of eight bytes or
-fewer are left alone.
+the 40-step LFSR with polynomial `0x80500062` and a hardware oracle; the block function is
+`HaspEncodeBlock`/`HaspDecodeBlock` exactly as io.hasp4 has them, six rounds per stage with
+ascending shifts; `0x32A81` is decode and `0x32837` encode; chaining exists but is gated on
+operation 2; and buffers of eight bytes or fewer are skipped.
 
-**Not settled, and now a contradiction.** Chaining as io.hasp4 models it writes the f
-values *over the next block* before that block is read. Applied to file data that would
-destroy every block after the first, so the picture path cannot be using it — decode must
-be per-block independent, which is ECB. But Phase 24 refuted ECB from the data itself:
-blocks 97 and 98 carry identical plaintext and eight different ciphertexts. Both cannot
-be true, so a combination step lives in the caller — the loop that walks the buffer and
-invokes `0x30F80` — and that loop has not been read yet. Phase 24 tested XOR-with-previous
-in three arrangements and all were refuted, so it is likely not plain CBC.
+**The contradiction, stated plainly.** Chaining writes the f values *over the next block*
+before that block is read, which applied to file data would destroy everything after the
+first block — and in any case decode runs with operation 1, where the second pointer is
+never set. So decode is per-block independent, which is ECB. But the corpus refutes ECB
+outright: blocks 97 and 98 carry identical plaintext and eight different ciphertexts.
+Both cannot be true.
 
-**And the oracle stays hardware.** `0x32F59` is a byte-in, bit-out call against the
-dongle state. Emulating it is the same problem as before — the security table and how it
-is keyed — and reading this binary does not give it up.
+Something therefore combines blocks *outside* this handler, in whatever walks the buffer
+eight bytes at a time. Phase 24 tested XOR-with-previous in three arrangements and refuted
+all of them, so it is not plain CBC either.
 
-## 6. Next
+**And the oracle stays hardware.** `0x32F59` is a byte-in, bit-out call against the dongle
+state. Reading this binary does not give up its key material.
 
-1. Transcribe the remaining three stage bodies at `0x32837`, `0x32A81`, `0x32B60`-ish and
-   the caller that sequences them, to get the exact composition order.
-2. Re-run the Phase 24 consistency test with that order. The extractor is validated and
-   the corpus is 72 MB, so it is one run to confirm or kill.
-3. The oracle's key material remains the last unknown, and nothing in `FINDIT.EXE` will
-   supply it — it has to come from the security table in the dumps, or from watching a
-   real unit.
+## 9. Next
+
+1. **Find the loop.** The handler does one block; the multi-block walk is above it, in the
+   library's packet layer around `0x35037`, or in `FINDIT.EXE`'s own caller. That loop
+   holds the combination step, and it is the last structural unknown.
+2. Re-run the Phase 24 consistency test with whatever it does. The extractor is validated
+   and the corpus is 72 MB, so it is one run to confirm or kill.
+3. The oracle's key material remains separate, and nothing in `FINDIT.EXE` will supply it.
