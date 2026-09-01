@@ -193,18 +193,76 @@ game file is modified, and no other release has that directory, so nothing else
 is touched. An install with no table row is reported in the log and left alone
 rather than guessed at.
 
-**The table has one row because the licence cipher is unbroken.** Its keystream
-has no period and 255 distinct byte values over 1,536 bytes — a real stream
-cipher keyed per install. Recovering another image's values means tracing it the
-way this one was traced. Breaking the cipher would make the repair fully general
-and is the obvious next piece of work.
+`PP2000.CCC`'s expected cluster is no longer tabulated — the licence cipher is
+broken (§ 9), and the emulator reads that value out of the file itself.
+`CCONTROL.SYS`'s cluster and the slack fill byte still come from the table.
 
-Unrelated packaging note: the NVRAM shipped in Release 1.5 describes a 1.65 GB
-disk, the size of every other cabinet image. A 2 GB 2.0 image boots to a BIOS
-that reports **1655 MB** and then fails. A 2.0 rig needs its own `nvr/` or a
-one-time IDE auto-detect in BIOS setup.
+## 9. The licence cipher, broken
 
-## 9. Method note
+Region `0x10..0x5FF` of `PP2000.CCC` is encrypted in **three layers**. None of it
+is findable statically — the engine single-steps itself behind a 14-byte
+plaintext window — so all of this came from watching it decrypt itself with a
+watchpoint on the first licence byte.
+
+**1. A 64-bit LFSR.** Eight bytes at `cs:0x4070`, shifted right through carry
+(`rcr byte cs:[si],1` ×8), with the feedback bit built from the low byte:
+
+```
+al = reg[7];  rcr al,1;  rcr al,1;  al ^= reg[7];  ror al,1;  al &= 0x80
+reg[0] |= al
+```
+
+Four bit-steps per output byte; the output is `reg[0]`. It is **warmed up 256
+times** before any output. The caller passes count `0xBE << 3 = 1520`, buffer
+offset `0x10`, and a flag of 0 meaning "warm up".
+
+**2. An 8×8 bit transpose** of each 8-byte block, accumulated by `or cs:[di],dl`
+with `dl` walking one bit per source byte:
+
+```
+buf[j] |= (1 << i)   when   src[i] has bit j set
+```
+
+**3. A XOR with a rotating byte**, starting `0x35`, evolving once per block:
+
+```
+cf = bh & 1;  bh = ((bh >> 1) | (cf << 7)) + cf
+```
+
+So `plain = transpose(cipher ^ LFSR) ^ bh`. Verified against the image we have:
+**all 1520 bytes**.
+
+**The key is public.** The seed is the PCODE with **one added to each byte**,
+NUL-padded to eight:
+
+```
+"PP2000" + 00 00  =  50 50 32 30 30 30 00 00
+                  ->  51 51 33 31 31 31 01 01
+```
+
+and the PCODE is the `.CCC`'s own filename. So any install decrypts. The licence
+then reads straight off:
+
+```
++0010  "PP2000"
++0022  FD D4    = 54525, the cluster PP2000.CCC must start at
++0027  the install path CCMOVE recorded
++0069  01 00 "PROGRAM.EXE" ...  a ten-slot file table
+```
+
+`pp_cc_decrypt()` in `src/photoplay.c` implements it, and the repair now reads
+the cluster from the licence instead of the table:
+
+```
+PP: licence decrypts; PP2000.CCC belongs at cluster 54525
+```
+
+**Still tabulated:** `CCONTROL.SYS`'s expected cluster is not in the `.CCC` — it
+comes from `CCONTROL.SYS`, which does not yield to this key — and the slack fill
+byte is picked from an 8-entry table at `0x39C4` by a per-call index. Those two
+are what a new install would still need traced.
+
+## 10. Method note
 
 Five hypotheses in this phase came from real evidence in real code and were all
 wrong: the recorded `D:` path, the system date, an absent floppy drive, the

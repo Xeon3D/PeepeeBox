@@ -216,6 +216,87 @@ pp_apply_ports(void)
  * row for is left alone and said so, rather than guessed at.
  */
 
+/* The licence cipher, broken.  PP2000.CCC's region 0x10..0x5FF is encrypted in three
+   layers, all recovered by tracing the engine as it decrypted itself (docs/research/24):
+ *
+ *   1. a 64-bit LFSR, seeded with the PCODE plus one per byte, warmed up 256 steps and
+ *      stepped 4 bits per output byte, XORed over the ciphertext;
+ *   2. an 8x8 bit transpose of each 8-byte block;
+ *   3. a XOR with a byte that starts at 0x35 and rotates (ror, then add the carry) once
+ *      per block.
+ *
+ * The seed is the only key material and it is public -- the PCODE is the .CCC's own
+ * filename -- so any install decrypts.  Verified against the one image we have: all
+ * 1520 bytes.
+ */
+
+typedef struct {
+    uint8_t reg[8];
+} pp_lfsr_t;
+
+static uint8_t
+pp_lfsr_step(pp_lfsr_t *s)
+{
+    for (int pass = 0; pass < 4; pass++) {
+        uint8_t cf = 0;
+        uint8_t al;
+
+        for (int i = 0; i < 8; i++) { /* rcr byte [si],1  across the register */
+            const uint8_t b = s->reg[i];
+
+            s->reg[i] = (uint8_t) ((cf << 7) | (b >> 1));
+            cf        = b & 1;
+        }
+
+        al = s->reg[7];
+        {
+            uint8_t t = (uint8_t) ((cf << 7) | (al >> 1));
+            cf = al & 1;
+            al = t;
+            t  = (uint8_t) ((cf << 7) | (al >> 1));
+            al = t;
+        }
+        al ^= s->reg[7];
+        al  = (uint8_t) ((al >> 1) | ((al & 1) << 7));
+        al &= 0x80;
+        s->reg[0] |= al;
+    }
+    return s->reg[0];
+}
+
+/* Decrypt len bytes of the licence into out.  pcode is the 8.3 name's base, NUL padded. */
+static void
+pp_cc_decrypt(const uint8_t *ct, uint32_t len, const char *pcode, uint8_t *out)
+{
+    pp_lfsr_t s;
+    uint8_t   bh = 0x35;
+
+    for (int i = 0; i < 8; i++)
+        s.reg[i] = (uint8_t) (((i < (int) strlen(pcode)) ? (uint8_t) pcode[i] : 0) + 1);
+
+    for (int i = 0; i < 256; i++)
+        pp_lfsr_step(&s);
+
+    for (uint32_t blk = 0; blk < (len / 8); blk++) {
+        uint8_t src[8];
+        uint8_t cf;
+
+        for (int i = 0; i < 8; i++)
+            src[i] = (uint8_t) (ct[(blk * 8) + i] ^ pp_lfsr_step(&s));
+
+        for (int j = 0; j < 8; j++) { /* the 8x8 bit transpose */
+            uint8_t v = 0;
+
+            for (int i = 0; i < 8; i++)
+                v |= (uint8_t) (((src[i] >> j) & 1) << i);
+            out[(blk * 8) + j] = (uint8_t) (v ^ bh);
+        }
+
+        cf = bh & 1;
+        bh = (uint8_t) (((bh >> 1) | (cf << 7)) + cf);
+    }
+}
+
 #define PP_CC_PATH1 "EXE        "
 #define PP_CC_PATH2 "PP2000  081"
 #define PP_CC_FILE1 "CCONTROLSYS"
@@ -511,6 +592,8 @@ pp_check_copycontrol(const char *fn)
     uint64_t ent_sys;
     uint64_t ent_ccc;
     uint8_t  hdr[512];
+    uint8_t  hdr2[0x800];
+    uint16_t licence_cl = 0;
     int      row  = -1;
     int      done = 0;
 
@@ -544,6 +627,21 @@ pp_check_copycontrol(const char *fn)
             if ((pp_cc_installs[i].cc_serial == ccser) &&
                 (pp_cc_installs[i].prod_serial == pdser))
                 row = i;
+
+        /* The licence itself names where PP2000.CCC must live -- decrypt it and read
+           the value rather than trusting the table for that one. */
+        {
+            uint8_t enc[0x5F0];
+            uint8_t dec[0x5F0];
+
+            if (pp_sec_read(&v, pp_clus_lba(&v, cl_ccc), 4, hdr2)) {
+                memcpy(enc, &hdr2[0x10], sizeof(enc));
+                pp_cc_decrypt(enc, sizeof(enc), "PP2000", dec);
+                licence_cl = (uint16_t) (dec[0x12] | (dec[0x13] << 8));
+                pp_profile_log("PP: licence decrypts; PP2000.CCC belongs at cluster %u\n"
+                               , licence_cl);
+            }
+        }
 
         if (row < 0) {
             pp_profile_log("PP: CopyControl install %04X/%04X is not one this build knows;"
