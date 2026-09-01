@@ -109,6 +109,53 @@ The stage's tail is also informative:
 — a two-dword write into a *second* buffer, which is io.hasp4's `next_block` chaining
 write. So chaining is real in this build and is not a decompiler artefact.
 
+## 5. The composition, read in full — and it is HaspEncodeBlock
+
+`0x32837` in full, with the block as two dwords `L` at +0 and `R` at +4:
+
+```
+0x3284A  keyed round      (L,R) <- (R, f(R) ^ L)          call 0x32746 on R
+0x3289E  six rounds       (L,R) <- (R, ROL32(R ^ 0x803425C3, (2i) & 31) ^ L)   i = 0..5
+0x32942  keyed round      (L,R) <- (R, f(R) ^ L)
+0x32996  six rounds       (L,R) <- (R, ROL32(R ^ 0x5B2C004A, (5i) & 31) ^ L)   i = 0..5
+0x32A56  if the second pointer argument is non-NULL, write BOTH f values to it:
+             the first at +0, the second at +4
+```
+
+Both round loops end `cmp [bp-4], 6`, so six rounds each, and both shift schedules
+**ascend** — `2i` giving 0,2,4,6,8,10 for the `0x803425C3` stage and `5i` giving
+0,5,10,15,20,25 for `0x5B2C004A`.
+
+That is `HaspEncodeBlock` from io.hasp4, operation for operation, including the pair of
+writes into the second buffer. **The transcription used in Phase 24 was correct**; what
+was wrong there was something else.
+
+## 6. Which routine is which, and when chaining is on
+
+The per-block dispatcher at `0x30FD8`:
+
+```
+30FD8  cmp word [bp-0x1a], 0x13D
+30FDD  jne encode
+30FF9  call 0x32A81        <- 0x13D, DecodeData
+031018  call 0x32837        <- everything else
+```
+
+so **`0x32A81` is decode and `0x32837` is encode**, and the picture path takes `0x32A81`.
+
+The second pointer is conditional:
+
+```
+30FB1  cmp word [bp-0xa], 0 ; jne skip
+30FB7  cmp word [bp-0xc], 2 ; jne skip
+30FBD  ptr = current block
+30FC3  add dx, 8            ; the NEXT block
+30FC6  [bp-0x16]:[bp-0x18] = that
+```
+
+It becomes `block + 8` only when those two flags hold, and is passed as zero otherwise —
+io.hasp4's `use_chained_blocks`, decided per call.
+
 ## 5. What this settles, and what it does not
 
 **Settled.** The cipher is HASP DecodeData; the unit is a 4 KB buffer; the keyed round is
@@ -117,10 +164,14 @@ the 40-step LFSR with polynomial `0x80500062`; the Feistel stages use `0x5B2C004
 constant; a chaining write into a following block exists; and buffers of eight bytes or
 fewer are left alone.
 
-**Not settled.** The order the two stages and the two keyed rounds are composed in, which
-is the one thing Phase 24 needed and the one thing still being inferred rather than read.
-Four `0x5B2C004A` sites and four `0x803425C3` sites exist, which is consistent with a
-separate encode and decode path each carrying both stages; only one has been transcribed.
+**Not settled, and now a contradiction.** Chaining as io.hasp4 models it writes the f
+values *over the next block* before that block is read. Applied to file data that would
+destroy every block after the first, so the picture path cannot be using it — decode must
+be per-block independent, which is ECB. But Phase 24 refuted ECB from the data itself:
+blocks 97 and 98 carry identical plaintext and eight different ciphertexts. Both cannot
+be true, so a combination step lives in the caller — the loop that walks the buffer and
+invokes `0x30F80` — and that loop has not been read yet. Phase 24 tested XOR-with-previous
+in three arrangements and all were refuted, so it is likely not plain CBC.
 
 **And the oracle stays hardware.** `0x32F59` is a byte-in, bit-out call against the
 dongle state. Emulating it is the same problem as before — the security table and how it
