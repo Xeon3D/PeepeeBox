@@ -1,0 +1,52 @@
+/*
+ * PeepeeBox    A hard fork of 86Box for the funworld Photo Play cabinets.
+ *
+ *              ppfix -- the window, laid out in dialog units so it scales with
+ *              the user's DPI and font without any arithmetic in the code.
+ */
+
+#include <windows.h>
+#include "ppfix_res.h"
+
+/* 1 is CREATEPROCESS_MANIFEST_RESOURCE_ID, 24 is RT_MANIFEST; neither survives
+   as a symbol into resource syntax. */
+1 24 "ppfix.manifest"
+
+1 ICON "ppfix.ico"
+
+IDD_MAIN DIALOGEX 0, 0, 320, 176
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Photo Play 2.0 HDD Image Fixer"
+FONT 9, "Segoe UI", 400, 0, 0x1
+BEGIN
+    LTEXT           "Photo Play 2.0 HDD Image Fixer", IDC_TITLE, 12, 10, 296, 14
+    LTEXT           "Photo Play 2.0's games are locked to the disk itself: two files must start at exact clusters, and one must carry a hidden pattern past its end. Copying an image file by file destroys all of that, and every game then drops straight back to the menu. This puts the layout back. No game file is touched.",
+                    IDC_DESC, 12, 28, 296, 42
+    LTEXT           "File:", -1, 12, 78, 28, 9
+    LTEXT           "", IDC_FILE, 44, 78, 204, 9, SS_PATHELLIPSIS
+    PUSHBUTTON      "&Browse...", IDC_BROWSE, 254, 75, 54, 15
+    LTEXT           "Status:", -1, 12, 95, 28, 9
+    LTEXT           "", IDC_STATUS, 44, 95, 264, 9, SS_ENDELLIPSIS
+    LTEXT           "", IDC_DETAIL, 12, 112, 296, 34
+    LTEXT           "(c) HUEG PP Team & Claude", IDC_COPY, 12, 154, 120, 9, SS_NOPREFIX
+    PUSHBUTTON      "Ad&vanced...", IDC_ADV_BTN, 140, 150, 56, 16
+    DEFPUSHBUTTON   "&Fix image", IDC_FIX, 200, 150, 56, 16
+    PUSHBUTTON      "E&xit", IDCANCEL, 260, 150, 48, 16
+END
+
+IDD_ADV DIALOGEX 0, 0, 240, 150
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Advanced"
+FONT 9, "Segoe UI", 400, 0, 0x1
+BEGIN
+    LTEXT           "Neither of these is stored in the image. CCONTROL.SYS's cluster is built at run time by the protection stub, and the fill byte is picked out of a table by an index the stub passes. The defaults are what the install this tool was built against used.",
+                    -1, 10, 8, 220, 44
+    RTEXT           "CCONTROL.SYS cluster:", -1, 10, 60, 90, 9
+    EDITTEXT        IDC_ADV_SYS, 106, 58, 60, 13, ES_AUTOHSCROLL | ES_NUMBER
+    RTEXT           "Slack fill byte (hex):", -1, 10, 78, 90, 9
+    EDITTEXT        IDC_ADV_SLK, 106, 76, 60, 13, ES_AUTOHSCROLL | ES_UPPERCASE
+    LTEXT           "", IDC_ADV_CCC, 10, 96, 220, 18
+    PUSHBUTTON      "&Defaults", IDC_ADV_DEF, 10, 126, 50, 16
+    DEFPUSHBUTTON   "OK", IDOK, 124, 126, 50, 16
+    PUSHBUTTON      "Cancel", IDCANCEL, 180, 126, 50, 16
+END

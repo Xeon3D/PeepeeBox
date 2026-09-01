@@ -71,9 +71,10 @@ Photo Play 2.0 is the odd one out: no dongle at all.  Its games are wrapped in
 Microcosm CopyControl, whose key is the **physical layout of the disk** -- where
 two files sit, and a pattern hidden in the slack past the end of one of them.
 Copying a cabinet's disk file-by-file destroys both, which is why the images that
-survive refuse to start a game.  PeepeeBox spots an affected image and puts the
-layout back before the machine starts, without altering a single game file
-(`docs/research/24`).
+survive refuse to start a game.  `ppfix.exe`, which ships beside the emulator,
+puts the layout back on request without altering a single game file, and stamps
+the image so PeepeeBox can tell a repaired one from a copy that will fail and say
+so instead of letting the games mystify you (`docs/research/24`).
 
 Two things gate the rest.
 

@@ -176,26 +176,49 @@ navigated: **152 → 021 → 022 → running**. The printer negates, so a displa
 
 ## 8. What PeepeeBox does about it
 
-`pp_check_copycontrol()` in `src/photoplay.c` runs once, before the machine
-starts. It parses the image's FAT16, and if `EXE\PP2000.081\` holds both
-`CCONTROL.SYS` and `PP2000.CCC` it is a 2.0 disk. The `.CCC` header is plaintext
-and identifies the install — CopyControl serial at `0x04`, product serial at
-`0x06` — which keys a table of the values that install expects. If the files are
-off their clusters, or the slack pattern is missing, it puts them back and tells
-the user with a message box.
+The repair is not the emulator's job. Putting the layout back rewrites directory
+entries, FAT entries and cluster slack, and doing that silently at every boot to
+a file someone pulled off a cabinet is not a thing an emulator should do. So it
+is split in two: a tool repairs, and the emulator only notices and says so.
 
-```c
-{ 0x0821, 0x0014, 54523, 54525, 0x5A, "PP20NL" }
+**`tools/ppfix` repairs.** A small window. It opens `HardDisk.img` from its own
+folder -- it ships next to `PeepeeBox.exe` -- or asks for one, reports the image
+as fixed, unfixed, or not a 2.0 image at all, and writes nothing until the user
+presses Fix. The scan runs the repair as a dry run first, which is also what
+catches a target cluster that is already occupied, before anything is written.
+
+`PP2000.CCC`'s cluster comes out of the licence (§ 9). The other two values are
+not in the image at all, so they sit behind an Advanced button and default to
+the layout CCMOVE wrote for the install we have: `CCONTROL.SYS` two clusters
+below `PP2000.CCC`, slack `0x5A`. Both can also be pinned on the command line,
+`--ccontrol N` and `--slack XX`, which is how an install nobody has seen yet
+gets repaired without rebuilding the tool.
+
+Only two directory entries, two FAT entries and cluster slack are ever written.
+No game file is modified, and no other release has that directory, so nothing
+else is touched.
+
+**PeepeeBox detects.** `pp_check_copycontrol()` in `src/photoplay.c` runs once,
+before the machine starts, and is read-only. It parses the image's FAT16, and if
+`EXE\PP2000.081\` holds both `CCONTROL.SYS` and `PP2000.CCC` it is a 2.0 disk.
+It then reads LBA 1 -- a sector inside the MBR track that no filesystem uses --
+where ppfix leaves a marker and the three values it used:
+
+```
+PPBOXCC1  <CCONTROL.SYS cluster:2>  <PP2000.CCC cluster:2>  <slack:1>
 ```
 
-Only two directory entries, two FAT entries and slack space are ever written. No
-game file is modified, and no other release has that directory, so nothing else
-is touched. An install with no table row is reported in the log and left alone
-rather than guessed at.
+No marker means the image has not been through ppfix, and the user gets a
+message box: the machine will boot and the menu will work, but the games will
+fail to start and drop straight back to the menu, and here is the tool. The
+guest's own "Run CCMOVE to create a working copy" is never readable -- the menu
+redraws over it instantly -- which is why the message does not quote it.
 
-`PP2000.CCC`'s expected cluster is no longer tabulated — the licence cipher is
-broken (§ 9), and the emulator reads that value out of the file itself.
-`CCONTROL.SYS`'s cluster and the slack fill byte still come from the table.
+The message is shown once. `photoplay_apply_profile()` is called from both
+`86box.c` and `config.c` during start-up, so the warning needs a guard.
+
+That one sector is also what keeps the check cheap: the emulator never has to
+re-derive the licence or compare the layout, only look at LBA 1.
 
 ## 9. The licence cipher, broken
 
@@ -277,6 +300,14 @@ Two traps worth recording:
 * **A test that cannot change the observable is not a test.** A second drive was
   added while the slack check was still failing, so both runs reported 152 and
   the result was read as a refutation. It was a null result.
+* **A timer with a zero period never yields.** Before the work was split into a
+  tool, the emulator tried to learn the two underivable values by watching the
+  running guest. It stalled the machine three times: `TIMER_USEC` is still 0
+  when the Photo Play profile is applied, so the period computed there was zero
+  and the callback re-fired without the CPU ever advancing. A `1ULL << 40`
+  fallback was no better -- about 256 cycles between firings, with a 1.3 MB RAM
+  scan in each. The design was wrong, not the constant.
+
 * **Verify the emulator is closed before editing its image.** Several patch
   experiments were read as "the patch had no effect" when the running emulator
   had simply loaded the file first, or held it locked so the readback was empty.
