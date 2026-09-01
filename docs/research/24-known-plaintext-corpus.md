@@ -154,12 +154,18 @@ Two measurements, both independent of any assumption about the block function:
 That is CBC-shaped: `C_0 = E(P_0 ^ IV)` with a fixed IV, and later blocks depending on
 what came before. What is wrong is `E`, not the mode.
 
-## 6. Where that leaves it
+## 7. Where that leaves it
 
-The algorithm is not in doubt — four constants and both rotation schedules match the
-disassembly. What is not yet pinned is the **state the cipher starts from**: block 0 fails
-under every key tried with an assumed IV of zero, so either the initial value is not zero
-or the key material is not in the dump in a form these readings reach.
+The two Feistel stages are still the ones the 2001 disassembly describes — four constants
+and both rotation schedules match, and that is not in question. What section 6.3 refutes
+is that **I.G.O. 2's archives are enciphered by that arrangement**. Either its `FINDIT.EXE`
+does something different from 2001's, or the block reaching the block function is not the
+file's bytes as read here. Note the container changed from PCX to GIF between the two
+releases, so the asset pipeline demonstrably changed with it, and the assumption that
+I.G.O. 2 inherited 2001's cipher was never tested — it is now refuted.
+
+The earlier key searches are superseded rather than merely unsuccessful: they were
+searching for key material inside a block function that turns out to be the wrong one.
 
 Next, in order:
 
