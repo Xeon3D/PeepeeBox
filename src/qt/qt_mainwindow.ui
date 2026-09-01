@@ -269,6 +269,10 @@
    </property>
   </action>
   <action name="actionFloppy_drive">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/floppy_35.ico</normaloff>:/menuicons/qt/icons/floppy_35.ico</iconset>
+   </property>
    <property name="checkable">
     <bool>true</bool>
    </property>
@@ -283,6 +287,10 @@
    </property>
   </action>
   <action name="actionCDROM_drive">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/cdrom.ico</normaloff>:/menuicons/qt/icons/cdrom.ico</iconset>
+   </property>
    <property name="checkable">
     <bool>true</bool>
    </property>
@@ -297,6 +305,10 @@
    </property>
   </action>
   <action name="actionNetwork">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/network.ico</normaloff>:/menuicons/qt/icons/network.ico</iconset>
+   </property>
    <property name="text">
     <string>&amp;Network…</string>
    </property>
@@ -310,7 +322,7 @@
   <action name="actionSettings">
    <property name="icon">
     <iconset resource="../qt_resources.qrc">
-     <normaloff>:/menuicons/qt/icons/settings.ico</normaloff>:/menuicons/qt/icons/settings.ico</iconset>
+     <normaloff>:/menuicons/qt/icons/dongle.ico</normaloff>:/menuicons/qt/icons/dongle.ico</iconset>
    </property>
    <property name="text">
     <string>&amp;Dongle…</string>

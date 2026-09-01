@@ -89,6 +89,10 @@
     </qresource>
     <qresource prefix="/menuicons">
         <file>qt/icons/acpi_shutdown.ico</file>
+        <file>qt/icons/dongle.ico</file>
+        <file>qt/icons/floppy_35.ico</file>
+        <file>qt/icons/cdrom.ico</file>
+        <file>qt/icons/network.ico</file>
         <file>qt/icons/hard_reset.ico</file>
         <file>qt/icons/pause.ico</file>
         <file>qt/icons/run.ico</file>

@@ -305,6 +305,12 @@ target_compile_definitions(ui PRIVATE TOUCH_PR)
 if(WIN32)
     enable_language(RC)
     target_sources(86Box PUBLIC 86Box-qt.rc)
+
+    # PeepeeBox: the application icon is a file the .rc merely names, so nothing
+    # tells the generator to recompile when the artwork changes -- and a stale
+    # icon in the executable is invisible until someone looks in Explorer.
+    set_property(SOURCE 86Box-qt.rc DIRECTORY .. PROPERTY OBJECT_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/icons/86Box-gray.ico;${CMAKE_CURRENT_SOURCE_DIR}/icons/86Box-green.ico;${CMAKE_CURRENT_SOURCE_DIR}/icons/86Box-red.ico;${CMAKE_CURRENT_SOURCE_DIR}/icons/86Box-yellow.ico")
     target_sources(plat PRIVATE win_dynld.c)
     target_link_libraries(86Box dwmapi SetupAPI)
 
