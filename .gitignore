@@ -82,3 +82,7 @@ CMakeLists.txt.user
 # Python bytecode from running the evidence helpers in place
 __pycache__/
 *.pyc
+
+# Multi-hundred-MB archive caches built by the picture-cipher scripts
+findit_wads.pkl
+fpairs.pkl
