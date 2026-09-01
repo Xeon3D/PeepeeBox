@@ -6,16 +6,21 @@ is exact for the whole file.  The first 128 bytes are LCG(0x12345); this looks a
 what starts at 128.
 """
 import subprocess
+import os
 import sys
 
-sys.path.insert(0, r'C:\Users\xeon4\Documents\Claude\PeepeeBox-handoff\evidence\amore-pcx\derive')
+# The evidence used to live outside the repository and was deleted with it; these
+# two files are vendored in docs/research/evidence now.
+_EV = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                   os.pardir, 'docs', 'research', 'evidence')
+sys.path.insert(0, _EV)
 import wad
 
 A = 0x08088405
 I01 = r'C:\Users\xeon4\Documents\Claude\PeepeeBox\PP2001\Photo Play 2001 DE B4821\HardDisk.img'
 I00 = r'C:\Users\xeon4\Documents\Claude\PeepeeBox\PP2000\Photo Play 2000 DE 6D139\HardDisk.img'
 ARCH = '/FINDIT/PICS/FOTOPLAY.WAD'
-REF = r'C:\Users\xeon4\Documents\Claude\PeepeeBox-handoff\evidence\amore-pcx\findit_keys.txt'
+REF = os.path.join(_EV, 'findit_keys.txt')
 
 
 def ks(seed, n):

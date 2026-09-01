@@ -8,10 +8,14 @@ import os
 import subprocess
 import sys
 
-sys.path.insert(0, r'C:\Users\xeon4\Documents\Claude\PeepeeBox-handoff\evidence\amore-pcx\derive')
+# The evidence used to live outside the repository and was deleted with it; these
+# two files are vendored in docs/research/evidence now.
+_EV = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                   os.pardir, 'docs', 'research', 'evidence')
+sys.path.insert(0, _EV)
 import wad
 
-EV = r'C:\Users\xeon4\Documents\Claude\PeepeeBox-handoff\evidence\amore-pcx'
+EV = _EV
 CRACK = os.path.join(os.environ.get('TEMP', '.'), 'crack.exe')
 IMG = sys.argv[1] if len(sys.argv) > 1 else \
     r'C:\Users\xeon4\Documents\Claude\PeepeeBox\PP2001\Photo Play 2001 DE B4821\HardDisk.img'

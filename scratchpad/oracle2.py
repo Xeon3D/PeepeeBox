@@ -23,9 +23,14 @@ Two pairs per block, and any block whose equations are inconsistent is one this
 path did not process (0x2EB26 sends only the first block of a buffer here).
 """
 import struct
+import os
 import sys
 
-sys.path.insert(0, r'C:\Users\xeon4\Documents\Claude\PeepeeBox-handoff\evidence\amore-pcx\derive')
+# The evidence used to live outside the repository and was deleted with it; these
+# two files are vendored in docs/research/evidence now.
+_EV = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                   os.pardir, 'docs', 'research', 'evidence')
+sys.path.insert(0, _EV)
 import wad
 
 M32 = 0xFFFFFFFF
@@ -36,7 +41,7 @@ LCG = 0x08088405
 
 I01 = r'C:\Users\xeon4\Documents\Claude\PeepeeBox\PP2001\Photo Play 2001 DE B4821\HardDisk.img'
 I00 = r'C:\Users\xeon4\Documents\Claude\PeepeeBox\PP2000\Photo Play 2000 DE 6D139\HardDisk.img'
-REF = r'C:\Users\xeon4\Documents\Claude\PeepeeBox-handoff\evidence\amore-pcx\findit_keys.txt'
+REF = os.path.join(_EV, 'findit_keys.txt')
 ARCH = '/FINDIT/PICS/FOTOPLAY.WAD'
 
 
