@@ -5,10 +5,16 @@ Branch: `picturedecryptingtest`.
 ## 1. io.hasp4's model does not fit
 
 Phase 27 asked whether any key makes io.hasp4's silicon model reproduce a verified pair.
-For I.G.O. 2 the answer is no, across the whole space: **711 table windows x 4 bit-index
-readings x 256 column_mask x 256 crypt_init_vect = 186 million candidates, zero hits**
-against `f(000A610D) = FD29CDA4`. The password path missed too (14,220 candidates). The
-I.G.O. 3 run is still going but there is no reason to expect otherwise.
+The answer is no for **both** releases, across the whole space: **711 table windows x 4
+bit-index readings x 256 column_mask x 256 crypt_init_vect = 186 million candidates each,
+zero hits**.
+
+```
+target f(000A610D) = FD29CDA4 over 719-byte dump    done: 0 hit(s)     I.G.O. 2
+target f(000A610D) = C7E4A1CC over 719-byte dump    done: 0 hit(s)     I.G.O. 3
+```
+
+The password path missed too, at 14,220 candidates per release.
 
 So the model is wrong, and guessing at key material inside it is finished.
 
