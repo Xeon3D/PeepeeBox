@@ -87,8 +87,12 @@ Honest state of each
   work list is unaffected, since it needs no plaintext, but calibration may not take — in
   which case `DONGCAP.DIAG` is the useful output and 2001 needs another pass.
 
-How long
---------
+How long, and how you know it finished
+--------------------------------------
 
 Several minutes each: about 50,000–69,000 keyed rounds, 40 wire transactions apiece. A dot
-is printed every 512 buffers.
+is printed every 512 buffers, roughly fifty over a run.
+
+At the end each tool **beeps, prints the elapsed time, and waits on "Press Enter to
+close."** Every exit path does that, including the failures, so the window stays readable
+even if it was launched by double-clicking rather than from a prompt.

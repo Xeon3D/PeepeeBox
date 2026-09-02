@@ -113,6 +113,18 @@ static void say(const char *s)
     WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), s, (DWORD) (p - s), &n, NULL);
 }
 
+/* A run takes minutes and may be launched by double-clicking, which would close the
+   window before anything could be read.  Beep, then hold the window open. */
+static void finish(void)
+{
+    char c;
+    DWORD n = 0;
+
+    Beep(880, 250);
+    say("Press Enter to close.\r\n");
+    ReadFile(GetStdHandle(STD_INPUT_HANDLE), &c, 1, &n, NULL);
+}
+
 /* pack `count` answers to `q` into the buffer, eight to a byte */
 static unsigned char *collect(unsigned char *out, unsigned char q, int count)
 {
@@ -180,6 +192,7 @@ void __stdcall start(void)
     if (st < 0) {
         say("Could not get I/O privilege.\r\n"
             "Run as Administrator, on 32-bit Windows XP.\r\n");
+        finish();
         ExitProcess(1);
     }
 
@@ -224,11 +237,13 @@ void __stdcall start(void)
                     CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE) {
         say("cannot create DONGTEST.BIN\r\n");
+        finish();
         ExitProcess(1);
     }
     WriteFile(h, g_buf, (DWORD) (p - g_buf), &written, NULL);
     CloseHandle(h);
 
     say("Done -- DONGTEST.BIN written. Send it back.\r\n");
+    finish();
     ExitProcess(0);
 }

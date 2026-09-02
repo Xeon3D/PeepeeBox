@@ -40,6 +40,11 @@ running as Administrator, or Windows is 64-bit (the mechanism it uses only
 exists on 32-bit Windows). In that case use DONGTEST.COM instead, from a
 command prompt or a DOS boot disk.
 
+How you know it is finished
+---------------------------
+It beeps and waits on "Press Enter to close.", so the window stays up even if you
+double-clicked it. The failure paths do the same.
+
 It is safe
 ----------
 It only writes to the parallel port's data register and reads its status

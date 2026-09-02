@@ -209,6 +209,18 @@ static void saynum(unsigned int v)
     say(b + i);
 }
 
+/* A run takes minutes and may be launched by double-clicking, which would close the
+   window before anything could be read.  Beep, then hold the window open. */
+static void finish(void)
+{
+    char c;
+    DWORD n = 0;
+
+    Beep(880, 250);
+    say("Press Enter to close.\r\n");
+    ReadFile(GetStdHandle(STD_INPUT_HANDLE), &c, 1, &n, NULL);
+}
+
 /* ----------------------------------------------------------------- main */
 
 #define LST_MAGIC 0x50414344u      /* 'DCAP' */
@@ -224,6 +236,7 @@ void __stdcall start(void)
     unsigned int *hdr, count, ncal, nenc, i;
     unsigned int *cal, *work, *enc, *out;
     int seed;
+    DWORD t0 = 0;
     char *cmd;
 
     cmd = GetCommandLineA();
@@ -255,6 +268,7 @@ void __stdcall start(void)
     if (!set || set(GetCurrentProcess(), 16, NULL, 0) < 0) {
         say("Could not get I/O privilege.\r\n"
             "Run as Administrator on 32-bit Windows XP.\r\n");
+        finish();
         ExitProcess(1);
     }
 
@@ -262,6 +276,7 @@ void __stdcall start(void)
                     OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE) {
         say("DONGCAP.LST not found -- keep it next to this program.\r\n");
+        finish();
         ExitProcess(1);
     }
     size = GetFileSize(h, NULL);
@@ -272,6 +287,7 @@ void __stdcall start(void)
     hdr = (unsigned int *) lst;
     if (got < 16 || hdr[0] != LST_MAGIC) {
         say("DONGCAP.LST is not a capture list.\r\n");
+        finish();
         ExitProcess(1);
     }
     ncal  = hdr[1];
@@ -337,6 +353,7 @@ void __stdcall start(void)
             CloseHandle(h);
             say("DONGCAP.DIAG written. Send it back -- it says what the part answers.\r\n");
         }
+        finish();
         ExitProcess(2);
     }
     say("\r\nSeed 0x");
@@ -352,6 +369,7 @@ void __stdcall start(void)
     out[2] = (unsigned int) seed;
     out[3] = nenc;
 
+    t0 = GetTickCount();
     say("Capturing");
     for (i = 0; i < count; i++) {
         unsigned int L1 = work[i * 2];
@@ -371,13 +389,17 @@ void __stdcall start(void)
                     CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE) {
         say("cannot create DONGCAP.BIN\r\n");
+        finish();
         ExitProcess(1);
     }
     WriteFile(h, out, ((count + nenc) * 2 + 4) * 4, &wrote, NULL);
     CloseHandle(h);
 
     say("Done -- DONGCAP.BIN written, ");
-    saynum(count * 2);
-    say(" rounds captured. Send it back.\r\n");
+    saynum((count + nenc) * 2);
+    say(" rounds captured in ");
+    saynum((GetTickCount() - t0) / 1000);
+    say(" seconds. Send DONGCAP.BIN back.\r\n");
+    finish();
     ExitProcess(0);
 }
