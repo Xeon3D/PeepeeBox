@@ -17,6 +17,10 @@
 # it is titled "Release <x.y>".  To cut one, push the tag along with the branch:
 #
 #     git tag -a v1.1 -m "…" && git push origin main v1.1
+#
+# That tag is also where the release number in the About box comes from: the `version`
+# job below reads it once and every build job is configured with it, so the number cannot
+# drift from the tag it ships under -- it did once, and Release 1.6 called itself 1.5.
 
 name: Release
 
@@ -38,8 +42,40 @@ permissions:
 
 jobs:
 
+  # Read the release number off the tag once, so all three builds and the published
+  # release agree by construction.  A commit that carries no v<x.y> tag is not a named
+  # release: it reports the tag it descends from with a "+", never that tag's own number.
+  version:
+    name: Release number
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.pick.outputs.tag }}
+      release: ${{ steps.pick.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pick
+        id: pick
+        run: |
+          set -euo pipefail
+          tag="$(git tag --points-at HEAD | grep -E '^v[0-9]' | sort -V | tail -1 || true)"
+          nearest="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)"
+          if [ -n "$tag" ]; then
+            release="${tag#v}"
+          elif [ -n "$nearest" ]; then
+            release="${nearest#v}+"
+          else
+            release=""
+          fi
+          echo "tag=$tag"         >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "tag '$tag', release '$release'"
+
   windows:
     name: Windows (x64)
+    needs: version
     runs-on: windows-2022
     defaults:
       run:
@@ -73,7 +109,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Configure
-        run: cmake -S . -B build --preset regular -D NEW_DYNAREC=off -D QT=on
+        run: >-
+          cmake -S . -B build --preset regular -D NEW_DYNAREC=off -D QT=on
+          -D PEEPEEBOX_RELEASE=${{ needs.version.outputs.release }}
 
       - name: Build
         run: cmake --build build
@@ -99,6 +137,7 @@ jobs:
 
   linux:
     name: Linux (x86_64)
+    needs: version
     runs-on: ubuntu-26.04
     steps:
       - name: Install dependencies
@@ -132,6 +171,7 @@ jobs:
         run: >-
           cmake -S . -B build --preset regular
           -D NEW_DYNAREC=off -D QT=on -D USE_QT6=off
+          -D PEEPEEBOX_RELEASE=${{ needs.version.outputs.release }}
 
       - name: Build
         run: cmake --build build
@@ -154,6 +194,7 @@ jobs:
 
   macos:
     name: macOS (arm64)
+    needs: version
     runs-on: macos-14
     steps:
       - name: Install dependencies
@@ -181,6 +222,7 @@ jobs:
           -D Qt5LinguistTools_ROOT=$(brew --prefix qt@5)
           -D OpenAL_ROOT=$(brew --prefix openal-soft)
           -D LIBSERIALPORT_ROOT=$(brew --prefix libserialport)
+          -D PEEPEEBOX_RELEASE=${{ needs.version.outputs.release }}
 
       - name: Build
         run: cmake --build build
@@ -204,7 +246,7 @@ jobs:
 
   release:
     name: Publish release
-    needs: [windows, linux, macos]
+    needs: [version, windows, linux, macos]
     runs-on: ubuntu-latest
     steps:
       # Full history and tags, so the step below can see whether this commit was
@@ -228,8 +270,9 @@ jobs:
 
           # A commit carrying a v<x.y> tag is a named release; anything else is
           # just the next automatic build.  Push the tag together with the branch
-          # (git push origin main v1.1) and this picks it up.
-          version="$(git tag --points-at HEAD | grep -E '^v[0-9]' | sort -V | tail -1 || true)"
+          # (git push origin main v1.1) and this picks it up.  The number itself came
+          # from the version job, which is what the binaries were built with.
+          version="${{ needs.version.outputs.tag }}"
           if [ -n "$version" ]; then
             tag="$version"
             title="Release ${version#v}"

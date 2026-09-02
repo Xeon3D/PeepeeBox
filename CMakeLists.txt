@@ -245,8 +245,36 @@ endif()
 # PeepeeBox's own release number.  The project version above is 86Box's and tracks
 # upstream; this one counts the releases of the fork, and is what the About box and any
 # release folder are named after.
+#
+# It is derived from the release tag and deliberately not written down here: a literal
+# went stale once and shipped the Release 1.6 binaries calling themselves 1.5.  The
+# release workflow passes in the tag it is publishing under; a local build works the same
+# number out of git, with a "+" when the commit is past that tag so an untagged build
+# cannot claim to be the release itself.  No tags, or no git, and it says "dev".
+find_package(Git QUIET)
+
+if(NOT PEEPEEBOX_RELEASE AND GIT_FOUND)
+    execute_process(COMMAND ${GIT_EXECUTABLE} describe --tags --abbrev=0 --match v[0-9]*
+                    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                    OUTPUT_VARIABLE PP_REL_TAG
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET)
+    execute_process(COMMAND ${GIT_EXECUTABLE} describe --tags --exact-match --match v[0-9]*
+                    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                    RESULT_VARIABLE PP_REL_INEXACT
+                    OUTPUT_QUIET
+                    ERROR_QUIET)
+    if(PP_REL_TAG)
+        string(REGEX REPLACE "^v" "" PP_REL_TAG "${PP_REL_TAG}")
+        if(PP_REL_INEXACT)
+            set(PEEPEEBOX_RELEASE "${PP_REL_TAG}+")
+        else()
+            set(PEEPEEBOX_RELEASE "${PP_REL_TAG}")
+        endif()
+    endif()
+endif()
 if(NOT PEEPEEBOX_RELEASE)
-    set(PEEPEEBOX_RELEASE "1.5")
+    set(PEEPEEBOX_RELEASE "dev")
 endif()
 
 # The commit the binary was built from, so a window title identifies the build exactly.
@@ -254,7 +282,6 @@ endif()
 # release commit.  A source tree with no git, or with uncommitted changes, still builds:
 # the hash is simply absent or suffixed.
 if(NOT EMU_GIT_HASH)
-    find_package(Git QUIET)
     if(GIT_FOUND)
         execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short=7 HEAD
                         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
