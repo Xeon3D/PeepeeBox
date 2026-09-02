@@ -30,6 +30,12 @@ LST_MAGIC = 0x50414344
 
 ARCHIVES = ['/FINDIT/PICS/FOTOPLAY.WAD', '/AMORE/COMIX/FOTOPLAY.WAD']
 
+# I.G.O. 3 stops before the menu on a dongle error: MENU.EXE at 0x41A32 calls EncodeData
+# over 20 bytes at DS:0x50F6 with 6B91/24A3.  DGROUP resolves to 0x42530 (355 of 359
+# string-start votes), so those bytes are readable, and 20 bytes is three blocks of which
+# the walker transforms only the first -- one block, two keyed rounds.
+IGO3_BOOT = bytes.fromhex('1b2dec7d4e73fe76974a8f2512f3e13819e1bb58')
+
 # 2001's every entry starts with the same plaintext PCX header
 PCX_HEAD = (0x0805050A, 0x00000000)
 
@@ -161,16 +167,24 @@ def main():
     if not work:
         raise SystemExit('nothing to capture')
 
+    enc = []
+    if gen == 'igo3':
+        enc.append(struct.unpack_from('<II', IGO3_BOOT, 0))
+        print('  boot check: EncodeData over %d bytes at DS:0x50F6 -> 1 block'
+              % len(IGO3_BOOT))
+
     cal = calibration(gen, img)
     print('  calibration pairs: %d' % len(cal))
     for a, b in cal:
         print('     f(%08X) = %08X' % (a, b))
 
     with open(outp, 'wb') as fh:
-        fh.write(struct.pack('<IIII', LST_MAGIC, len(cal), len(work), 0))
+        fh.write(struct.pack('<IIII', LST_MAGIC, len(cal), len(work), len(enc)))
         for a, b in cal:
             fh.write(struct.pack('<II', a, b))
         for a, b in work:
+            fh.write(struct.pack('<II', a, b))
+        for a, b in enc:
             fh.write(struct.pack('<II', a, b))
     print('%s: %d buffers, %d keyed rounds, %d bytes'
           % (outp, len(work), len(work) * 2, os.path.getsize(outp)))

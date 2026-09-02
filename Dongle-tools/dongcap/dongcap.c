@@ -154,6 +154,21 @@ static unsigned int b_rounds_first(unsigned int b0, unsigned int b1)
     return b0;
 }
 
+/* the encode direction runs the same stage the other way: six rounds ascending, and it
+   is the second output that becomes the next keyed round's input (0x32837) */
+static unsigned int b_rounds_fwd_second(unsigned int b0, unsigned int b1)
+{
+    int s;
+
+    for (s = 0; s <= 10; s += 2) {
+        unsigned int t = rol(b1 ^ CB, s) ^ b0;
+
+        b0 = b1;
+        b1 = t;
+    }
+    return b1;
+}
+
 /* ------------------------------------------------------------------ i/o */
 
 static void say(const char *s)
@@ -206,8 +221,8 @@ void __stdcall start(void)
     HANDLE h;
     DWORD got = 0, wrote = 0, size;
     unsigned char *lst;
-    unsigned int *hdr, count, ncal, i;
-    unsigned int *cal, *work, *out;
+    unsigned int *hdr, count, ncal, nenc, i;
+    unsigned int *cal, *work, *enc, *out;
     int seed;
     char *cmd;
 
@@ -261,8 +276,10 @@ void __stdcall start(void)
     }
     ncal  = hdr[1];
     count = hdr[2];
-    cal   = hdr + 4;                 /* ncal pairs of (input, expected) */
-    work  = cal + ncal * 2;          /* count pairs of (L1, R1)         */
+    nenc  = hdr[3];                  /* EncodeData blocks, e.g. I.G.O. 3's boot check */
+    cal   = hdr + 4;                 /* ncal pairs of (input, expected)  */
+    work  = cal + ncal * 2;          /* count pairs of (L1, R1)          */
+    enc   = work + count * 2;        /* nenc pairs of (P0, P1)           */
 
     say("LPT base 0x");
     sayhex(g_base, 3);
@@ -328,11 +345,12 @@ void __stdcall start(void)
     g_seed = (unsigned char) seed;
 
     /* --- capture --- */
-    out = (unsigned int *) VirtualAlloc(NULL, (count * 2 + 8) * 4, MEM_COMMIT, PAGE_READWRITE);
+    out = (unsigned int *) VirtualAlloc(NULL, ((count + nenc) * 2 + 8) * 4,
+                                        MEM_COMMIT, PAGE_READWRITE);
     out[0] = OUT_MAGIC;
     out[1] = count;
     out[2] = (unsigned int) seed;
-    out[3] = 0;
+    out[3] = nenc;
 
     say("Capturing");
     for (i = 0; i < count; i++) {
@@ -355,7 +373,7 @@ void __stdcall start(void)
         say("cannot create DONGCAP.BIN\r\n");
         ExitProcess(1);
     }
-    WriteFile(h, out, (count * 2 + 4) * 4, &wrote, NULL);
+    WriteFile(h, out, ((count + nenc) * 2 + 4) * 4, &wrote, NULL);
     CloseHandle(h);
 
     say("Done -- DONGCAP.BIN written, ");
