@@ -75,3 +75,64 @@ resets the part — which is the open question from `docs/research/28`.
 FAT16 read/write for the disk images. The write side supports exactly one operation —
 overwrite a file with content of the same length — which needs no FAT or directory
 changes. Refusing anything else keeps a bug from wrecking a 1.6 GB image.
+
+---
+
+`capture-2001/`, `capture-igo2/`, `capture-igo3/` — the real fix
+-----------------------------------------------------------------
+
+One folder per generation, each with the dongle for that generation attached. These
+capture what PeepeeBox is missing so it can decrypt **with the disk image untouched** —
+no patching, no substituted archives. `ppictfix` is the workaround; this is the fix.
+
+| folder | dongle | passwords | buffers | keyed rounds |
+|---|---|---|---|---|
+| `capture-2001` | Photo Play 2001 | `7477/7D57` | 34,483 | 68,966 |
+| `capture-igo2` | I.G.O. 2 | `68BB/1329` | 25,280 | 50,560 |
+| `capture-igo3` | I.G.O. 3 | `6B91/24A3` | 25,280 | 50,560 |
+
+Each covers both enciphered archives — `FINDIT/PICS` **and** `AMORE/COMIX`, so this also
+fixes AMORE, which `ppictfix` could not.
+
+Run as Administrator, send `DONGCAP.BIN` back. Several minutes each.
+
+### Why no plaintext is needed
+
+A buffer needs two dwords from the part:
+
+```
+(L1,R1) = A_rounds(ciphertext block 0)    keyless -- so L1 comes from the archive alone
+f1      = keyed_round(L1)                 <- the dongle
+(L3,R3) = B_rounds(f1 ^ R1, L1)           keyless -- so L3 follows from f1
+f2      = keyed_round(L3)                 <- the dongle
+```
+
+The list carries `(L1, R1)` per buffer; the tool derives the rest itself.
+
+### It calibrates before it captures
+
+The seed byte that opens a round never resolved from the binaries. Rather than guess, the
+list carries inputs whose answers we already know — recovered offline from known plaintext
+— and the tool tries all 256 seeds until one reproduces them. That both finds the seed and
+proves the part is answering before it spends minutes recording. If none matches it writes
+`DONGCAP.DIAG` (every seed against the first inputs) instead of nothing.
+
+### Honest state of each
+
+* **I.G.O. 2 and I.G.O. 3** — calibration pairs come from buffers decrypted and verified
+  end to end (`docs/research/26`, 507/507 buffers). Solid.
+* **Photo Play 2001** — its pairs rest on an *assumed* plaintext (the PCX header). I tried
+  to confirm it against the 2000 image and **it did not confirm**: blocks 1 and 2 decrypt
+  to the wrong bytes. So either 2001's plaintext differs from 2000's beyond block 0, or its
+  pipeline differs. The 2001 work list is still valid — it needs no plaintext — but its
+  calibration may fail, in which case `DONGCAP.DIAG` is the useful output and 2001 needs
+  another pass.
+
+### I.G.O. 3's boot failure — located, not yet captured
+
+Separate from the pictures. `MENU.EXE` at `0x41A32` calls **EncodeData** on **20 bytes at
+`DS:0x50F6`** with `6B91/24A3` before the menu appears, and stops on `dongle error` when it
+fails. That module is **not** packed, so it is reachable — but its DGROUP base did not
+resolve (four candidates tie on the message-string vote), so the 20 bytes could not be read
+out, and guessing key material is not worth it. Pinning DGROUP and adding one encode-style
+entry to `capture-igo3` is all that remains.
