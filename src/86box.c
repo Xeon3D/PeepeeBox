@@ -1231,8 +1231,14 @@ usage:
     else
         strcpy(temp, "unknown");
 
-    pclog("#\n# %s v%s logfile, created %s\n#\n",
-          EMU_NAME, EMU_VERSION_FULL, temp);
+    pclog("#\n# %s %s%s logfile, created %s\n#\n",
+          EMU_NAME, PEEPEEBOX_RELEASE,
+#ifdef EMU_GIT_HASH
+          " - " EMU_GIT_HASH,
+#else
+          "",
+#endif
+          temp);
 
     if (portable_mode) {
         pclog("# Portable mode enabled.\n");

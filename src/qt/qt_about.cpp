@@ -49,9 +49,10 @@ About::About(QWidget *parent)
 #    define DYNAREC_STR "no dynarec"
 #endif
     versioninfo.append(QString(" [%1, %2]").arg(QSysInfo::buildCpuArchitecture(), tr(DYNAREC_STR)));
-    /* Release first, then the 86Box version the fork is built on. */
-    setText(QString("<b>%1 Release %2 - v%3%4</b>")
-                .arg(EMU_NAME, PEEPEEBOX_RELEASE, EMU_VERSION_FULL, versioninfo));
+    /* The fork's own release number and nothing else: this is PeepeeBox 1.6, not
+       86Box 7.0.  Which 86Box it is built on is attribution, and is said below. */
+    setText(QString("<b>%1 %2%3</b>")
+                .arg(EMU_NAME, PEEPEEBOX_RELEASE, versioninfo));
     setInformativeText(QString("<b>%1</b><br><br>%2")
                            .arg(tr("%1 is a fork of %2, adding emulation of the funworld "
                                    "Photo Play / I.G.O. protection hardware: the "
@@ -60,6 +61,8 @@ About::About(QWidget *parent)
                                 tr("All credit for the emulator itself belongs to the %1 "
                                    "project and its authors.")
                                     .arg(EMU_UPSTREAM_NAME))
+                       + "<br><br>"
+                       + tr("Built on %1 %2.").arg(EMU_UPSTREAM_NAME, EMU_VERSION_FULL)
                        + "<br><br>"
                        + tr("This fork was entirely vibecoded by Claude, steered by the "
                             "HUEG PP team.")

@@ -324,10 +324,10 @@ MainWindow::MainWindow(QWidget *parent)
     QString vmname(vm_name);
     if (vmname.at(vmname.size() - 1) == '"' || vmname.at(vmname.size() - 1) == '\'')
         vmname.truncate(vmname.size() - 1);
-    /* The commit the build came from, on the end after a dash.  Several builds of this
-       fork are usually in flight at once across the rig folders, and the title is the
-       only place that says which one is on screen. */
-    QString title = QString("%1 - %2 %3").arg(vmname, EMU_NAME, EMU_VERSION_FULL);
+    /* The fork release, then the commit the build came from after a dash.  Several
+       builds are usually in flight at once across the rig folders, so the title has to
+       say which one is on screen; the log header repeats it. */
+    QString title = QString("%1 - %2 %3").arg(vmname, EMU_NAME, PEEPEEBOX_RELEASE);
 #ifdef EMU_GIT_HASH
     title += QString(" - %1").arg(EMU_GIT_HASH);
 #endif

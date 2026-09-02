@@ -191,7 +191,7 @@ monitor_execute_line(char *line)
                 "Tiseno100, reenigne, and others.\n"
                 "With previous core contributions from Sarah Walker, leilei, JohnElliott, greatpsycho, and others.\n\n"
                 "Released under the GNU General Public License version 2 or later. See LICENSE for more information.\n",
-                EMU_NAME, EMU_VERSION_FULL, EMU_GIT_HASH, ARCH_STR, DYNAREC_STR);
+                EMU_NAME, PEEPEEBOX_RELEASE, EMU_GIT_HASH, ARCH_STR, DYNAREC_STR);
         } else if (strncasecmp(xargv[0], "fullscreen", 10) == 0) {
             video_fullscreen   = video_fullscreen ? 0 : 1;
             fullscreen_pending = 1;

@@ -214,7 +214,7 @@ vnc_init(UNUSED(void *arg))
     cgapal_rebuild_monitor(0);
 
     if (rfb == NULL) {
-        snprintf(title, sizeof(title), "%s - " EMU_NAME " " EMU_VERSION_FULL, vm_name);
+        snprintf(title, sizeof(title), "%s - " EMU_NAME " " PEEPEEBOX_RELEASE, vm_name);
         updatingSize = 0;
         allowedX     = scrnsz_x;
         allowedY     = scrnsz_y;

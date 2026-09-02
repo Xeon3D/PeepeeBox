@@ -716,13 +716,13 @@ update_mouse_msg(void)
     if (cp) /* remove parentheses */
         *(cp - 1) = '\0';
     snprintf(mouse_msg[0], sizeof(mouse_msg[0]), "%s v%s - %%i%%%% - %s - %s/%s - %s",
-             EMU_NAME, EMU_VERSION_FULL, machine_getname(machine), cpufamily, cpu_s->name,
+             EMU_NAME, PEEPEEBOX_RELEASE, machine_getname(machine), cpufamily, cpu_s->name,
              "Click to capture mouse");
     snprintf(mouse_msg[1], sizeof(mouse_msg[1]), "%s v%s - %%i%%%% - %s - %s/%s - %s",
-             EMU_NAME, EMU_VERSION_FULL, machine_getname(machine), cpufamily, cpu_s->name,
+             EMU_NAME, PEEPEEBOX_RELEASE, machine_getname(machine), cpufamily, cpu_s->name,
              (mouse_get_buttons() > 2) ? "Press CTRL-ALT-G to release mouse" : "Press CTRL-ALT-G or middle button to release mouse");
     snprintf(mouse_msg[2], sizeof(mouse_msg[2]), "%s v%s - %%i%%%% - %s - %s/%s",
-             EMU_NAME, EMU_VERSION_FULL, machine_getname(machine), cpufamily, cpu_s->name);
+             EMU_NAME, PEEPEEBOX_RELEASE, machine_getname(machine), cpufamily, cpu_s->name);
 }
 
 char    sdl_win_title[512] = EMU_NAME;
