@@ -299,7 +299,17 @@ finished:   mov  bx, [hout]
             call print
             jmp  bye
 
-caldiag:    mov  dx, msg_nocal
+caldiag:    mov  al, [sawzero]
+            and  al, [sawone]
+            or   al, al
+            jnz  caldiag2
+            mov  dx, msg_dead
+            call print
+            mov  ax, [base]
+            call printhex16
+            mov  dx, msg_dead2
+            call print
+caldiag2:   mov  dx, msg_nocal
             call print
             ; every seed against the first inputs, so a failure still leaves evidence
             mov  eax, [ncal]
@@ -420,6 +430,10 @@ query:      push bx
             shr  al, 1
             shr  al, 1
             and  al, 1
+            or   byte ptr [sawone], al
+            mov  bl, al
+            xor  bl, 1
+            or   byte ptr [sawzero], bl
             pop  dx
             pop  bx
             ret
@@ -567,6 +581,11 @@ msg_dot:    db ".$"
 msg_seed:   db 13, 10, "Seed 0x$"
 msg_capt:   db "Capturing$"
 msg_done:   db 13, 10, "Done -- DONGCAP.BIN written. Send it back.", 13, 10, "$"
+msg_dead:   db 13, 10, "STATUS bit 5 never changed -- nothing answered on LPT 0x$"
+msg_dead2:  db ".", 13, 10
+            db "The port is not reaching the part. Check the dongle is on THAT port,", 13, 10
+            db "pass the right base (DONGCAP.COM 278), and do not run this under", 13, 10
+            db "Windows -- NTVDM answers the port itself. Boot DOS.", 13, 10, "$"
 msg_nocal:  db 13, 10, "No seed reproduces the known answers.", 13, 10
             db "Writing DONGCAP.DIA instead.", 13, 10, "$"
 msg_diag:   db "DONGCAP.DIA written. Send it back.", 13, 10, "$"
@@ -579,6 +598,8 @@ base:       dw 0
 hlst:       dw 0
 hout:       dw 0
 seed:       db 0
+sawzero:    db 0
+sawone:     db 0
 hdr:        db 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
 ncal:       dd 0
 nthis:      dd 0
