@@ -30,11 +30,16 @@ IGO3: 507 buffers, 507 solved and verified, 0 failed
       936 distinct f-inputs, 0 contradictions
 ```
 
-Two things matter there. Every buffer decrypts exactly — not just the first one, as in
-Phase 26. And 1014 observations collapse to 936 distinct inputs with **zero
-contradictions**: about 78 collisions, every one agreeing. That is the consistency test
-that scored *zero* agreement in every arrangement Phase 24 tried, now passing outright.
-The model is right.
+Every buffer decrypts exactly — not just the first one, as in Phase 26. That part stands.
+
+> **Correction (Phase 28).** This section originally read the "936 distinct inputs, 0
+> contradictions" as proof that the keyed round is a function of its input. **It is not.**
+> All 78 duplicate observations come from exactly **two** inputs, `504EF2AE` and
+> `012C6137`, each seen 40 times and every time at **buffer index 0** — the shared first
+> buffer that all entries have in common. The test only showed that the same input at the
+> same position gives the same answer, which it must. It never compared different
+> positions, so it could not fail. Another vacuous validator, and this file walked into it.
+> Phase 28 measures the thing properly and finds the opposite.
 
 ## 3. What the pairs are
 

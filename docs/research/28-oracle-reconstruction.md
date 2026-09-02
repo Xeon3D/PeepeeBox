@@ -58,34 +58,51 @@ IGO3  2741 certain observations, 32 distinct queries, all 32 with conflicting an
 Every one of the 32 query values is answered both ways somewhere. **The oracle carries
 state.**
 
-## 4. And an open contradiction, stated rather than smoothed over
+## 4. The oracle carries state across rounds — the contradiction, resolved
 
-If the oracle is an automaton reset at the start of each keyed round — which
-`0x32FC2` appears to do, and which is implied by `f` being a function of its input alone
-(936 distinct inputs, ~78 collisions, **zero** contradictions in Phase 27) — then two
-rounds whose query sequences share a prefix must share the answer prefix.
+There is a test with no ambiguity at all. The first observation is
+`(V0 & 0x1F, branch[1] ^ (V0 & 1))`, and **both terms are fully determined** — the seven
+free bits cannot touch it. If the oracle were reset at the start of each keyed round, the
+same first query would have to give the same first answer.
 
-They do not. Building a trie over the certain prefixes:
+It does not. Over all 936 pairs, **all 32 query values are answered both ways, at close to
+50/50**:
 
 ```
-IGO2  300 sequences, certain prefix 4/6/14 (min/median/max), 859 nodes, 141 conflicts
-IGO3  300 sequences, certain prefix 4/6/30,                   892 nodes, 153 conflicts
+IGO2   q=0 {1:28, 0:17}   q=1 {0:25, 1:15}   q=2 {0:18, 1:19}   q=3 {1:14, 0:13} …
+IGO3   q=0 {1:22, 0:22}   q=1 {1:26, 0:16}   q=2 {1:18, 0:18}   q=3 {1:14, 0:14} …
 ```
 
-Both cannot be true. Either the reconstruction is subtly wrong, or the oracle's state is
-not reset per round even though the round's result is reproducible, or the query carries
-information beyond the five bits that reach the DATA lines.
+Phase 27 appeared to say the opposite, and it was wrong: its 78 agreeing collisions are
+two inputs seen forty times each, **always at buffer 0**, the first buffer every entry
+shares. Same input, same position, same answer — a test that could not fail. Corrected in
+place there.
 
-The reconstruction's algebra is verified — every trajectory replays to the exact output —
-but that check is self-consistent by construction and does **not** prove the recovered
-answer sequence is the true one out of the 128. That is the most likely place for the
-error, and it is where to look next.
+So the keyed round is **not** a function of its input alone, and the dongle's state
+survives from one round to the next. That also explains the trie conflicts: 141 over 300
+sequences, and a greedy search for a globally consistent assignment placed only about half
+the pairs (107/200 and 104/200). There is no consistent reset automaton to find, because
+the premise is false.
+
+`0x32FC2` fits this on re-reading: it does not simply reset. It sets one byte, then calls
+`0x32F36` to **read a value back from the part** and feeds that value straight into
+`0x32DE2` before sending `0x4E`. That is a continuation of whatever state the part already
+holds, not an initialisation to a constant.
+
+### What it costs, and what it does not
+
+Nothing in Phase 26 or 27's decryption is affected: buffers are solved individually and
+507 of 507 verified, and that stands. What is lost is the hope of computing the keyed
+round from its input, which is what the emulator would need.
 
 ## 5. Next
 
-1. Pin the true trajectory of the 128 rather than intersecting them. The right lever is
-   pairs that share an input: I.G.O. 2 and I.G.O. 3 query the same values from the same
-   `V0`, so their query sequences coincide step for step while their answers differ,
-   which constrains the free bits from both sides at once.
-2. If the contradiction survives that, re-read `0x32FC2` and `0x32D17` for state that
-   crosses rounds, and check whether `0x32D17` returns a masked bit or a wider value.
+1. Thread the observations in **session order** rather than treating rounds as
+   independent. Each buffer contributes two rounds, and the state runs through both; the
+   question is what resets it. All entries agree at buffer 0, so the state is the same at
+   the start of every file, which is the anchor to work from.
+2. Establish the reset boundary directly: whether it is per file, per `DecodeData` call
+   (one per 4 KB buffer), or per keyed round with a carried seed. Buffer 0 agreeing across
+   entries is consistent with the first two and rules out nothing yet.
+3. Read `0x32F36` and `0x32DE2`, which are what `0x32FC2` uses to carry the part's state
+   forward. Those two decide what the emulated device has to remember.
