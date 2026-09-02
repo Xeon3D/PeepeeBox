@@ -67,6 +67,7 @@
 #include <86box/io.h>
 #include <86box/lpt.h>
 #include <86box/photoplay.h>
+#include <86box/hasp4.h>
 
 /* The 2008 generation's token lives on COM2 rather than the parallel port, so it is a
    device of its own.  This one brings it up; see dongle_igo8.c. */
@@ -87,6 +88,13 @@ extern const device_t igo8_reader_device;
 #define HD_RECORD 112 /* 56 words, which is what service 0x32 asks for */
 #define HD_START  8   /* the library adds 8 to the caller's start word */
                  /* the scramble key is the release's first password -- hd_key() */
+
+/* hd_source: which implementation builds the record. */
+#define PP_REC_EMULATED 0
+#define PP_REC_DUMP     1
+
+/* "Load from file..." sentinel for the hasp4dump selection. */
+#define PP_HASP4_FILE 99
 
 #define HD_CS 0x02 /* DATA bit 1 */
 #define HD_SK 0x20 /* DATA bit 5 */
@@ -298,7 +306,11 @@ static const char *pp_terrs[] = {
    "Auto" and nothing at all about what that resolved to -- and the release decides the
    record layout, the scramble key and whether the part answers on the port. Filled by
    pp_init(), which runs at machine start, well before the dialog can be opened. */
-static char pp_ident_text[256] = "Attach the dongle and start the machine to identify it.";
+static char pp_ident_text[384] = "Attach the dongle and start the machine to identify it.";
+
+/* Which record hd_load() actually served: synthesised, or a real dongle dump.
+   Set by hd_load(), read when the identity line is built just below it. */
+static char pp_hd_source[160] = "";
 
 #ifdef ENABLE_DONGLE_PHOTOPLAY_LOG
 int dongle_photoplay_do_log = ENABLE_DONGLE_PHOTOPLAY_LOG;
@@ -1483,12 +1495,61 @@ static void
 hd_load(pp_t *dev, const char *banner)
 {
     const int      rel  = hd_release(banner);
-    const uint16_t key  = hd_keys[rel].probe ? 0x0000 : hd_keys[rel].pass1;
-    const int      swap = hd_keys[rel].swap;
+    uint16_t       key  = hd_keys[rel].probe ? 0x0000 : hd_keys[rel].pass1;
+    int            swap = hd_keys[rel].swap;
 
     uint8_t rec[HD_RECORD];
     char    num[16];
     size_t  blen = strlen(banner);
+
+    /* A real dongle dump, if one is selected, replaces the synthesised record
+       outright: its 112 bytes ARE the plaintext record, and its first password
+       is the scramble key.  Everything below is only needed when we are making
+       the record up. */
+    if (device_get_config_int("hd_source") == PP_REC_DUMP) {
+        const int   sel = device_get_config_int("hasp4dump");
+        hasp4_key_t dk;
+        int         got = 0;
+
+        if (sel == PP_HASP4_FILE) {
+            const char *fn = device_get_config_string("hasp4dump_fn");
+
+            got = hasp4_key_load(&dk, fn);
+            if (!got)
+                snprintf(pp_hd_source, sizeof(pp_hd_source),
+                         "dump file could not be read -- using the synthesised record");
+        } else if (sel >= 0) {
+            got = hasp4_builtin_load(sel, &dk);
+        }
+
+        if (got && (dk.mem_bytes >= HD_RECORD)) {
+            key = dk.pwd1;
+
+            /* A HASP dump stores memory as little-endian words -- that is what
+               READMEMO hands back -- so the packed word is always LE16 of the
+               dump bytes, whatever generation it came from.  Forcing swap=1
+               expresses exactly that, and it is not a guess: byte-swapping the
+               2001 dump reproduces this device's own synthesised record for
+               "Version 2001 (ES)" everywhere except two places where the
+               synthesiser is wrong (the last column is right-aligned in 11
+               columns but the part uses 10, and the record's last two bytes are
+               FF FF on the part, not 00 00).  The dump is the authority. */
+            swap = 1;
+
+            snprintf(pp_hd_source, sizeof(pp_hd_source),
+                     "record from dongle dump %s, key %04X", dk.name, dk.pwd1);
+            memcpy(rec, dk.mem, HD_RECORD);
+            goto hd_pack;
+        }
+        if (!got && (sel != PP_HASP4_FILE))
+            snprintf(pp_hd_source, sizeof(pp_hd_source),
+                     "dump could not be loaded -- fell back to the emulated record");
+    } else if (hd_keys[rel].probe)
+        snprintf(pp_hd_source, sizeof(pp_hd_source),
+                 "emulated record, key 0000"
+                 " (this release probes for its passwords and finds none)");
+    else
+        snprintf(pp_hd_source, sizeof(pp_hd_source), "emulated record, key %04X", key);
 
     /* Spaces everywhere the record has content, zeros after it: the unpack loop reads
        until it meets a zero word, and byte 83 onwards is where it should stop. */
@@ -1577,6 +1638,7 @@ hd_load(pp_t *dev, const char *banner)
         }
     }
 
+hd_pack:
     /* 2001 unpacks each word high byte first (0x362DF), so a word is just the next two
        record bytes in order.  The I.G.O. builds unpack low byte first, and serving them
        2001's order puts the banner on screen with every byte pair swapped -- "Version
@@ -2334,7 +2396,8 @@ pp_init(const device_t *info)
     const int hd_opt = device_get_config_int("hd2001");
     const int hd_rel = hd_release_opt(banner);
 
-    dev->hd_probe = (hd_opt < 0) ? (hd_rel >= 0) : (hd_opt != 0);
+    dev->hd_probe   = (hd_opt < 0) ? (hd_rel >= 0) : (hd_opt != 0);
+    pp_hd_source[0] = 0;
     if (dev->hd_probe)
         hd_load(dev, banner);
 
@@ -2343,11 +2406,13 @@ pp_init(const device_t *info)
         const char *src = (have_img && (bi < 0) && (ti < 0)) ? "read from the disk image"
                         : (have_img && ((bi < 0) || (ti < 0))) ? "part image, part pinned by hand"
                                                                : "pinned by hand";
-        char        how[96];
+        char        how[224];
 
         if (!dev->hd_probe)
             snprintf(how, sizeof(how), "no parallel HASP part on the port%s",
                      (hd_opt < 0) ? " (Auto: this release does not use one)" : " (switched off)");
+        else if (pp_hd_source[0] != 0)
+            snprintf(how, sizeof(how), "parallel HASP, %s", pp_hd_source);
         else if (hd_keys[hd_rel < 0 ? 0 : hd_rel].probe)
             snprintf(how, sizeof(how), "parallel HASP, record key 0000"
                                        " (this release probes for its passwords and finds none)");
@@ -2469,6 +2534,62 @@ static const device_config_t pp_config[] = {
             { .description = "SP - Spain (1999)",         .value = 12 },
             { .description = ""                                       }
         },
+        .bios           = { { 0 } }
+    },
+    {
+        /* Switch 1: which of the two implementations builds the record.
+           "Emulated" is everything worked out before any dongle was dumped --
+           the banner, the territory and the eight numeric fields, assembled by
+           hd_load().  "From dongle dump" ignores all of that and serves the 112
+           bytes read off a real part instead.  They are genuinely two different
+           things and this keeps them apart, so either can be run on its own. */
+        .name           = "hd_source",
+        .description    = "Dongle record",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "Emulated (built from the release)", .value = 0 },
+            { .description = "From dongle dump",                  .value = 1 },
+            { .description = ""                                              }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        /* Switch 2: which dump, when switch 1 says to use one. */
+        .name           = "hasp4dump",
+        .description    = "Dongle dump (when using one)",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "Photo Play 2001 [ES]",             .value =  0 },
+            { .description = "Photo Play 2001 [PT]",             .value =  1 },
+            { .description = "Photo Play 2000 SP [NL] (2002PT)", .value =  2 },
+            { .description = "Photo Play 2000 SP [ES] (2003ES)", .value =  3 },
+            { .description = "Photo Play 2000 SP [PT] (2003PT)", .value =  4 },
+            { .description = "Photo Play 2005B [ES]",            .value =  5 },
+            { .description = "Photo Play 2005B [PT]",            .value =  6 },
+            { .description = "Photo Play 2006A [PT]",            .value =  7 },
+            { .description = "Photo Play 2007 [ES]",             .value =  8 },
+            { .description = "Load from file...",                .value = 99 },
+            { .description = ""                                              }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "hasp4dump_fn",
+        .description    = "Dump file (for \"Load dump from file...\")",
+        .type           = CONFIG_FNAME,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = "HASP dongle dumps (*.dmp *.bin)|*.dmp,*.bin",
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
         .bios           = { { 0 } }
     },
     {

@@ -25,6 +25,7 @@ add_library(dev OBJECT
     dell_jumper.c
     hasp.c
     dongle_photoplay.c
+    hasp4.c
     dongle_igo8.c
     hwm.c
     hwm_gl518sm.c

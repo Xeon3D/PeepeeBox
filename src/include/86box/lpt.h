@@ -113,6 +113,7 @@ extern const device_t      lpt_cms_device;
 extern const device_t      lpt_tnd_device;
 
 extern const device_t      lpt_hasp_savquest_device;
+extern const device_t      lpt_hasp4_device;
 extern const device_t      lpt_dongle_photoplay_device;
 
 extern const device_t      lpt_ditto_device;
