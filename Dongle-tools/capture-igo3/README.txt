@@ -32,3 +32,27 @@ It writes DONGCAP.DIAG instead -- every seed against the first inputs. Send that
 It is not a hardware fault and not something to retry; it means the part answers
 differently from what we predicted, and the DIAG file is exactly what is needed to work
 out why.
+
+Windows XP: use DONGCAP.COM, not DONGCAP.EXE
+--------------------------------------------
+DONGCAP.EXE cannot work on a stock XP and never could.  It asks for port access with
+NtSetInformationProcess(ProcessUserModeIOPL), and that call needs SeTcbPrivilege --
+"Act as part of the operating system" -- which XP grants to nobody by default, not even
+to Administrators.  "Run as administrator" does not supply it.  That is the
+"Could not get I/O privilege" message, and no amount of re-running changes it.
+
+DONGCAP.COM is the same capture in real mode, where there is no such gate:
+
+    DONGCAP.COM             (or  DONGCAP.COM 278  if LPT is not at 0x378)
+
+It writes the same DONGCAP.BIN.  Run it in any of these, best first:
+
+    * on a cabinet, or any DOS machine, with the dongle on its parallel port
+    * from a FreeDOS stick booted on the XP laptop
+    * at the XP command prompt -- NTVDM may hand the port straight through, and if it
+      does this is the easiest route.  Try it: if it prints a seed and starts capturing,
+      it is working.  If it calibrates through all 256 seeds and writes DONGCAP.DIA,
+      NTVDM is in the way and one of the two above is needed.
+
+If no seed calibrates it writes DONGCAP.DIA rather than nothing -- send that back, it
+says what the part actually answered.

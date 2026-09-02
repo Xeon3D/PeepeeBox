@@ -13,6 +13,13 @@ rounds and no key fits any model of it.
 So the tools all do the same thing: get those replies off the real hardware, so PeepeeBox
 can decrypt on its own with the images left completely alone.
 
+> **On Windows XP, run `DONGCAP.COM`, not `DONGCAP.EXE`.** The `.EXE` asks for port
+> access with `NtSetInformationProcess(ProcessUserModeIOPL)`, which needs `SeTcbPrivilege`
+> -- a privilege XP grants to nobody by default, Administrators included. "Run as
+> administrator" does not supply it, which is why it stops at *Could not get I/O
+> privilege*. The `.COM` is the same capture in real mode, where nothing can refuse an
+> `out dx, al`.
+
 | folder | what it is |
 |---|---|
 | `capture-2001/` | run with a **Photo Play 2001** dongle attached |
@@ -20,6 +27,7 @@ can decrypt on its own with the images left completely alone.
 | `capture-igo3/` | run with an **I.G.O. 3** dongle attached — pictures *and* the boot check |
 | `dongtest/` | a smaller probe that characterises the part; run this first if a capture will not calibrate |
 | `dongcap/` | source for the three capture tools, and the list generator |
+| `dongcap-dos/` | source for the DOS build, and the emulator it is tested under |
 
 Each folder has its own README.
 
