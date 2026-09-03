@@ -191,10 +191,23 @@ pp_apply_ports(void)
         com_ports[i].device  = 0;
     }
 
+    /* Which token goes on LPT1 is the one thing about this machine the image gets to
+       decide, because the two cabinets this build runs carry different ones and nothing
+       else tells them apart.  Photo Play / I.G.O. is the default; an image that
+       identifies as Funny's Interactive Playworld gets its own part instead.  See
+       dongle_funny.c for what that is and why it is not the same device. */
+    char        pp_banner[64] = { 0 };
+    const char *dongle_name   = PHOTOPLAY_DONGLE;
+
+    photoplay_image_ident(pp_banner, sizeof(pp_banner), NULL, 0);
+    if (!strcmp(pp_banner, PHOTOPLAY_FUNNY_BANNER))
+        dongle_name = PHOTOPLAY_FUNNY_DONGLE;
+
     lpt_ports[0].enabled = 1;
-    lpt_ports[0].device  = char_get_from_internal_name(PHOTOPLAY_DONGLE, DEVICE_LPT);
+    lpt_ports[0].device  = char_get_from_internal_name(dongle_name, DEVICE_LPT);
     if (!lpt_ports[0].device)
-        fatal("PeepeeBox: the " PHOTOPLAY_DONGLE " device is missing from this build\n");
+        fatal("PeepeeBox: the %s device is missing from this build\n", dongle_name);
+    pp_profile_log("PP: LPT1 token: %s\n", dongle_name);
     for (int i = 1; i < PARALLEL_MAX; i++) {
         lpt_ports[i].enabled = 0;
         lpt_ports[i].device  = 0;
@@ -612,15 +625,55 @@ photoplay_set_cdrom_enabled(int enabled)
 
    A name this build does not have is ignored rather than fatal: an ini file is
    easy to mistype, and dropping back to the MicroTouch always boots. */
+/* Which IRQ the touchscreen's COM3 is wired to.
+
+   The PC standard for COM3 is 4, and that is what Photo Play gets.  Funny's Interactive
+   Playworld wires it to 3, and its disk says so twice: AUTOEXEC.BAT loads
+   `ELODEV 2310,3,9600,3`, whose fourth field is the IRQ, and FSYSTEM.EXE is started as
+   `FSYSTEM.EXE C3 I3` -- the `I` switch, which it unmasks on the PIC itself at CS:0xC3D9.
+
+   Getting this wrong fails in the most misleading way available.  ELODEV *polls* the port
+   while it interrogates and configures the controller, so detection succeeds on either
+   IRQ and the cabinet cheerfully prints "Controller 2310 found. Version: 1.7".  It then
+   installs its own ISR and never polls again, so the first touch packet puts one byte in
+   the receive register, nothing services the interrupt, Data Ready stays set, and the
+   part stalls with the rest of the packet still queued.  Touch is dead and nothing says
+   so. */
+int
+photoplay_com3_irq(void)
+{
+    char banner[64] = { 0 };
+
+    photoplay_image_ident(banner, sizeof(banner), NULL, 0);
+    return !strcmp(banner, PHOTOPLAY_FUNNY_BANNER) ? 3 : COM3_IRQ;
+}
+
 const char *
 photoplay_touchscreen(void)
 {
     static char name[64];
-    const char *s = config_get_string(PHOTOPLAY_SECTION, "touchscreen",
-                                      (char *) PHOTOPLAY_TABLET);
+    const char *dflt = PHOTOPLAY_TABLET;
+
+    /* The image gets the first word, the same way it does for the token.  Photo Play
+       shipped MicroTouch and every one of its releases expects one, so that stays the
+       default.  Funny's Interactive Playworld is the exception that made this worth
+       doing: its own AUTOEXEC.BAT loads Elo's driver -- `ELODEV 2310,3,9600,3`, an
+       E271-2310 on COM3 at 9600 -- and FSYSTEM.EXE probes for Elo before it will look
+       at anything else, so an unconfigured rig should come up on the part the disk
+       actually asks for rather than on one the user has to go and find.
+
+       A choice already in the ini still wins: this only supplies the default. */
+    char banner[64] = { 0 };
+
+    photoplay_image_ident(banner, sizeof(banner), NULL, 0);
+    if (!strcmp(banner, PHOTOPLAY_FUNNY_BANNER) &&
+        tablet_get_from_internal_name((char *) PHOTOPLAY_TABLET_ELO))
+        dflt = PHOTOPLAY_TABLET_ELO;
+
+    const char *s = config_get_string(PHOTOPLAY_SECTION, "touchscreen", (char *) dflt);
 
     if ((s == NULL) || !tablet_get_from_internal_name((char *) s))
-        return PHOTOPLAY_TABLET;
+        return dflt;
     snprintf(name, sizeof(name), "%s", s);
     return name;
 }

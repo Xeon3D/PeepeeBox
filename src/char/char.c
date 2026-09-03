@@ -57,6 +57,7 @@ static const struct {
     { &lpt_prt_pcl_device },
     { &lpt_hasp_savquest_device },
     { &lpt_dongle_photoplay_device },
+    { &lpt_dongle_funny_device },
     { &lpt_ditto_device },
     { &char_pipe_lpt_device },
     { &char_file_lpt_device },

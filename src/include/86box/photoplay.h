@@ -29,6 +29,15 @@ extern "C" {
 #define PHOTOPLAY_TABLET_ELO  "elo_touchscreen"  /* Elo TouchSystems SmartSet       */
 #define PHOTOPLAY_TABLET_PORT 2                  /* COM3                            */
 #define PHOTOPLAY_DONGLE      "dongle_photoplay"
+
+/* Funny's Interactive Playworld: a second cabinet this build also runs.  Same chassis,
+   same funworld FN_* portal suite, different token -- an Aladdin-shaped API over a plain
+   Microwire EEPROM.  The banner is what photoplay_identify_ex() reports for it and what
+   pp_apply_ports() switches the token on; the display name is what the window is called.
+   See dongle_funny.c. */
+#define PHOTOPLAY_FUNNY_BANNER  "Funny Interactive"
+#define PHOTOPLAY_FUNNY_DISPLAY "Funny's Interactive Playworld"
+#define PHOTOPLAY_FUNNY_DONGLE  "dongle_funny"
 #define PHOTOPLAY_DISK_IMAGE  "HardDisk.img"
 
 /* The cabinets shipped without an optical drive, but service and installation
@@ -54,6 +63,11 @@ extern void photoplay_set_cdrom_enabled(int enabled);
    CD-ROM: toggled from the Tools menu, persisted in [Photo Play]. */
 extern int  photoplay_fdd_enabled(void);
 extern void photoplay_set_fdd_enabled(int enabled);
+
+/* The IRQ the cabinet wires COM3 to.  Photo Play gets the PC-standard 4; Funny's
+   Interactive Playworld wires it to 3 and says so twice on its own disk.  See
+   photoplay.c.  Called from serial_init() when the standalone COM3 is created. */
+extern int photoplay_com3_irq(void);
 
 /* Which touchscreen is wired to the cabinet, by device internal name.  The
    machines shipped a 3M MicroTouch and that stays the default, but an Elo

@@ -34,6 +34,7 @@
 #include <86box/rom.h>
 #include <86box/fifo.h>
 #include <86box/serial.h>
+#include <86box/photoplay.h>
 #include <86box/mouse.h>
 
 serial_port_t com_ports[SERIAL_MAX] = { 0 };
@@ -1128,7 +1129,8 @@ serial_init(const device_t *info)
         else if (next_inst == 3)
             serial_setup(dev, COM4_ADDR, COM4_IRQ);
         else if (next_inst == 2)
-            serial_setup(dev, COM3_ADDR, COM3_IRQ);
+            /* Not COM3_IRQ: the cabinet decides.  See photoplay_com3_irq(). */
+            serial_setup(dev, COM3_ADDR, photoplay_com3_irq());
         else if ((next_inst == 1) || (info->local == SERIAL_8250_PCJR_2F8))
             serial_setup(dev, COM2_ADDR, COM2_IRQ);
         // TODO
