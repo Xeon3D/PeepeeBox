@@ -38,6 +38,16 @@ extern "C" {
 #define PHOTOPLAY_FUNNY_BANNER  "Funny Interactive"
 #define PHOTOPLAY_FUNNY_DISPLAY "Funny's Interactive Playworld"
 #define PHOTOPLAY_FUNNY_DONGLE  "dongle_funny"
+
+/* And a machine to run it on.  Funny's is a Pentium MMX generation later than the
+   Photo Play cabinets: a PC Partner MB540N, i430TX, 200 MHz P55C, 64 MB.  The 486
+   profile above will not do -- the disk is built for the newer board -- so the
+   product decides the hardware the same way it decides the token and the IRQ. */
+#define PHOTOPLAY_FUNNY_MACHINE    "mb540n"        /* PC Partner MB540N, i430TX       */
+#define PHOTOPLAY_FUNNY_CPU_FAMILY "pentium_p55c"  /* Intel Pentium MMX               */
+#define PHOTOPLAY_FUNNY_CPU_SPEED  200000000       /* 200 MHz (3x 66 MHz bus)         */
+#define PHOTOPLAY_FUNNY_MEM_SIZE   65536           /* 64 MB, in KB                    */
+
 #define PHOTOPLAY_DISK_IMAGE  "HardDisk.img"
 
 /* The cabinets shipped without an optical drive, but service and installation

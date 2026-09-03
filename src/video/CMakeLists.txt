@@ -15,6 +15,7 @@
 #
 
 add_library(vid OBJECT
+    agpgart.c
     # Video core
     video.c
     vid_table.c

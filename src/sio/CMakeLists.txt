@@ -17,4 +17,5 @@
 
 add_library(sio OBJECT
     sio_w837x7.c
+    sio_um8669f.c
 )

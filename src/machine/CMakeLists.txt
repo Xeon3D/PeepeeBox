@@ -20,4 +20,5 @@ add_library(mch OBJECT
     machine_table.c
     m_at_common.c
     m_at_socket3_pci.c
+    m_at_socket7.c
 )

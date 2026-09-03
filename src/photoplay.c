@@ -7,22 +7,31 @@
  *             86Box is a general-purpose PC emulator: the user picks a
  *             motherboard, a CPU, a video card, a sound card and a set of
  *             drives, and the config file records that choice.  PeepeeBox is
- *             not general-purpose.  It emulates one cabinet:
+ *             not general-purpose.  It emulates two cabinets, and the disk
+ *             image in the folder says which -- nothing is chosen by hand.
  *
+ *             Photo Play / I.G.O.:
  *                 Zida Tomato 4DPS (SiS 496), Intel iDX4 at 100 MHz, 16 MB
- *                 Cirrus Logic CL-GD5480, ESS ES1688 AudioDrive
- *                 3M MicroTouch TouchPen on COM3
+ *                 3M MicroTouch TouchPen on COM3, IRQ 4
  *                 the Photo Play protection dongle on LPT1
- *                 one IDE disk: HardDisk.img, next to the executable
  *
- *             so there is nothing to choose.  Every one of those is what the
- *             real cabinets shipped, and any deviation is a bug rather than a
- *             preference -- a different video card gets the wrong VESA modes, a
- *             different sound card gets no sound at all, and moving the
- *             touchscreen off COM3 makes touch input silently stop working
- *             while everything else still appears to run.  That last failure in
- *             particular cost real debugging time, which is a good argument for
- *             not letting it be configurable.
+ *             Funny's Interactive Playworld:
+ *                 PC Partner MB540N (i430TX), Pentium MMX at 200 MHz, 64 MB
+ *                 Elo SmartSet on COM3, IRQ 3
+ *                 the Funny token on LPT1
+ *
+ *             Both share the rest: Cirrus Logic CL-GD5480, ESS ES1688
+ *             AudioDrive, and one IDE disk -- HardDisk.img, next to the
+ *             executable.
+ *
+ *             Every one of those is what the real cabinets shipped, and any
+ *             deviation is a bug rather than a preference -- a different video
+ *             card gets the wrong VESA modes, a different sound card gets no
+ *             sound at all, and moving the touchscreen off COM3 makes touch
+ *             input silently stop working while everything else still appears
+ *             to run.  That last failure in particular cost real debugging
+ *             time, which is a good argument for not letting it be
+ *             configurable.
  *
  *             This is applied at the end of config_load() rather than by
  *             changing the load_*() defaults, because defaults only apply when
@@ -89,29 +98,51 @@ pp_profile_log(const char *fmt, ...)
     va_end(ap);
 }
 
-/* Pin the motherboard, CPU and RAM. */
+/* Is the image in this folder Funny's Interactive Playworld rather than a Photo Play
+   release?  Four things now hang off the answer -- the token, COM3's IRQ, the default
+   touchscreen and the board itself -- so it is worth asking in one place.  The
+   identification behind it is cached, so calling this freely costs nothing. */
+static int
+pp_is_funny(void)
+{
+    char banner[64] = { 0 };
+
+    photoplay_image_ident(banner, sizeof(banner), NULL, 0);
+    return !strcmp(banner, PHOTOPLAY_FUNNY_BANNER);
+}
+
+/* Pin the motherboard, CPU and RAM.
+
+   Two cabinets, two sets of hardware.  Photo Play is a 486 on a Zida Tomato 4DPS;
+   Funny's Interactive Playworld is a Pentium MMX on a PC Partner MB540N with four
+   times the RAM.  The image says which, so neither one has to be chosen by hand. */
 static void
 pp_apply_machine(void)
 {
-    machine = machine_get_machine_from_internal_name(PHOTOPLAY_MACHINE);
+    const int   funny       = pp_is_funny();
+    const char *machine_nm  = funny ? PHOTOPLAY_FUNNY_MACHINE    : PHOTOPLAY_MACHINE;
+    const char *cpu_family  = funny ? PHOTOPLAY_FUNNY_CPU_FAMILY : PHOTOPLAY_CPU_FAMILY;
+    const int   cpu_speed   = funny ? PHOTOPLAY_FUNNY_CPU_SPEED  : PHOTOPLAY_CPU_SPEED;
+    const int   memory_size = funny ? PHOTOPLAY_FUNNY_MEM_SIZE   : PHOTOPLAY_MEM_SIZE;
+
+    machine = machine_get_machine_from_internal_name((char *) machine_nm);
     if (machine < 0)
-        fatal("PeepeeBox: the " PHOTOPLAY_MACHINE " machine is missing from this build\n");
+        fatal("PeepeeBox: the %s machine is missing from this build\n", machine_nm);
 
-    cpu_f = cpu_get_family(PHOTOPLAY_CPU_FAMILY);
+    cpu_f = cpu_get_family(cpu_family);
     if (cpu_f == NULL)
-        fatal("PeepeeBox: the " PHOTOPLAY_CPU_FAMILY " CPU family is missing from this build\n");
+        fatal("PeepeeBox: the %s CPU family is missing from this build\n", cpu_family);
 
-    /* Pick the 100 MHz part out of the family.  Matching on the speed rather
+    /* Pick the wanted part out of the family.  Matching on the speed rather
        than on a hardcoded index keeps this correct if the table gains entries. */
     cpu = 0;
-    while (cpu_f->cpus[cpu].cpu_type && (cpu_f->cpus[cpu].rspeed != PHOTOPLAY_CPU_SPEED))
+    while (cpu_f->cpus[cpu].cpu_type && (cpu_f->cpus[cpu].rspeed != cpu_speed))
         cpu++;
     if (!cpu_f->cpus[cpu].cpu_type)
-        fatal("PeepeeBox: no %d Hz part in the " PHOTOPLAY_CPU_FAMILY " family\n",
-              PHOTOPLAY_CPU_SPEED);
+        fatal("PeepeeBox: no %d Hz part in the %s family\n", cpu_speed, cpu_family);
     cpu_s = (CPU *) &cpu_f->cpus[cpu];
 
-    /* The DX4 has an on-die FPU; the games use it. */
+    /* Both parts have an on-die FPU; the games use it. */
     fpu_type      = fpu_get_type(cpu_f, cpu, "internal");
     fpu_softfloat = 0;
 
@@ -120,7 +151,10 @@ pp_apply_machine(void)
     cpu_override             = 0;
     cpu_override_interpreter = 0;
 
-    mem_size = PHOTOPLAY_MEM_SIZE;
+    mem_size = memory_size;
+
+    pp_profile_log("PP: board %s, %s at %d Hz, %d KB\n", machine_nm, cpu_family,
+                   cpu_speed, memory_size);
 
     /* The cabinets have no battery-backed clock worth honouring and the games
        do not care what year it is, so follow the host clock. */
@@ -196,12 +230,7 @@ pp_apply_ports(void)
        else tells them apart.  Photo Play / I.G.O. is the default; an image that
        identifies as Funny's Interactive Playworld gets its own part instead.  See
        dongle_funny.c for what that is and why it is not the same device. */
-    char        pp_banner[64] = { 0 };
-    const char *dongle_name   = PHOTOPLAY_DONGLE;
-
-    photoplay_image_ident(pp_banner, sizeof(pp_banner), NULL, 0);
-    if (!strcmp(pp_banner, PHOTOPLAY_FUNNY_BANNER))
-        dongle_name = PHOTOPLAY_FUNNY_DONGLE;
+    const char *dongle_name = pp_is_funny() ? PHOTOPLAY_FUNNY_DONGLE : PHOTOPLAY_DONGLE;
 
     lpt_ports[0].enabled = 1;
     lpt_ports[0].device  = char_get_from_internal_name(dongle_name, DEVICE_LPT);
@@ -642,10 +671,7 @@ photoplay_set_cdrom_enabled(int enabled)
 int
 photoplay_com3_irq(void)
 {
-    char banner[64] = { 0 };
-
-    photoplay_image_ident(banner, sizeof(banner), NULL, 0);
-    return !strcmp(banner, PHOTOPLAY_FUNNY_BANNER) ? 3 : COM3_IRQ;
+    return pp_is_funny() ? 3 : COM3_IRQ;
 }
 
 const char *
@@ -663,11 +689,7 @@ photoplay_touchscreen(void)
        actually asks for rather than on one the user has to go and find.
 
        A choice already in the ini still wins: this only supplies the default. */
-    char banner[64] = { 0 };
-
-    photoplay_image_ident(banner, sizeof(banner), NULL, 0);
-    if (!strcmp(banner, PHOTOPLAY_FUNNY_BANNER) &&
-        tablet_get_from_internal_name((char *) PHOTOPLAY_TABLET_ELO))
+    if (pp_is_funny() && tablet_get_from_internal_name((char *) PHOTOPLAY_TABLET_ELO))
         dflt = PHOTOPLAY_TABLET_ELO;
 
     const char *s = config_get_string(PHOTOPLAY_SECTION, "touchscreen", (char *) dflt);

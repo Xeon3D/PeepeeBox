@@ -17,4 +17,6 @@
 
 add_library(chipset OBJECT
     sis_85c496.c
+    intel_4x0.c
+    intel_piix.c
 )
