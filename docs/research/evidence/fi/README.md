@@ -35,3 +35,17 @@ Needs `unicorn` (`pip install unicorn`); developed against 2.1.4.
 writes in some way the responder does not yet model. It is a runtime path (the play
 counters at word 13+), not a boot gate, so everything above still passes. See
 `fi-03-dongle-device.md` §3.5.
+
+## Known-good rig configs
+
+`rig-elo-86box.cfg` and `rig-mb540n-86box.cfg` are the `86box.cfg` files from two working
+rigs: the original 4DPS/iDX4 profile with the Elo on COM3, and the later MB540N /
+Pentium MMX 200 / 64 MB one. Both are kept for one line each —
+
+    [Elo TouchSystems SmartSet (Serial)]
+    port = 2
+
+— because getting that wrong is silent. The profile stamps COM3 only when nothing has
+chosen a port yet, so the Touchscreen dialog can move it; once a `port = 0` reaches the
+ini it sticks, and the cabinet then prints `No ELO-Touch found.` followed by four
+`faild !` with no clue that the port is the reason. See `fi-05-ppngelo-rig.md` §5.6.
