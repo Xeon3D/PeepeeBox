@@ -1,6 +1,6 @@
 # Handoff — the Photo Play 2001 generation
 
-Working note for whoever picks this up. Untracked on purpose. Started 2026-08-30,
+Working note for whoever picks this up. Started 2026-08-30,
 immediately after the 2000 generation was finished (see `notes/HANDOFF.md` and
 `docs/research/15` and `16`).
 

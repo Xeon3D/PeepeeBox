@@ -1,7 +1,8 @@
 # Handoff — the Photo Play 2000 dongle
 
-Working note for whoever picks this up next. Deliberately untracked. Delete it
-once the open items below are done or have moved into `docs/research/`.
+Working note for whoever picks this up next. Tracked only so the references to
+it resolve; delete it once the open items below are done or have moved into
+`docs/research/`.
 
 Written 2026-08-30, after the session that made the 2000 generation boot and run
 games. **Updated later the same day** by the session that chased the picture
