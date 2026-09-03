@@ -765,9 +765,15 @@ elo_init(UNUSED(const device_t *info))
     dev->ser1      = 5;    /* 9600 baud, 8N1 */
     dev->ser2      = 0x04; /* hardware handshaking enabled */
     if (dev->serial) {
+        const int irq = device_get_config_int("irq");
+
         serial_set_cts(dev->serial, 1);
         serial_set_dsr(dev->serial, 1);
         serial_set_dcd(dev->serial, 1);
+
+        /* Only when asked: -1 leaves the port on whatever IRQ it already has. */
+        if (irq >= 0)
+            serial_irq(dev->serial, (uint8_t) irq);
     }
 
     fifo8_create(&dev->resp, 256);
@@ -821,6 +827,32 @@ static const device_config_t elo_config[] = {
             { .description = "COM3", .value = 2 },
             { .description = "COM4", .value = 3 },
             { .description = ""                 }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        /* The port already carries an IRQ, and on the stock pair that is the right
+           one -- so the default is to leave it alone rather than to name a number.
+           It is overridable because a cabinet that moved the touchscreen off the
+           usual pair had to move the interrupt with it, and a port quietly sharing
+           IRQ4 with another device is a hang, not a warning. */
+        .name           = "irq",
+        .description    = "IRQ",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = -1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "Default (from the port)", .value = -1 },
+            { .description = "IRQ 3",                   .value =  3 },
+            { .description = "IRQ 4",                   .value =  4 },
+            { .description = "IRQ 5",                   .value =  5 },
+            { .description = "IRQ 7",                   .value =  7 },
+            { .description = "IRQ 10",                  .value = 10 },
+            { .description = "IRQ 11",                  .value = 11 },
+            { .description = "IRQ 12",                  .value = 12 },
+            { .description = ""                                     }
         },
         .bios           = { { 0 } }
     },
