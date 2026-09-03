@@ -98,14 +98,24 @@ pp_profile_log(const char *fmt, ...)
     va_end(ap);
 }
 
-/* Is the image in this folder Funny's Interactive Playworld rather than a Photo Play
-   release?  Four things now hang off the answer -- the token, COM3's IRQ, the default
-   touchscreen and the board itself -- so it is worth asking in one place.  The
-   identification behind it is cached, so calling this freely costs nothing. */
-static int
-pp_is_funny(void)
+/* Is this Funny's Interactive Playworld rather than a Photo Play release?  Four things
+   hang off the answer -- the token, COM3's IRQ, the default touchscreen and the board
+   itself -- so it is worth asking in one place.
+
+   The image is what normally decides, and the identification behind that is cached, so
+   asking costs nothing.  A forced answer in the ini wins over it: identification needs
+   an image that is present and recognised, and when it is not, everything silently
+   falls back to Photo Play's hardware, which a Funny disk will not run on. */
+int
+photoplay_is_funny(void)
 {
-    char banner[64] = { 0 };
+    const char *forced = photoplay_product();
+    char        banner[64] = { 0 };
+
+    if (!strcmp(forced, PHOTOPLAY_PRODUCT_FUNNY))
+        return 1;
+    if (!strcmp(forced, PHOTOPLAY_PRODUCT_PP))
+        return 0;
 
     photoplay_image_ident(banner, sizeof(banner), NULL, 0);
     return !strcmp(banner, PHOTOPLAY_FUNNY_BANNER);
@@ -119,7 +129,7 @@ pp_is_funny(void)
 static void
 pp_apply_machine(void)
 {
-    const int   funny       = pp_is_funny();
+    const int   funny       = photoplay_is_funny();
     const char *machine_nm  = funny ? PHOTOPLAY_FUNNY_MACHINE    : PHOTOPLAY_MACHINE;
     const char *cpu_family  = funny ? PHOTOPLAY_FUNNY_CPU_FAMILY : PHOTOPLAY_CPU_FAMILY;
     const int   cpu_speed   = funny ? PHOTOPLAY_FUNNY_CPU_SPEED  : PHOTOPLAY_CPU_SPEED;
@@ -230,7 +240,7 @@ pp_apply_ports(void)
        else tells them apart.  Photo Play / I.G.O. is the default; an image that
        identifies as Funny's Interactive Playworld gets its own part instead.  See
        dongle_funny.c for what that is and why it is not the same device. */
-    const char *dongle_name = pp_is_funny() ? PHOTOPLAY_FUNNY_DONGLE : PHOTOPLAY_DONGLE;
+    const char *dongle_name = photoplay_is_funny() ? PHOTOPLAY_FUNNY_DONGLE : PHOTOPLAY_DONGLE;
 
     lpt_ports[0].enabled = 1;
     lpt_ports[0].device  = char_get_from_internal_name(dongle_name, DEVICE_LPT);
@@ -671,7 +681,7 @@ photoplay_set_cdrom_enabled(int enabled)
 int
 photoplay_com3_irq(void)
 {
-    return pp_is_funny() ? 3 : COM3_IRQ;
+    return photoplay_is_funny() ? 3 : COM3_IRQ;
 }
 
 const char *
@@ -689,7 +699,7 @@ photoplay_touchscreen(void)
        actually asks for rather than on one the user has to go and find.
 
        A choice already in the ini still wins: this only supplies the default. */
-    if (pp_is_funny() && tablet_get_from_internal_name((char *) PHOTOPLAY_TABLET_ELO))
+    if (photoplay_is_funny() && tablet_get_from_internal_name((char *) PHOTOPLAY_TABLET_ELO))
         dflt = PHOTOPLAY_TABLET_ELO;
 
     const char *s = config_get_string(PHOTOPLAY_SECTION, "touchscreen", (char *) dflt);
@@ -704,6 +714,29 @@ void
 photoplay_set_touchscreen(const char *internal_name)
 {
     config_set_string(PHOTOPLAY_SECTION, "touchscreen", (char *) internal_name);
+}
+
+/* Which cabinet to be, when the image should not be the one to say.  An unrecognised
+   value reads as "auto" rather than being fatal, for the same reason a bad touchscreen
+   name does: an ini is easy to mistype, and asking the image always works. */
+const char *
+photoplay_product(void)
+{
+    static char name[16];
+    const char *s = config_get_string(PHOTOPLAY_SECTION, "product",
+                                      (char *) PHOTOPLAY_PRODUCT_AUTO);
+
+    if ((s == NULL) || (strcmp(s, PHOTOPLAY_PRODUCT_PP) &&
+                        strcmp(s, PHOTOPLAY_PRODUCT_FUNNY)))
+        return PHOTOPLAY_PRODUCT_AUTO;
+    snprintf(name, sizeof(name), "%s", s);
+    return name;
+}
+
+void
+photoplay_set_product(const char *product)
+{
+    config_set_string(PHOTOPLAY_SECTION, "product", (char *) product);
 }
 
 /* The optional 3.5" floppy drive.

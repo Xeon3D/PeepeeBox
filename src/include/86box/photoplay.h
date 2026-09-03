@@ -79,6 +79,24 @@ extern void photoplay_set_fdd_enabled(int enabled);
    photoplay.c.  Called from serial_init() when the standalone COM3 is created. */
 extern int photoplay_com3_irq(void);
 
+/* Which cabinet this is.  Normally the disk image is asked and nobody has to know,
+   but identification needs an image present and recognisable -- a fresh rig being
+   built, an image restored file-by-file, or a release nobody has taught it about
+   yet all read as Photo Play, which is the wrong set of hardware for a Funny disk
+   and fails in ways that do not name themselves.  So the answer can be forced.
+
+   "auto" is the default and means ask the image.  See photoplay.c. */
+#define PHOTOPLAY_PRODUCT_AUTO  "auto"
+#define PHOTOPLAY_PRODUCT_PP    "photoplay"
+#define PHOTOPLAY_PRODUCT_FUNNY "funny"
+
+/* Which of the two cabinets this is: the forced answer if there is one, otherwise
+   what the disk image says.  The UI asks so it can offer the right dongle. */
+extern int         photoplay_is_funny(void);
+
+extern const char *photoplay_product(void);
+extern void        photoplay_set_product(const char *product);
+
 /* Which touchscreen is wired to the cabinet, by device internal name.  The
    machines shipped a 3M MicroTouch and that stays the default, but an Elo
    SmartSet is the other part these cabinets are found with, so it is a choice
