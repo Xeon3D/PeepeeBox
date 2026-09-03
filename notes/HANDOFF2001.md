@@ -1,7 +1,7 @@
 # Handoff — the Photo Play 2001 generation
 
 Working note for whoever picks this up. Untracked on purpose. Started 2026-08-30,
-immediately after the 2000 generation was finished (see `HANDOFF.md` and
+immediately after the 2000 generation was finished (see `notes/HANDOFF.md` and
 `docs/research/15` and `16`).
 
 **Status: the transport is solved and implemented (§ 16) — HDONGLE is a Microwire
@@ -621,7 +621,7 @@ From the 2000 session, at real cost:
 
 - **A clean log is not a passing check.** Ask Marcos what the screen shows. A
   completed handshake means the transport worked, not that the guest accepted the
-  answer. `HANDOFF.md` § 5 and the memory note both say this because it was
+  answer. `notes/HANDOFF.md` § 5 and the memory note both say this because it was
   reported wrongly once.
 - **Marcos drives the guest.** Scripted clicks open the game grid but never land
   on a tile, and each attempt costs a credit.
@@ -870,7 +870,7 @@ Artifacts: `ex2001/keyless/KEYN.COM`, `FINDIT_orig.EXE`, `FINDIT_keyn.EXE`.
 29.8.2026 21:43 in C:\EXE\FINDIT.EXE --> HDONGLE FAILED
 ```
 
-`HANDOFF.md` § 4 lists reading `ERROR.LOG` as the cheapest untried step for the
+`notes/HANDOFF.md` § 4 lists reading `ERROR.LOG` as the cheapest untried step for the
 1999 stall and notes it had never been created. It works, the games do write to
 it, and it names the failing check from the guest's own point of view.
 

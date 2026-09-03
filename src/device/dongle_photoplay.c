@@ -1315,7 +1315,7 @@ pp_raw(pp_t *dev, const char *what, uint8_t val)
 
    That is Microwire, the 93C46/93C66 shape, and it is the whole of HDONGLE.  There is
    no challenge and no crypto on the wire: the library reads the record straight out of
-   the part.  Sections 13 to 15 of HANDOFF2001.md read the same 896 status reads as a
+   the part.  Sections 13 to 15 of notes/HANDOFF2001.md read the same 896 status reads as a
    write-then-read-back memory test.  They are not: they are the 56 words of the block
    read, sixteen bits each, and the DATA writes that looked like a clock-stretch are the
    instruction being shifted out, three port writes per bit.
@@ -1365,7 +1365,7 @@ pp_raw(pp_t *dev, const char *what, uint8_t val)
       62 bytes -- banner, then eight little-endian dwords at +0x1E, +0x22 ... +0x3A --
       which is the PARSED STRUCT this routine produces, not what the dongle holds.  The
       crack replaces the whole read-and-parse routine, so it never needs the text form.
-      HANDOFF2001.md section 11 read those bytes as the record; they are its output.
+      notes/HANDOFF2001.md section 11 read those bytes as the record; they are its output.
 
    The values are KEYN's, converted back to numbers.  The first six are the same fixed
    content keys the 1999 dongles carry (0x38B, 0x181CD ... 0x89D, in the same order);
@@ -1776,7 +1776,7 @@ pp_read_status(void *priv)
         }
 
         /* Otherwise the library is still identifying the part.  That scan comes first
-           and is not a liveness check, which is what section 4 of HANDOFF2001.md took
+           and is not a liveness check, which is what section 4 of notes/HANDOFF2001.md took
            it for -- it is an IDENTITY.
 
            0x37E1D walks a 64-step ramp with one STATUS read each and accumulates
@@ -2318,7 +2318,7 @@ pp_init(const device_t *info)
     /* The 2001 transport, which is a different part on the same port -- see the HDONGLE
        section.  Fill its EEPROM with the record the guest will read out of it.  The
        sweep this option used to arm is gone: sweeping taught nothing, because neither
-       gate reads a value (HANDOFF2001.md section 4), and the device now answers for
+       gate reads a value (notes/HANDOFF2001.md section 4), and the device now answers for
        real. */
     /* Whether the parallel HASP part is on the port at all.  Auto is the right default
        and now the shipped one: the releases that carry that part are exactly the ones

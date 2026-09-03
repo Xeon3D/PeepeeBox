@@ -273,7 +273,7 @@ loop:
 3. **The last two blocks are left alone** (`i < block_count - 2`), which is why entries
    measured 99.6% different rather than 100%.
 
-This is `HANDOFF2001.md` § 24's model — first block to the dongle, the rest through a
+This is `notes/HANDOFF2001.md` § 24's model — first block to the dongle, the rest through a
 software round over a 26-entry schedule derived from two dongle dwords — confirmed here
 for I.G.O. 2 from its own binary, having been derived for 2001.
 

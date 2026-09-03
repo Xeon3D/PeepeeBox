@@ -19,7 +19,7 @@ HD_READ;`. Without it the state machine stays in `HD_ADDR` after the address,
 so every following clock shifts another address bit in and **no data is ever
 shifted out**. The device answered the framing and served nothing.
 
-That is what `handoffigoitaly.md` § 4 measured and read as "the library performs
+That is what `notes/handoffigoitaly.md` § 4 measured and read as "the library performs
 the wire reads and then discards the result, substituting an index-derived
 pattern". There is no substitution: the guest was descrambling a read that never
 happened. Everything § 4 concludes from it — including "the probe can never

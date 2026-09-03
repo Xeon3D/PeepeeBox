@@ -68,7 +68,7 @@ Three pairs, three tables, and dongles of *different generations* share a table
 whenever they share the passwords. So it is the customer's key material, not a
 per-unit or per-year value.
 
-**This is what the outstanding work needs.** `HANDOFF2001.md` § 20 established that
+**This is what the outstanding work needs.** `notes/HANDOFF2001.md` § 20 established that
 the 2001 photo cipher is not software: the library shifts a byte to the dongle and
 reads one bit back (`0x2D651` → STATUS bit 5), forty times per eight bytes, and the
 dongle computes. § 22 then found that **I.G.O. 3 cannot even boot without it** — it

@@ -1,14 +1,14 @@
 # Phase 19 — the HASP passwords, per generation
 
 Marcos's identification: the 2001 and I.G.O. dongles are **HASP4**, and everything
-measured here is consistent with it. `docs/research/13` and `HANDOFF2001.md` § 2.5
+measured here is consistent with it. `docs/research/13` and `notes/HANDOFF2001.md` § 2.5
 should now be read as settled in that direction for **2001 and the I.G.O. line** —
 1999 and 2000 are *not* HASP (confirmed by Marcos, and they carry none of the
 library's fingerprints). The 2008 generation is the one to be careful with: the
 IGO 8 images use the serial reader of Phase 18, but a 2008-era build in the same
 collection is parallel HASP throughout. See the last section.
 
-Corroborating evidence for HASP4, from `HANDOFF2001.md` §§ 16 and 19:
+Corroborating evidence for HASP4, from `notes/HANDOFF2001.md` §§ 16 and 19:
 
 - the memory is **112 bytes**, MemoHASP's size, and exactly the 56 words the
   library reads;
@@ -44,7 +44,7 @@ order and agree:
 
 - **2001 and IGO 3/5** push both at once: `66 68 77 74 57 7D` = `pushd 0x7D577477`.
   A dword push puts its low word at the lower address, and the lower address is the
-  earlier argument, so `0x7477` is pass1 — which matches `HANDOFF2001.md` § 2.5.1,
+  earlier argument, so `0x7477` is pass1 — which matches `notes/HANDOFF2001.md` § 2.5.1,
   derived separately.
 - **IGO 6/7** store them first and push them separately:
 

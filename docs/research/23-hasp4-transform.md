@@ -5,7 +5,7 @@ Marcos found `batteryshark/dongle-lab`, `projects/io.hasp4`. Its
 
 ## 1. It is provably the same algorithm
 
-`HaspDecodeBlock` is, line for line, what `HANDOFF2001.md` § 20 reconstructed out
+`HaspDecodeBlock` is, line for line, what `notes/HANDOFF2001.md` § 20 reconstructed out
 of `FINDIT.EXE`:
 
 | | reverse-engineered here | `hasp4_core.c` |
@@ -80,7 +80,7 @@ evidence says it is the input.
 The 2001 and 2000 archives hold the same 1397 pictures at **identical sizes**, so every
 block is a known plaintext/ciphertext pair once the 2000 LCG header layer is undone. Over
 one picture's 8637 blocks, one plaintext block appears with **two different ciphertexts**.
-The cipher is therefore position-dependent, not ECB -- which is exactly `HANDOFF2001.md`
+The cipher is therefore position-dependent, not ECB -- which is exactly `notes/HANDOFF2001.md`
 section 24's model: 4 KB buffers, only the first block of each taking the dongle path,
 the rest going through the software round at `0x2E682`.
 
