@@ -1,0 +1,12 @@
+svc1 IsHasp        p1=0001                       (FSYSTEM needs p1!=0)
+svc6 dongle ID     p1=434D p2=434C p3=0000       (FSYSTEM needs p3==0)
+svc3 word 0        p2=4F52 OK -> 'OR'
+svc3 word 1        p2=4741 OK -> 'GA'
+svc3 word 2        p2=434F OK -> 'CO'
+svc3 word 3        p2=4E54 OK -> 'NT'
+svc3 word 4        p2=524F OK -> 'RO'
+svc3 word 5        p2=4C20 OK -> 'L '
+svc3 word 9        p2=BEEF                       (INT 50h AX=1235)
+svc4 write w13<-00AB p1=000D p2=00AB p3=FFFF   eeprom ops: []
+svc3 read-back w13   p2=0000
+SYSTEM CODE: PASS

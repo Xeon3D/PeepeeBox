@@ -49,6 +49,39 @@ company, overlapping game code. Kept because two of these solved a problem in th
 | `ng-11-pcx-cipher.md` | **Only the first 128 bytes of each PCX are encrypted**; body and palette are plaintext |
 | `ng-12-dword-found.md` | **The per-picture key is a type-1 dongle query on the filename.** This is what made the photo games work |
 
+## Funny's Interactive Playworld — a second cabinet
+
+A different machine that this build also runs: OrgaControl Systemhaus built it for
+Funny's Planet International GmbH in 2001. Same chassis and the same funworld `FN_*`
+portal suite — its `UPDATE\CHECK.BAT` still hunts for `pp2000.bat` on removable media —
+but a different launcher (`GAME\FSYSTEM.EXE` plus a WDOSX-packed `GAME\FUNNY.DLL`), a
+different token, and an Elo touchscreen rather than a MicroTouch.
+
+Written as numbered phases in a standalone workspace, then folded in here. Start at
+`fi-state.md` for the surface table and the ledger.
+
+| | |
+|---|---|
+| `fi-state.md` | Project state: surfaces, phase ledger, abandoned branches, tooling |
+| `fi-00-plan.md` | Bootstrap: the image mapped, the boot chain traced, the dongle gate reversed to its passwords and expected contents |
+| `fi-01-bring-up.md` | It boots to `FSYSTEM.EXE` and stops on `COPYPROTECTION`. Geometry and truncation ruled out; the wire captured with `PEEPEEBOX_LPT_TRACE=1` |
+| `fi-02-hasp-wire.md` | **It is not a HASP either.** An Aladdin-shaped API over plain **Microwire**, on the same pin map as the 2001 HDONGLE. `returned(n) = raw[n+8] ^ pass1 ^ n`, `pass1 = 0x43B5` |
+| `fi-03-dongle-device.md` | `dongle_funny.c`: the part, shipped and passing. The image names itself from `\GAME\{FSYSTEM.EXE,FUNNY.DLL}` and picks its own token |
+| `fi-04-cabinet-io.md` | **The cabinet was never a 486.** Its own `SOUND\MOBO.CSV` and 640×480@30 Cinepak put it on a Pentium-class PCI board. Also the IRQ theory, raised and then falsified |
+| `fi-05-ppngelo-rig.md` | Merged onto the Elo build; the full **INT 50h** dispatcher; **why MicroTouch could never work** |
+
+The one to read if you read nothing else is `fi-05`, §5.5. `INT 50h AX=00FF` is the app's
+"is there a touchscreen?" and it returns `[0x1FE]`, which `FSYSTEM.EXE` sets in exactly
+one place — inside the Elo-found branch at `CS:0x1773`. A perfectly emulated MicroTouch
+delivering correctly-addressed packets is therefore ignored in silence, which is what
+`fi-04` spent a phase failing to explain from the transport alone.
+
+Tooling sits beside the other research scripts. `evidence/fi-p2-haspsim.py` runs
+`FSYSTEM.EXE`'s real protection routine offline under Unicorn — seconds per experiment
+rather than a seven-minute boot — with `fi-p2-hasp4.py` and `fi-p2-microwire.py` as the
+candidate dongle and `fi-p2-verify.py` as the one-command check. `evidence/fi/` holds the
+image maps, the `FSYSTEM.EXE` disassembly and strings, and a captured LPT transaction.
+
 ## What these corrected in this repository
 
 Three findings changed the code rather than just the documentation:
