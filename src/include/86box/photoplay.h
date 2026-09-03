@@ -26,6 +26,7 @@ extern "C" {
 #define PHOTOPLAY_SNDCARD     "ess_es1688"       /* ESS ES1688 AudioDrive           */
 #define PHOTOPLAY_TABLET      "microtouch_touchpen"
 #define PHOTOPLAY_TABLET_NAME "3M MicroTouch (Serial)"
+#define PHOTOPLAY_TABLET_ELO  "elo_touchscreen"  /* Elo TouchSystems SmartSet       */
 #define PHOTOPLAY_TABLET_PORT 2                  /* COM3                            */
 #define PHOTOPLAY_DONGLE      "dongle_photoplay"
 #define PHOTOPLAY_DISK_IMAGE  "HardDisk.img"
@@ -53,6 +54,13 @@ extern void photoplay_set_cdrom_enabled(int enabled);
    CD-ROM: toggled from the Tools menu, persisted in [Photo Play]. */
 extern int  photoplay_fdd_enabled(void);
 extern void photoplay_set_fdd_enabled(int enabled);
+
+/* Which touchscreen is wired to the cabinet, by device internal name.  The
+   machines shipped a 3M MicroTouch and that stays the default, but an Elo
+   SmartSet is the other part these cabinets are found with, so it is a choice
+   rather than a constant.  Persisted in [Photo Play]; chosen from the toolbar. */
+extern const char *photoplay_touchscreen(void);
+extern void        photoplay_set_touchscreen(const char *internal_name);
 
 /* Work out which release and territory a disk image is, from its own
    \FOTO\SETTINGS\MAIN.SET.  Returns 1 and fills `out` with something like

@@ -12,6 +12,10 @@ Two jobs:
     One is drawn here: a parallel-port plug in the cabinet's own dark green with the
     amber of its PHOTO PLAY badge, simplified as it gets smaller so it still reads at 16.
 
+  * the toolbar's Touchscreen button needs one too: a hand with the index finger up,
+    which is the one gesture the cabinets are driven by.  Drawn flat and bold, because
+    fingers are the first thing to turn to porridge at 16 pixels.
+
   * ppfix gets the cabinet too, with a hammer laid over the corner -- it repairs images,
     and at a glance that has to be what it says.  The hammer is drawn large and haloed,
     because a badge that reads at 16 pixels has to be bold enough to survive the corner
@@ -41,6 +45,9 @@ STEEL      = (186, 194, 198)
 STEEL_DARK = (108, 118, 124)
 LED        = (63, 207, 106)
 OUTLINE    = (10, 24, 20)
+SKIN       = (232, 186, 138)
+SKIN_DARK  = (198, 142, 92)
+CUFF       = (46, 104, 84)
 WOOD       = (176, 112, 56)
 WOOD_DARK  = (112, 66, 28)
 HALO       = (246, 248, 248)
@@ -137,6 +144,41 @@ def dongle(size):
     return im.resize((size, size), Image.LANCZOS)
 
 
+def touch(size):
+    """A hand with the index finger raised.
+
+    Everything below the knuckles is one shape: at 16 pixels a drawn-out fist reads as
+    a smudge, whereas a blunt palm with one finger clear of it still reads as a hand
+    pointing.  The cuff gives the silhouette a base so it does not float."""
+    S  = size * 8
+    im = Image.new('RGBA', (S, S), (0, 0, 0, 0))
+    d  = ImageDraw.Draw(im)
+    w  = max(1, S // 64)
+
+    def R(*f):
+        return [x * S for x in f]
+
+    # the raised finger, drawn first so the palm laps over its base
+    d.rounded_rectangle(R(0.38, 0.06, 0.60, 0.56), radius=0.11 * S,
+                        fill=SKIN, outline=OUTLINE, width=w)
+    # the palm
+    d.rounded_rectangle(R(0.22, 0.40, 0.82, 0.84), radius=0.16 * S,
+                        fill=SKIN, outline=OUTLINE, width=w)
+    # the thumb, on the near side
+    d.rounded_rectangle(R(0.12, 0.52, 0.36, 0.72), radius=0.09 * S,
+                        fill=SKIN, outline=OUTLINE, width=w)
+    if size >= 32:
+        # folded knuckles: two creases, enough to say fist without drawing one
+        for i in range(2):
+            y = (0.52 + (i * 0.12)) * S
+            d.line([0.46 * S, y, 0.78 * S, y], fill=SKIN_DARK, width=max(1, S // 80))
+    # the cuff
+    d.rounded_rectangle(R(0.24, 0.80, 0.80, 0.94), radius=0.05 * S,
+                        fill=CUFF, outline=OUTLINE, width=w)
+
+    return im.resize((size, size), Image.LANCZOS)
+
+
 def hammer(size, frac=0.60):
     """A claw hammer, for the corner of the ppfix icon.
 
@@ -212,13 +254,17 @@ def main():
     cnt, sz = ico_write(os.path.join(DST, 'dongle.ico'), dg)
     print('%-16s %d images, %d bytes' % ('dongle.ico', cnt, sz))
 
+    tc = [touch(n) for n in sizes]
+    cnt, sz = ico_write(os.path.join(DST, 'touch.ico'), tc)
+    print('%-16s %d images, %d bytes' % ('touch.ico', cnt, sz))
+
     px = [ppfix_icon(a, n) for a, n in zip(pp, sizes)]
     cnt, sz = ico_write(DST_PPFIX, px)
     print('%-16s %d images, %d bytes' % ('ppfix.ico', cnt, sz))
 
     if '--preview' in sys.argv:
-        sheet = Image.new('RGBA', (660, 290), (45, 45, 45, 255))
-        for row, imgs in enumerate((dg, px)):
+        sheet = Image.new('RGBA', (660, 430), (45, 45, 45, 255))
+        for row, imgs in enumerate((dg, tc, px)):
             x = 8
             for img in imgs:
                 sheet.paste(img, (x, 24 + (row * 140)), img)

@@ -83,6 +83,12 @@ extern bool fast_forward;
 #include <QUrl>
 #include <QMenuBar>
 #include <QCheckBox>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QLabel>
+#include <QVBoxLayout>
 #include <QActionGroup>
 #include <QOpenGLContext>
 #include <QScreen>
@@ -1230,6 +1236,81 @@ MainWindow::emitVmmSignal()
     emit vmmConfigurationChanged();
 }
 
+/* PeepeeBox: which touchscreen is fitted, and its options.
+
+   The cabinets are driven entirely by touch, so the part matters more here than
+   any other peripheral -- and two of them turn up in the wild: the 3M MicroTouch
+   these machines shipped with, and Elo SmartSet.  Both are ordinary 86Box tablet
+   devices with their own config (the port, and for the MicroTouch the controller
+   identity), so this dialog only has to pick one and hand the rest to the device
+   config dialog that already knows how to draw it.
+
+   Returns 1 when something changed and the machine has to be restarted for it --
+   the device is bound to its serial port at init, so a live swap is not a thing. */
+static int
+pp_touchscreen_dialog(QWidget *parent)
+{
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Touchscreen"));
+    dlg.setWindowFlags(dlg.windowFlags() & ~Qt::WindowContextHelpButtonHint);
+
+    auto *form  = new QFormLayout();
+    auto *combo = new QComboBox();
+
+    /* Built from the device table rather than a hardcoded pair, so a touchscreen
+       added to 86Box later shows up here without anyone remembering to. */
+    const char *current = photoplay_touchscreen();
+    for (int i = 1; i < tablet_get_ndev(); i++) {
+        const device_t *dev = tablet_get_device(i);
+
+        if ((dev == NULL) || !(dev->flags & DEVICE_COM))
+            continue;
+        combo->addItem(QString::fromUtf8(dev->name), QString::fromUtf8(dev->internal_name));
+        if (!strcmp(dev->internal_name, current))
+            combo->setCurrentIndex(combo->count() - 1);
+    }
+    form->addRow(QObject::tr("Touchscreen:"), combo);
+
+    auto *opts = new QPushButton(QObject::tr("&Options..."));
+    form->addRow(QString(), opts);
+
+    auto *note = new QLabel(QObject::tr(
+        "The cabinets wired their touchscreen to COM3. A different port, or a "
+        "controller the game does not expect, stops touch working with no error "
+        "on screen.\n\nChanging any of this restarts the machine."));
+    note->setWordWrap(true);
+    form->addRow(note);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    auto *outer   = new QVBoxLayout(&dlg);
+    outer->addLayout(form);
+    outer->addWidget(buttons);
+
+    /* Options are the chosen device's own, so the combo has to be applied before
+       they can be shown -- otherwise picking Elo and pressing Options would
+       configure the MicroTouch. */
+    int inner_changed = 0;
+    QObject::connect(opts, &QPushButton::clicked, [&]() {
+        const int idx = tablet_get_from_internal_name(
+            (char *) combo->currentData().toString().toUtf8().constData());
+
+        if (idx > 0)
+            inner_changed |= DeviceConfig::ConfigureDevice(tablet_get_device(idx), 0, &dlg);
+    });
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    if (dlg.exec() != QDialog::Accepted)
+        return inner_changed;   /* the device dialog saves its own, Cancel here cannot undo it */
+
+    const QString chosen = combo->currentData().toString();
+    if (chosen != QString::fromUtf8(current)) {
+        photoplay_set_touchscreen(chosen.toUtf8().constData());
+        return 1;
+    }
+    return inner_changed;
+}
+
 /* PeepeeBox: what used to open the eleven-page machine settings dialog now opens
    the dongle's own device configuration.  Every other setting that dialog
    offered -- machine, CPU, RAM, video, sound, input, ports, drives -- is fixed
@@ -1249,6 +1330,23 @@ MainWindow::on_actionSettings_triggered()
 
     plat_pause(1);
     if (DeviceConfig::ConfigureDevice(&lpt_dongle_photoplay_device, 0, this)) {
+        config_changed = 2;
+        config_save();
+        pc_reset_hard();
+    }
+    plat_pause(currentPause);
+}
+
+/* PeepeeBox: the touchscreen the cabinet is fitted with.  Same shape as the dongle
+   button above -- pause, ask, and hard reset if the answer changed, because the
+   device attaches to its serial port at init. */
+void
+MainWindow::on_actionTouchscreen_triggered()
+{
+    const int currentPause = dopause;
+
+    plat_pause(1);
+    if (pp_touchscreen_dialog(this)) {
         config_changed = 2;
         config_save();
         pc_reset_hard();

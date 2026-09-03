@@ -92,6 +92,7 @@
      <addaction name="actionSound_gain"/>
     </widget>
     <addaction name="actionSettings"/>
+    <addaction name="actionTouchscreen"/>
     <addaction name="actionNetwork"/>
     <addaction name="actionCDROM_drive"/>
     <addaction name="actionFloppy_drive"/>
@@ -235,6 +236,7 @@
    <addaction name="actionACPI_Shutdown"/>
    <addaction name="separator"/>
    <addaction name="actionSettings"/>
+   <addaction name="actionTouchscreen"/>
    <addaction name="actionNetwork"/>
    <addaction name="actionCDROM_drive"/>
    <addaction name="actionFloppy_drive"/>
@@ -266,6 +268,21 @@
    </property>
    <property name="menuRole">
     <enum>QAction::QuitRole</enum>
+   </property>
+  </action>
+  <action name="actionTouchscreen">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/touch.ico</normaloff>:/menuicons/qt/icons/touch.ico</iconset>
+   </property>
+   <property name="text">
+    <string>&amp;Touchscreen…</string>
+   </property>
+   <property name="toolTip">
+    <string>Which touchscreen is fitted, and its options</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
    </property>
   </action>
   <action name="actionFloppy_drive">

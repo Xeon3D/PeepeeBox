@@ -157,18 +157,25 @@ pp_apply_input(void)
 {
     keyboard_type = KEYBOARD_TYPE_PS2;
 
-    /* No mouse: the games drive the MicroTouch directly and a second pointing
+    /* No mouse: the games drive the touchscreen directly and a second pointing
        device only confuses the guest. */
     mouse_type  = 0;
-    tablet_type = tablet_get_from_internal_name(PHOTOPLAY_TABLET);
+    tablet_type = tablet_get_from_internal_name((char *) photoplay_touchscreen());
     if (!tablet_type)
-        fatal("PeepeeBox: the " PHOTOPLAY_TABLET " touchscreen is missing from this build\n");
+        fatal("PeepeeBox: the %s touchscreen is missing from this build\n",
+              photoplay_touchscreen());
 
-    /* The touchscreen's serial port is a device config option rather than a
-       global, so it has to be stamped into the ini the settings UI would have
-       written.  COM3 is where the cabinet wiring puts it; anywhere else and
-       touch input dies without an error message. */
-    config_set_int(PHOTOPLAY_TABLET_NAME, "port", PHOTOPLAY_TABLET_PORT);
+    /* The serial port is a device config option rather than a global, so the
+       cabinet's COM3 has to be stamped into the ini that the settings UI would
+       otherwise have written -- but only when nothing has chosen one yet.  Doing
+       it unconditionally would mean the Touchscreen dialog could never move the
+       port, and the move would look like it had simply been ignored. */
+    {
+        const device_t *dev = tablet_get_device(tablet_type);
+
+        if ((dev != NULL) && (config_get_int((char *) dev->name, "port", -1) < 0))
+            config_set_int((char *) dev->name, "port", PHOTOPLAY_TABLET_PORT);
+    }
 
     for (int i = 0; i < GAMEPORT_MAX; i++)
         joystick_type[i] = 0;
@@ -593,6 +600,35 @@ void
 photoplay_set_cdrom_enabled(int enabled)
 {
     config_set_int(PHOTOPLAY_SECTION, "cdrom", !!enabled);
+}
+
+/* Which touchscreen is attached.
+
+   The cabinets shipped a 3M MicroTouch on COM3, and that is still the default and
+   still what every disk image expects.  Elo SmartSet parts turn up in the same
+   machines though, and a cabinet with one fitted needs the emulator to speak Elo
+   instead -- so this is a setting rather than a constant.  It is a device internal
+   name, not an index, because indices move when the device table does.
+
+   A name this build does not have is ignored rather than fatal: an ini file is
+   easy to mistype, and dropping back to the MicroTouch always boots. */
+const char *
+photoplay_touchscreen(void)
+{
+    static char name[64];
+    const char *s = config_get_string(PHOTOPLAY_SECTION, "touchscreen",
+                                      (char *) PHOTOPLAY_TABLET);
+
+    if ((s == NULL) || !tablet_get_from_internal_name((char *) s))
+        return PHOTOPLAY_TABLET;
+    snprintf(name, sizeof(name), "%s", s);
+    return name;
+}
+
+void
+photoplay_set_touchscreen(const char *internal_name)
+{
+    config_set_string(PHOTOPLAY_SECTION, "touchscreen", (char *) internal_name);
 }
 
 /* The optional 3.5" floppy drive.

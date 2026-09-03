@@ -85,6 +85,7 @@ public slots:
 private slots:
     void on_actionFullscreen_triggered();
     void on_actionSettings_triggered();
+    void on_actionTouchscreen_triggered();
     void on_actionNetwork_triggered();
     void on_actionCDROM_drive_triggered(bool checked);
     void on_actionFloppy_drive_triggered(bool checked);
