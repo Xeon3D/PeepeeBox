@@ -73,7 +73,17 @@
 
 /* How long a coin holds its line.  The C120 says 100 ms +/- 20%, and the host
    is required to want at least 50 ms of it. */
-#define FWIO_COIN_MS  100.0
+/* The C120 holds an accept line for 100 ms and its manual requires the host to
+   see at least 50 of them.  This software does not appear to debounce that way:
+   one 100 ms hold books *five* coins on a coin line, while the same hold books
+   exactly one note on a note line.  So the two groups are read by different code
+   and the coin side counts something per poll rather than per edge.
+
+   PEEPEEBOX_IO_MS overrides the hold so the width that books one coin can be
+   found by measurement instead of argued about. */
+static double fwio_hold_ms = 100.0;
+
+#define FWIO_COIN_MS  fwio_hold_ms
 
 typedef struct fwio_t {
     uint16_t   base;
@@ -411,7 +421,15 @@ funworld_io_pulse(int line)
 
         fwio_walk = (getenv("PEEPEEBOX_IO_WALK") != NULL) || (line != NULL);
 
+        const char *ms    = getenv("PEEPEEBOX_IO_MS");
         const char *phase = getenv("PEEPEEBOX_IO_PHASE");
+
+        if (ms != NULL) {
+            const double v = atof(ms);
+
+            if ((v >= 1.0) && (v <= 5000.0))
+                fwio_hold_ms = v;
+        }
 
         if (phase != NULL)
             fwio_phase = (atoi(phase) != 0);

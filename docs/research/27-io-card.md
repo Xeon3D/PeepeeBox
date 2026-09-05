@@ -210,7 +210,51 @@ slow to test against.
 What the card *is* still good for stands: A0 is the operator setup button and A1
 starts the CRC check, both confirmed, both active low.
 
-## 8. What this corrected
+## 8. The ten lines, found on I.G.O. 6
+
+The coins are on the card after all. They do nothing on I.G.O. 8 and answer on
+**I.G.O. 6**, which is the image this work belongs on -- 8 is the odd generation
+in every other respect too, and COM2 was a false trail.
+
+Ten lines respond: **A6, A7 and C0..C7**. Ten is not a coincidence: the loom is
+ten wires, and the operator setup's book-keeping page lists exactly ten channels.
+
+| Book-keeping channel | Count after one walk |
+|---|---|
+| 0.10, 0.20, 0.50, 1, 2 Euro, TOKEN 10 | six **coins**, 5 each |
+| 5, 10, 20, 50 Euro | four **notes**, 1 each |
+
+Six coins is the C120's six accept outputs. Four notes is a **bill validator**,
+a second device on the same loom. The credit deltas split along the same seam:
+
+| Line | Credits added | Reads as |
+|---|---:|---|
+| C0 | 12.00 | note 5 |
+| C1 | 20.00 | note 10 |
+| C2 | 40.00 | note 20 |
+| C3 | 100.00 | note 50 |
+| A6, A7, C4, C5, C6, C7 | 6.80 -- 19.30 | the six coins |
+
+C1:C2:C3 are exactly 20:40:100, which is the 10:20:50 note ratio at two credits
+per euro. C0's 12 is 10 plus a coin that landed with it. So **C0..C3 are the note
+validator and the other six are the C120**.
+
+### A defect this exposed
+
+One 100 ms hold books **five** coins on a coin line and **one** note on a note
+line -- same pulse, same width. The two groups are read by different code, and
+the coin side counts something per poll rather than per edge. Our pulse is right
+by the C120's manual and wrong for this software. `PEEPEEBOX_IO_MS` makes the
+width settable so the one that books a single coin can be measured.
+
+### Finishing it
+
+The book-keeping page is a better instrument than the credit total: it names the
+channel and counts it, so there is no arithmetic to get wrong. Clear it, press
+one line once, and see which channel goes from 0 to 1. Ten presses name all ten
+without inference.
+
+## 9. What this corrected
 
 The obvious shortcut — have the toolbar buttons type the keyboard shortcuts,
 since `S` opens the operator setup from the menu and `C` adds a credit on a
