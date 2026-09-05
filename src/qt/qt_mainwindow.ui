@@ -235,10 +235,6 @@
    <attribute name="toolBarBreak">
     <bool>false</bool>
    </attribute>
-   <addaction name="actionInsert_coin"/>
-   <addaction name="actionOperator_setup"/>
-   <addaction name="actionCalibrate"/>
-   <addaction name="separator"/>
    <addaction name="actionPause"/>
    <addaction name="actionHard_Reset"/>
    <addaction name="actionACPI_Shutdown"/>
@@ -248,6 +244,10 @@
    <addaction name="actionNetwork"/>
    <addaction name="actionCDROM_drive"/>
    <addaction name="actionFloppy_drive"/>
+   <addaction name="separator"/>
+   <addaction name="actionInsert_coin"/>
+   <addaction name="actionOperator_setup"/>
+   <addaction name="actionCalibrate"/>
   </widget>
   <action name="actionHard_Reset">
    <property name="icon">

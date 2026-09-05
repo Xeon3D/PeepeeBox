@@ -192,33 +192,39 @@ fwio_write(uint16_t port, uint8_t val, void *priv)
 
 /* ------------------------------------------------------------- input lines */
 
-/* Which port and bit each line sits on is still open.  What is settled is which
-   ports can carry them at all: control word 0x99 makes A and C inputs and B an
-   output, so nothing that arrives can be on B.  Six coins on A leaves C for the
-   two buttons, which is the arrangement that fits -- the C120's six accept lines
-   are one loom, the door buttons are another.
+/* Port A bit 0 is the operator setup button.  That one is known: it was mapped as
+   coin 1 to begin with, and pressing the coin button opened the operator setup
+   instead (Marcos, on an I.G.O. 8 rig).  Nothing on port C did anything.
 
-   Everything routes through this table so that when the bits are known there is
-   one thing to correct rather than constants scattered about. */
+   Which puts the rest in place, because port A is eight lines and the cabinet has
+   eight things to say: the two door buttons and the C120's six accept outputs.
+   So setup and calibration take A0 and A1, and the six coins follow on A2..A7.
+   The coins and the calibration line are still inference from that arithmetic,
+   not observation -- but they are the only arrangement that fits one confirmed
+   bit, an eight-line port, and a validator with exactly six outputs.
+
+   Port C reads as an input too, and is evidently something else: a bill acceptor,
+   the door switch, the meter returns.  Nothing here uses it yet.
+
+   One table, so that correcting it stays a one-line job. */
 static const struct {
     uint8_t port;
     uint8_t bit;
 } fwio_line_map[FWIO_IN_LINES] = {
-    { FWIO_PORT_A, 0 }, /* coin 1 */
-    { FWIO_PORT_A, 1 }, /* coin 2 */
-    { FWIO_PORT_A, 2 }, /* coin 3 */
-    { FWIO_PORT_A, 3 }, /* coin 4 */
-    { FWIO_PORT_A, 4 }, /* coin 5 */
-    { FWIO_PORT_A, 5 }, /* coin 6 */
-    { FWIO_PORT_C, 0 }, /* operator setup button */
-    { FWIO_PORT_C, 1 }, /* calibration button    */
+    { FWIO_PORT_A, 2 }, /* coin 1 */
+    { FWIO_PORT_A, 3 }, /* coin 2 */
+    { FWIO_PORT_A, 4 }, /* coin 3 */
+    { FWIO_PORT_A, 5 }, /* coin 4 */
+    { FWIO_PORT_A, 6 }, /* coin 5 */
+    { FWIO_PORT_A, 7 }, /* coin 6 */
+    { FWIO_PORT_A, 0 }, /* operator setup button -- confirmed */
+    { FWIO_PORT_A, 1 }, /* calibration button                 */
 };
 
 static void
-fwio_set_line(fwio_t *dev, int line, int asserted)
+fwio_set_bit(fwio_t *dev, uint8_t port, uint8_t bit, int asserted)
 {
-    const uint8_t port = fwio_line_map[line].port;
-    const uint8_t mask = (uint8_t) (1 << fwio_line_map[line].bit);
+    const uint8_t mask = (uint8_t) (1 << bit);
 
     /* Asserted is low at the connector; the 74HC14 in between is why this is a
        guess rather than a fact.  One place to flip it when it is known. */
@@ -226,6 +232,32 @@ fwio_set_line(fwio_t *dev, int line, int asserted)
         dev->in[port] &= (uint8_t) ~mask;
     else
         dev->in[port] |= mask;
+}
+
+static void
+fwio_set_line(fwio_t *dev, int line, int asserted)
+{
+    fwio_set_bit(dev, fwio_line_map[line].port, fwio_line_map[line].bit, asserted);
+}
+
+/* PEEPEEBOX_IO_WALK: every pulse steps to the next input bit rather than using
+   the map above -- port A bit 0, A1 ... A7, then port C bit 0 ... C7, and round
+   again.  One button, clicked sixteen times, names every line in a single
+   sitting, which beats rebuilding once per guess.  Each step says in the log
+   which bit it just held, so counting clicks and watching the screen is the
+   whole procedure. */
+static int fwio_walk    = -1;
+static int fwio_walk_at = 0;
+
+static void
+fwio_walk_release(UNUSED(void *priv))
+{
+    fwio_t *dev = fwio_inst;
+
+    if (dev != NULL) {
+        memset(dev->in, 0xff, sizeof(dev->in));
+        pclog("FWIO-WALK: released\n");
+    }
 }
 
 static void
@@ -249,6 +281,23 @@ funworld_io_pulse(int line)
 
     if ((dev == NULL) || (line < 0) || (line >= FWIO_IN_LINES))
         return;
+
+    if (fwio_walk < 0)
+        fwio_walk = (getenv("PEEPEEBOX_IO_WALK") != NULL);
+
+    if (fwio_walk) {
+        const uint8_t port = (uint8_t) ((fwio_walk_at < 8) ? FWIO_PORT_A : FWIO_PORT_C);
+        const uint8_t bit  = (uint8_t) (fwio_walk_at & 7);
+
+        memset(dev->in, 0xff, sizeof(dev->in));
+        fwio_set_bit(dev, port, bit, 1);
+        pclog("FWIO-WALK: step %2d -- port %c bit %d held %g ms\n",
+              fwio_walk_at + 1, (port == FWIO_PORT_A) ? 'A' : 'C', bit,
+              FWIO_COIN_MS);
+        timer_on_auto(&dev->release[0], FWIO_COIN_MS * 1000.0);
+        fwio_walk_at = (fwio_walk_at + 1) & 15;
+        return;
+    }
 
     /* A second coin while the first is still on the wire is not a thing the
        validator can do -- it holds the line for 100 ms and will not start
@@ -280,7 +329,9 @@ fwio_init(const device_t *info)
     fwio_reset(dev);
 
     for (int i = 0; i < FWIO_IN_LINES; i++)
-        timer_add(&dev->release[i], fwio_release, (void *) (intptr_t) i, 0);
+        timer_add(&dev->release[i],
+                  (getenv("PEEPEEBOX_IO_WALK") != NULL) ? fwio_walk_release : fwio_release,
+                  (void *) (intptr_t) i, 0);
 
     io_sethandler(dev->base, FWIO_LEN, fwio_read, NULL, NULL,
                   fwio_write, NULL, NULL, dev);
