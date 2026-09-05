@@ -134,8 +134,7 @@ way back to the rest of it.
 - Sends `0x05` every 100 ms while connected, suppressed only while a reply is
   going out — the guest's receive state stores every byte until LF, so a stray
   ENQ mid-reply shifts byte 15.
-- Answers a frame's ETX with `"DATAPRINT V1.0 C
-"`, paced one byte per 1.5 ms
+- Answers a frame's ETX with `"DATAPRINT V1.0 C\n"`, paced one byte per 1.5 ms
   (about a byte time at 9600; the whole line at once overruns a UART with the
   FIFO off). The index of the `C` is checked at init and complains in the log if
   an edit moves it.
