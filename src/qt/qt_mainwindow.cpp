@@ -1355,17 +1355,25 @@ MainWindow::on_actionSettings_triggered()
    -- an 8255 at 0x210, which is where a boot with PEEPEEBOX_IO_PROBE caught the
    software configuring one.  See src/device/funworld_io.c.
 
-   A coin is a Coin Controls C120 accept line held for 100 ms, because that is
-   what the validator does and what the software is required to debounce.  The
-   device owns that timing; this only says which line. */
-void
-MainWindow::on_actionInsert_coin_triggered()
-{
-    funworld_io_pulse(FWIO_LINE_COIN1);
+   A coin is a validator accept line held for 100 ms, because that is what the
+   part does and what the software is required to debounce.  The device owns that
+   timing; these only say which line.
 
-    /* Under PEEPEEBOX_IO_WALK this button is not a coin at all -- it steps
-       through the card's lines one per click.  Which line that was has to be on
-       screen: counting clicks against a comment in a batch file is exactly the
+   Ten buttons, because the cabinet takes ten kinds of money on ten separate
+   wires -- six coins from the C120 and four notes from the bill validator beside
+   it -- and there is no line that means "money" in general.  They are numbered
+   by channel rather than by value: the channel is the wiring and is fixed, while
+   what each one is worth is whatever the operator setup on that image has been
+   programmed to.  The values in the labels are the ones this I.G.O. 6 image
+   uses. */
+static void
+insert_money(MainWindow *win, int line)
+{
+    funworld_io_pulse(line);
+
+    /* Under PEEPEEBOX_IO_WALK coin 1 is not a coin at all -- it steps through
+       the card's lines one per click.  Which line that was has to be on screen:
+       counting clicks against a comment in a batch file is exactly the
        bookkeeping that produces a confident wrong answer, and whoever is
        clicking is watching the guest, not the log. */
     char what[48];
@@ -1374,8 +1382,8 @@ MainWindow::on_actionInsert_coin_triggered()
         static QLabel *walk = nullptr;
 
         if (walk == nullptr) {
-            walk = new QLabel(this, Qt::Tool | Qt::WindowStaysOnTopHint);
-            walk->setWindowTitle(tr("I/O card walk"));
+            walk = new QLabel(win, Qt::Tool | Qt::WindowStaysOnTopHint);
+            walk->setWindowTitle(MainWindow::tr("I/O card walk"));
             walk->setAlignment(Qt::AlignCenter);
             walk->setMargin(18);
 
@@ -1393,6 +1401,66 @@ MainWindow::on_actionInsert_coin_triggered()
 }
 
 void
+MainWindow::on_actionInsert_coin_1_triggered()
+{
+    insert_money(this, FWIO_LINE_COIN1);
+}
+
+void
+MainWindow::on_actionInsert_coin_2_triggered()
+{
+    insert_money(this, FWIO_LINE_COIN2);
+}
+
+void
+MainWindow::on_actionInsert_coin_3_triggered()
+{
+    insert_money(this, FWIO_LINE_COIN3);
+}
+
+void
+MainWindow::on_actionInsert_coin_4_triggered()
+{
+    insert_money(this, FWIO_LINE_COIN4);
+}
+
+void
+MainWindow::on_actionInsert_coin_5_triggered()
+{
+    insert_money(this, FWIO_LINE_COIN5);
+}
+
+void
+MainWindow::on_actionInsert_coin_6_triggered()
+{
+    insert_money(this, FWIO_LINE_COIN6);
+}
+
+void
+MainWindow::on_actionInsert_note_1_triggered()
+{
+    insert_money(this, FWIO_LINE_NOTE1);
+}
+
+void
+MainWindow::on_actionInsert_note_2_triggered()
+{
+    insert_money(this, FWIO_LINE_NOTE2);
+}
+
+void
+MainWindow::on_actionInsert_note_3_triggered()
+{
+    insert_money(this, FWIO_LINE_NOTE3);
+}
+
+void
+MainWindow::on_actionInsert_note_4_triggered()
+{
+    insert_money(this, FWIO_LINE_NOTE4);
+}
+
+void
 MainWindow::on_actionOperator_setup_triggered()
 {
     funworld_io_pulse(FWIO_LINE_SETUP);
@@ -1401,7 +1469,7 @@ MainWindow::on_actionOperator_setup_triggered()
 void
 MainWindow::on_actionCalibrate_triggered()
 {
-    funworld_io_pulse(FWIO_LINE_CALIB);
+    funworld_io_pulse(FWIO_LINE_DOOR2);
 }
 
 /* PeepeeBox: the touchscreen the cabinet is fitted with.  Same shape as the dongle

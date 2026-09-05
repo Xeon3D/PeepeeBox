@@ -86,7 +86,16 @@ private slots:
     void on_actionFullscreen_triggered();
     void on_actionSettings_triggered();
     void on_actionTouchscreen_triggered();
-    void on_actionInsert_coin_triggered();
+    void on_actionInsert_coin_1_triggered();
+    void on_actionInsert_coin_2_triggered();
+    void on_actionInsert_coin_3_triggered();
+    void on_actionInsert_coin_4_triggered();
+    void on_actionInsert_coin_5_triggered();
+    void on_actionInsert_coin_6_triggered();
+    void on_actionInsert_note_1_triggered();
+    void on_actionInsert_note_2_triggered();
+    void on_actionInsert_note_3_triggered();
+    void on_actionInsert_note_4_triggered();
     void on_actionOperator_setup_triggered();
     void on_actionCalibrate_triggered();
     void on_actionNetwork_triggered();

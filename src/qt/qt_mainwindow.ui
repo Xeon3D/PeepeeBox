@@ -91,7 +91,16 @@
      <addaction name="separator"/>
      <addaction name="actionSound_gain"/>
     </widget>
-    <addaction name="actionInsert_coin"/>
+    <addaction name="actionInsert_coin_1"/>
+    <addaction name="actionInsert_coin_2"/>
+    <addaction name="actionInsert_coin_3"/>
+    <addaction name="actionInsert_coin_4"/>
+    <addaction name="actionInsert_coin_5"/>
+    <addaction name="actionInsert_coin_6"/>
+    <addaction name="actionInsert_note_1"/>
+    <addaction name="actionInsert_note_2"/>
+    <addaction name="actionInsert_note_3"/>
+    <addaction name="actionInsert_note_4"/>
     <addaction name="actionOperator_setup"/>
     <addaction name="actionCalibrate"/>
     <addaction name="separator"/>
@@ -245,7 +254,16 @@
    <addaction name="actionCDROM_drive"/>
    <addaction name="actionFloppy_drive"/>
    <addaction name="separator"/>
-   <addaction name="actionInsert_coin"/>
+   <addaction name="actionInsert_coin_1"/>
+   <addaction name="actionInsert_coin_2"/>
+   <addaction name="actionInsert_coin_3"/>
+   <addaction name="actionInsert_coin_4"/>
+   <addaction name="actionInsert_coin_5"/>
+   <addaction name="actionInsert_coin_6"/>
+   <addaction name="actionInsert_note_1"/>
+   <addaction name="actionInsert_note_2"/>
+   <addaction name="actionInsert_note_3"/>
+   <addaction name="actionInsert_note_4"/>
    <addaction name="actionOperator_setup"/>
    <addaction name="actionCalibrate"/>
   </widget>
@@ -278,16 +296,151 @@
     <enum>QAction::QuitRole</enum>
    </property>
   </action>
-  <action name="actionInsert_coin">
+  <action name="actionInsert_coin_1">
    <property name="icon">
     <iconset resource="../qt_resources.qrc">
-     <normaloff>:/menuicons/qt/icons/coin.ico</normaloff>:/menuicons/qt/icons/coin.ico</iconset>
+     <normaloff>:/menuicons/qt/icons/coin_1.ico</normaloff>:/menuicons/qt/icons/coin_1.ico</iconset>
    </property>
    <property name="text">
-    <string>&amp;Insert coin</string>
+    <string>Coin &amp;1 (0.10 EUR)</string>
    </property>
    <property name="toolTip">
-    <string>Insert a coin (the cabinet's coin acceptor)</string>
+    <string>Coin channel 1 -- 0.10 EUR as this image is programmed</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionInsert_coin_2">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/coin_2.ico</normaloff>:/menuicons/qt/icons/coin_2.ico</iconset>
+   </property>
+   <property name="text">
+    <string>Coin &amp;2 (0.20 EUR)</string>
+   </property>
+   <property name="toolTip">
+    <string>Coin channel 2 -- 0.20 EUR as this image is programmed</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionInsert_coin_3">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/coin_3.ico</normaloff>:/menuicons/qt/icons/coin_3.ico</iconset>
+   </property>
+   <property name="text">
+    <string>Coin &amp;3 (0.50 EUR)</string>
+   </property>
+   <property name="toolTip">
+    <string>Coin channel 3 -- 0.50 EUR as this image is programmed</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionInsert_coin_4">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/coin_4.ico</normaloff>:/menuicons/qt/icons/coin_4.ico</iconset>
+   </property>
+   <property name="text">
+    <string>Coin &amp;4 (1.00 EUR)</string>
+   </property>
+   <property name="toolTip">
+    <string>Coin channel 4 -- 1.00 EUR as this image is programmed</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionInsert_coin_5">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/coin_5.ico</normaloff>:/menuicons/qt/icons/coin_5.ico</iconset>
+   </property>
+   <property name="text">
+    <string>Coin &amp;5 (2.00 EUR)</string>
+   </property>
+   <property name="toolTip">
+    <string>Coin channel 5 -- 2.00 EUR as this image is programmed</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionInsert_coin_6">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/coin_6.ico</normaloff>:/menuicons/qt/icons/coin_6.ico</iconset>
+   </property>
+   <property name="text">
+    <string>Coin &amp;6 (TOKEN 10)</string>
+   </property>
+   <property name="toolTip">
+    <string>Coin channel 6 -- TOKEN 10 as this image is programmed</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionInsert_note_1">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/note_1.ico</normaloff>:/menuicons/qt/icons/note_1.ico</iconset>
+   </property>
+   <property name="text">
+    <string>Note &amp;1 (5 EUR)</string>
+   </property>
+   <property name="toolTip">
+    <string>Note channel 1 -- 5 EUR as this image is programmed</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionInsert_note_2">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/note_2.ico</normaloff>:/menuicons/qt/icons/note_2.ico</iconset>
+   </property>
+   <property name="text">
+    <string>Note &amp;2 (10 EUR)</string>
+   </property>
+   <property name="toolTip">
+    <string>Note channel 2 -- 10 EUR as this image is programmed</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionInsert_note_3">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/note_3.ico</normaloff>:/menuicons/qt/icons/note_3.ico</iconset>
+   </property>
+   <property name="text">
+    <string>Note &amp;3 (20 EUR)</string>
+   </property>
+   <property name="toolTip">
+    <string>Note channel 3 -- 20 EUR as this image is programmed</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionInsert_note_4">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/note_4.ico</normaloff>:/menuicons/qt/icons/note_4.ico</iconset>
+   </property>
+   <property name="text">
+    <string>Note &amp;4 (50 EUR)</string>
+   </property>
+   <property name="toolTip">
+    <string>Note channel 4 -- 50 EUR as this image is programmed</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
@@ -314,10 +467,10 @@
      <normaloff>:/menuicons/qt/icons/calibrate.ico</normaloff>:/menuicons/qt/icons/calibrate.ico</iconset>
    </property>
    <property name="text">
-    <string>&amp;Calibrate touchscreen</string>
+    <string>Second &amp;door button</string>
    </property>
    <property name="toolTip">
-    <string>Start the touchscreen calibration, as the cabinet's second button did</string>
+    <string>The other button behind the cabinet door, on A1. From the menu the software answers it with a CRC check, which takes minutes. Whether it is also the touchscreen calibration somewhere else is not known.</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
