@@ -12,21 +12,33 @@
  *             happens to be fed from the I/O card, and nothing about it touches
  *             the 8255.
  *
- *             What it speaks is **not known**.  A CP80 is an 80-column dot
- *             matrix printer of the right era and those are Epson ESC/P almost
- *             without exception, but no manual has turned up and a kiosk
- *             receipt printer could as easily be ESC/POS.  Both are ESC plus a
- *             command byte plus parameters, so one parser covers them, and the
- *             parts that differ are exactly the parts this logs rather than
- *             guesses at.
+ *             It does **not** speak a printer dialect.  That was the first
+ *             guess -- a CP80 is a dot matrix printer of the right era and those
+ *             are Epson ESC/P almost without exception -- and MENU.EXE says
+ *             otherwise.  The wire carries funworld's own framing to a box the
+ *             software calls the Dataprint:
  *
- *             Which is the point.  Every byte is written to cp80-raw.bin, every
- *             control sequence is named in a trace the UI shows beside the
- *             paper, and anything unrecognised says so instead of being printed
- *             as garbage or silently swallowed.  One real receipt identifies the
- *             dialect, and then this can be finished properly.  Guessing the
- *             command set first is how you end up with a renderer that agrees
- *             with itself and with nothing else.
+ *               the unit sends ENQ (05) continuously, as a keepalive
+ *               the host sends XON, ESC S, XOFF, ETX, LF LF
+ *               the unit answers with a line whose byte 15 is 'C'
+ *               the host then sends the report, and a checksum trailer
+ *
+ *             The report's *text* is 24 columns.  The formatter at 0x1D762
+ *             copies 24 characters and appends an LF -- 25 bytes per record --
+ *             and filters everything outside 0x20..0x3F, 0x41..0x5A and
+ *             0x61..0x7A to a space.
+ *
+ *             But that formatter is not the only thing that fills the buffer.
+ *             The first real report began **ESC K**, so something writes escape
+ *             sequences in alongside the filtered text, and the Dataprint is
+ *             very likely passing them to whatever printer it drives.  Which
+ *             means a printer manual may decode part of this after all -- just
+ *             not the framing above, which is funworld's own.
+ *
+ *             So nothing here skips data on a guess about which dialect those
+ *             sequences belong to.  Every byte goes to cp80-raw.bin, every
+ *             sequence is named in the trace beside the paper, and an
+ *             unrecognised one costs a line rather than the payload.
  *
  * Authors:    The HUEG PP team.
  *
@@ -314,7 +326,16 @@ cp80_printable(cp80_t *dev, uint8_t c)
    stream and turns the rest of the receipt into noise. */
 #define CP80_ESC_UNKNOWN (-1)
 #define CP80_ESC_ZERO    (-2)      /* parameters run until a NUL */
-#define CP80_ESC_IMAGE   (-3)      /* two count bytes, then that many data */
+
+/* There was a CP80_ESC_IMAGE here that read two count bytes after ESC K, L, Y
+   or Z and skipped that many data bytes, which is correct for Epson ESC/P bit
+   images and wrong for this device.  The first real report began ESC K 21 0A
+   and it swallowed 2593 bytes of the payload -- the whole print job -- on the
+   strength of a dialect this link has now been shown not to speak.
+
+   Nothing is skipped in bulk any more.  An unrecognised sequence costs a line
+   in the trace and the stream carries on, which at worst prints a few stray
+   characters and at best does not hide the thing we are trying to read. */
 
 /* Only the codes where ESC/P and ESC/POS *agree* on the length are parsed.
 
@@ -336,6 +357,32 @@ static int
 cp80_esc_len(uint8_t cmd)
 {
     switch (cmd) {
+        /* The Dataprint's own framing, which is not a printer dialect at all.
+           ESC S is the command the host sends inside XON..XOFF, and ESC C is
+           what the reply is built around -- 'C' is the byte at index 15 that
+           the host checks.  Neither takes a parameter, and letting ESC S eat
+           the XOFF after it (which the ESC/P reading of 'S' would) mis-frames
+           every capture. */
+        case 'S':
+            return 0;
+
+        /* ESC K <tag> LF prefixes a line of the report, from a real capture:
+           ! before "funworld", " before "Photo Play 2000", $ before the serial
+           number, & before the first transaction and B before the total.  What
+           the tags mean is not known -- they are not line numbers and nothing in
+           MENU.EXE writes them as a constant, so they are built at run time --
+           but they are consistently three bytes and the trailing LF belongs to
+           the tag rather than to the text, so it is eaten with it.  Printing
+           them would put a stray "!" on its own line above every heading. */
+        case 'K':
+            return 2;
+
+        /* ESC C in the trailer introduces the four hex digits of the checksum,
+           which is the running sum di accumulates at 0x1EA9E.  A real one:
+           04 1B 43 39 45 36 37 16 -- EOT, ESC C, "9E67", SYN. */
+        case 'C':
+            return 4;
+
         /* no parameters, both dialects */
         case '@': case 'F': case 'H':
         case '0': case '1': case '2': case '4': case '5':
@@ -344,8 +391,8 @@ cp80_esc_len(uint8_t cmd)
             return 0;
 
         /* one parameter, both dialects */
-        case '!': case '-': case '3': case 'A': case 'C':
-        case 'J': case 'N': case 'Q': case 'R': case 'S':
+        case '!': case '-': case '3': case 'A':
+        case 'J': case 'N': case 'Q': case 'R':
         case 'U': case 'W': case 'a': case 'd': case 'l':
         case 'r': case 's': case 'w': case '%': case '/':
             return 1;
@@ -361,10 +408,6 @@ cp80_esc_len(uint8_t cmd)
         /* tab stop lists, terminated by NUL */
         case 'D': case 'B': case 'b':
             return CP80_ESC_ZERO;
-
-        /* bit images: two count bytes then that many data bytes */
-        case 'K': case 'L': case 'Y': case 'Z':
-            return CP80_ESC_IMAGE;
 
         default:
             return CP80_ESC_UNKNOWN;
@@ -391,6 +434,9 @@ cp80_esc_name(uint8_t intro, uint8_t cmd)
     if (intro == 0x1b) {
         switch (cmd) {
             case '@': return "reset";
+            case 'S': return "Dataprint command";
+            case 'K': return "record tag";
+            case 'C': return "checksum";
             case 'F': return "bold off";
             case 'H': return "double strike off";
             case '!': return "select print mode";
@@ -399,7 +445,6 @@ cp80_esc_name(uint8_t intro, uint8_t cmd)
             case 'J': return "feed n/216";
             case 'd': return "feed n lines";
             case 'R': return "national character set";
-            case 'K': case 'L': case 'Y': case 'Z': return "bit image";
             case 'D': return "horizontal tab stops";
             case 'B': return "vertical tab stops";
             default:  return NULL;
@@ -484,12 +529,6 @@ cp80_byte(cp80_t *dev, uint8_t c)
         if (len == CP80_ESC_ZERO) {
             dev->esc_zero = 1;
             dev->esc      = 2;
-            return;
-        }
-        if (len == CP80_ESC_IMAGE) {
-            dev->esc_image = -1;   /* still collecting the two count bytes */
-            dev->esc_want  = 2;
-            dev->esc       = 2;
             return;
         }
         if (len == 0) {
@@ -597,7 +636,20 @@ cp80_byte(cp80_t *dev, uint8_t c)
     }
 
     if (c < 0x20) {
-        cp80_tracef(dev, "%02X          control byte, not printed\n", c);
+        const char *what = NULL;
+
+        /* The Dataprint's frame, from the state machine at 0x1E8FC: XON, the
+           ESC S command, XOFF, then ETX and two LFs. */
+        switch (c) {
+            case 0x11: what = "XON -- frame start";            break;
+            case 0x13: what = "XOFF -- frame end";             break;
+            case 0x03: what = "ETX -- end of command";         break;
+            case 0x05: what = "ENQ";                           break;
+            case 0x04: what = "EOT -- report done";            break;
+            case 0x16: what = "SYN -- end of trailer";         break;
+            default:   what = "control byte, not printed";     break;
+        }
+        cp80_tracef(dev, "%02X          %s\n", c, what);
         return;
     }
 

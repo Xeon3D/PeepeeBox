@@ -310,3 +310,84 @@ roll, so either the cabinet's accessory is not what the name suggests or the
 name came from somewhere else. It does not change any of the above: all of it is
 read out of what this software actually does, and the manual can only refine the
 fifteen bytes of the reply that nothing checks.
+
+## 10. It printed — the report, and what the tags are
+
+The reply was accepted and the guest sent the whole thing. Captured on I.G.O. 6,
+886 bytes:
+
+```
+------------------------      <- ESC K 21
+funworld                      <- ESC K 22
+Photo Play 2000               <- ESC K 24
+serialnumber: 85
+------------------------
+Book-keeping
+------------------------
+ACTION DATE        AMOUN      <- ESC K 26
+PR 05.09.26       894,00   x5
+------------------------
+coin
+0,10 EUR            0,30
+0,20 EUR            0,20
+0,50 EUR            0,50
+1 EUR               1,00
+2 EUR               2,00
+note
+5 EUR              10,00
+10 EUR             10,00
+20 EUR             20,00
+50 EUR            850,00
+------------------------      <- ESC K 42
+Total: EUR        894,00
+------------------------
+ Attention ! Datas
+ will not be erased !
+------------------------
+04 1B 43 39 45 36 37 16       <- EOT, ESC C, "9E67", SYN
+```
+
+Every line is exactly 24 characters, as `cmp $0x17` on a zero-based index
+predicted, and the trailer is the checksum `di` accumulates at `0x1EA9E`
+rendered through the hex table — `9E67`.
+
+The coin and note lines are the ten channels of [27](27-io-card.md#11), and the
+amounts are the ones the money buttons booked during that testing. The report is
+a second, independent readout of the same map.
+
+### ESC K is a record tag, and it cost us the first capture
+
+The first attempt rendered nothing because `ESC K 21 0A` was read as an Epson
+**bit image** — two count bytes making 0x0A21, so 2593 bytes were skipped, which
+was the entire report. That is what guessing a dialect costs.
+
+`ESC K <tag> LF` prefixes a line: `!` before "funworld", `"` before the machine
+name, `$` before the serial number, `&` before the first transaction, `B` before
+the total. They are not line numbers, and **no literal `1B 4B` exists in
+MENU.EXE** — they are built at run time. What they mean is still open; they are
+consistently three bytes with the LF belonging to the tag rather than to the
+text, and they are now consumed rather than printed.
+
+Bulk skipping is gone from the parser entirely. An unrecognised sequence costs a
+line in the trace and the stream carries on.
+
+### On the CBM-910
+
+The 24-column format now fits: the CBM-910 ships in 24- and 40-column variants,
+and this is 24. But the link the PC drives is the **Dataprint's** protocol, not a
+printer's — ENQ keepalive, XON/ESC S/XOFF/ETX framing, a reply line checked at
+byte 15, and an EOT/ESC C/checksum/SYN trailer. No printer speaks that.
+
+Where a CBM-910 manual would settle something:
+
+- **Does it define `ESC K` with a single-byte parameter?** If yes, the Dataprint
+  is passing escapes through to it and the tags are printer commands.
+- **Does it define `ESC C`?** Here it introduces four checksum digits. If the
+  manual gives it another meaning, the trailer is funworld's, not the printer's.
+- **Does the printer ever send ENQ to the host unprompted?** If not, the ENQ
+  keepalive is the Dataprint box, and the printer inside it is invisible to the
+  PC — in which case the manual settles the column width and character set and
+  nothing else.
+
+`sample-receipt.bin` on the rig is now this real capture rather than a synthetic
+one, so `run-printer-test.cmd` replays an actual report through the parser.
