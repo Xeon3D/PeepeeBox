@@ -247,15 +247,6 @@ MainWindow::MainWindow(QWidget *parent)
         connect(paper_watch, &QTimer::timeout, this, [this]() {
             static bool shown = false;
 
-            /* A hard reset builds a new printer, which comes up plugged in.
-               The toolbar is what the user set, so it wins. */
-            if (prn_cp80_present()) {
-                const bool want = ui->actionPrinter_connected->isChecked();
-
-                if (want != (prn_cp80_connected() != 0))
-                    prn_cp80_set_connected(want ? 1 : 0);
-            }
-
             if (!shown) {
                 if (!prn_cp80_dirty())
                     return;
@@ -1519,8 +1510,49 @@ static QPlainTextEdit *cp80_trace    = nullptr;
 static size_t          cp80_paper_at = 0;
 static size_t          cp80_trace_at = 0;
 
+/* The paper comes out at the speed the paper came out.
+
+   A 24-column impact printer of this vintage manages something like two and a
+   half lines a second -- the head has to physically cross the paper and the
+   platen has to advance -- while the link feeding it runs at 9600 baud, which is
+   forty times faster than that.  So the report arrives in one burst and the
+   paper should not.  Text is held here and released a line at a time, which is
+   also the only way to watch a report and see where it goes wrong. */
+#define CP80_LINE_MS 400
+
+static QString  cp80_queued;           /* printed by the guest, not yet on paper */
+static QTimer  *cp80_feed = nullptr;
+
 static void
-cp80_pump_one(int which, size_t *at, QPlainTextEdit *view)
+cp80_feed_line()
+{
+    if ((cp80_paper == nullptr) || cp80_queued.isEmpty())
+        return;
+
+    const int at = cp80_queued.indexOf(QLatin1Char('\n'));
+
+    /* Nothing but a partial line yet -- wait for the rest rather than tear a
+       line in half.  The report always ends its records with LF. */
+    if (at < 0)
+        return;
+
+    const QString line = cp80_queued.left(at + 1);
+
+    cp80_queued.remove(0, at + 1);
+
+    /* Follow the paper only while the viewer is already at the bottom; scrolling
+       back to read something should not be yanked away by the next line. */
+    QScrollBar *bar    = cp80_paper->verticalScrollBar();
+    const bool  follow = (bar->value() >= (bar->maximum() - 4));
+
+    cp80_paper->moveCursor(QTextCursor::End);
+    cp80_paper->insertPlainText(line);
+    if (follow)
+        bar->setValue(bar->maximum());
+}
+
+static void
+cp80_pump_one(int which, size_t *at, QPlainTextEdit *view, QString *queue)
 {
     char buf[4097];
 
@@ -1528,23 +1560,29 @@ cp80_pump_one(int which, size_t *at, QPlainTextEdit *view)
         int          reset = 0;
         const size_t n     = prn_cp80_take(which, at, &reset, buf, sizeof(buf) - 1);
 
-        if (reset)
-            view->clear();
+        if (reset) {
+            if (view != nullptr)
+                view->clear();
+            if (queue != nullptr)
+                queue->clear();
+        }
         if (n == 0)
             break;
 
         buf[n] = 0;
 
-        /* Keep following the paper only if the viewer is already at the end;
-           scrolling back to read something should not be yanked away by the
-           next line arriving. */
+        if (queue != nullptr) {
+            *queue += QString::fromUtf8(buf);
+            continue;
+        }
+
         QScrollBar *bar    = view->verticalScrollBar();
         const bool  follow = (bar->value() >= (bar->maximum() - 4));
 
         view->moveCursor(QTextCursor::End);
         view->insertPlainText(QString::fromUtf8(buf));
         if (follow)
-            view->verticalScrollBar()->setValue(view->verticalScrollBar()->maximum());
+            bar->setValue(bar->maximum());
     }
 }
 
@@ -1554,8 +1592,10 @@ cp80_pump()
     if (cp80_win == nullptr)
         return;
 
-    cp80_pump_one(PRN_CP80_PAPER, &cp80_paper_at, cp80_paper);
-    cp80_pump_one(PRN_CP80_TRACE, &cp80_trace_at, cp80_trace);
+    /* The paper is queued and fed on its own timer; the trace is not, because
+       the trace is for reading afterwards and waiting on it helps nobody. */
+    cp80_pump_one(PRN_CP80_PAPER, &cp80_paper_at, nullptr, &cp80_queued);
+    cp80_pump_one(PRN_CP80_TRACE, &cp80_trace_at, cp80_trace, nullptr);
 }
 
 static void
@@ -1575,6 +1615,23 @@ cp80_show(QWidget *parent)
         cp80_paper->setPlaceholderText(
             QObject::tr("The paper. Nothing has been printed yet."));
 
+        /* Paper, not a text box.  Fixed colours rather than theme ones on
+           purpose: a till roll is off-white under any desktop theme, and the
+           point of this pane is that it looks like the thing coming out of the
+           machine. */
+        cp80_paper->setStyleSheet(QStringLiteral(
+            "QPlainTextEdit { background: #f7f3e6; color: #2b2721;"
+            " border: 1px solid #cabfa6; border-radius: 2px;"
+            " selection-background-color: #c8bda0; }"));
+
+        if (cp80_feed == nullptr) {
+            cp80_feed = new QTimer(cp80_win);
+            QObject::connect(cp80_feed, &QTimer::timeout, cp80_win, []() {
+                cp80_feed_line();
+            });
+            cp80_feed->start(CP80_LINE_MS);
+        }
+
         cp80_trace = new QPlainTextEdit(cp80_win);
         cp80_trace->setReadOnly(true);
         cp80_trace->setFont(mono);
@@ -1589,28 +1646,24 @@ cp80_show(QWidget *parent)
         split->setStretchFactor(0, 3);
         split->setStretchFactor(1, 2);
 
-        /* Which port to listen on.  A serial attachment is made once, at
-           machine start, so this cannot move a live printer -- it stores the
-           choice and the next hard reset picks it up.  Saying that on the
-           control beats a user concluding the setting does not work. */
+        /* Plugged in or not, and it belongs here rather than on the toolbar:
+           it is the printer's own switch, and with the unit visible the
+           DATAPRINT menu drops straight into the print dialog with no way back
+           to the rest of it. */
+        auto *plug = new QCheckBox(QObject::tr("Dataprint connected"), cp80_win);
+
+        plug->setChecked(prn_cp80_connected() != 0);
+        plug->setToolTip(QObject::tr(
+            "Unplug to stop the keepalive and drop CTS, DSR and DCD, so the "
+            "guest sees no cable rather than a device that has gone quiet"));
+
+        QObject::connect(plug, &QCheckBox::toggled, cp80_win, [](bool on) {
+            prn_cp80_set_connected(on ? 1 : 0);
+        });
+
         char where[64] = "";
 
         prn_cp80_where(where, sizeof(where));
-
-        auto *port = new QComboBox(cp80_win);
-
-        port->addItem(QObject::tr("COM2 (what the software uses)"), 1);
-        port->addItem(QStringLiteral("COM1"), 0);
-        port->addItem(QStringLiteral("COM3"), 2);
-        port->addItem(QStringLiteral("COM4"), 3);
-        port->addItem(QObject::tr("COM1 and COM2"), PRN_CP80_PORT_BOTH);
-        port->setCurrentIndex(port->findData(prn_cp80_port_setting()));
-        port->setToolTip(QObject::tr("Applies on the next hard reset"));
-
-        QObject::connect(port, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                         cp80_win, [port](int at) {
-            prn_cp80_set_port_setting(port->itemData(at).toInt());
-        });
 
         const char *raw = prn_cp80_raw_path();
         auto       *lbl = new QLabel(cp80_win);
@@ -1631,6 +1684,7 @@ cp80_show(QWidget *parent)
             prn_cp80_clear();
             cp80_paper->clear();
             cp80_trace->clear();
+            cp80_queued.clear();
             cp80_paper_at = 0;
             cp80_trace_at = 0;
         });
@@ -1645,16 +1699,17 @@ cp80_show(QWidget *parent)
 
             QFile out(to);
 
+            /* Whatever is still feeding counts as printed for this purpose --
+               nobody wants to wait for the roll to catch up before saving. */
             if (out.open(QIODevice::WriteOnly | QIODevice::Text))
-                out.write(cp80_paper->toPlainText().toUtf8());
+                out.write((cp80_paper->toPlainText() + cp80_queued).toUtf8());
             else
                 QMessageBox::warning(parent, QObject::tr("Save paper"),
                                      QObject::tr("Could not write %1").arg(to));
         });
 
         auto *row = new QHBoxLayout;
-        row->addWidget(new QLabel(QObject::tr("Port:"), cp80_win));
-        row->addWidget(port);
+        row->addWidget(plug);
         row->addStretch(1);
         row->addWidget(tear);
         row->addWidget(save);
@@ -1667,16 +1722,6 @@ cp80_show(QWidget *parent)
 
     cp80_win->show();
     cp80_win->raise();
-}
-
-/* Unplugging is not cosmetic: it stops the ENQ keepalive and drops CTS, DSR and
-   DCD, so the guest sees what it would see with no cable.  That is the only way
-   back to the rest of the DATAPRINT menu, which drops straight into the print
-   dialog whenever it can find the unit. */
-void
-MainWindow::on_actionPrinter_connected_toggled(bool checked)
-{
-    prn_cp80_set_connected(checked ? 1 : 0);
 }
 
 void

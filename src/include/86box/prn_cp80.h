@@ -29,26 +29,19 @@ extern "C" {
    else claimed the port first. */
 extern int prn_cp80_present(void);
 
-/* Which port it is set to: 0..3 for COM1..COM4, or both of the first two.
-   Both is the default, because which port the cabinet's printer hangs off is
-   not known and a guest stuck on "waiting for printer" does not say where it
-   was looking. */
-#define PRN_CP80_PORT_BOTH 4
+/* Plugged in or not, and it starts **unplugged**.  With the unit visible the
+   DATAPRINT menu drops straight into the print dialog, so a cabinet that boots
+   connected is one whose operator menu cannot be reached.
 
-/* Plugged in or not.  Unplugging stops the ENQ keepalive and drops CTS, DSR and
-   DCD, so the software goes back to offering "Connect the interfaces of the
-   Dataprint" instead of dropping straight into the print dialog -- which is the
-   only way to reach the rest of that menu once it can see a printer. */
+   Unplugging stops the ENQ keepalive and drops CTS, DSR and DCD, so the guest
+   sees no cable rather than a device that has merely gone quiet, and the
+   software goes back to offering "Connect the interfaces of the Dataprint". */
 extern int  prn_cp80_connected(void);
 extern void prn_cp80_set_connected(int on);
 
-extern int  prn_cp80_port_setting(void);
-
-/* Takes effect on the next hard reset -- a serial attachment is made once, at
-   machine start. */
-extern void prn_cp80_set_port_setting(int setting);
-
-/* Where it is actually listening, as text: "COM1", or "COM1 and COM2". */
+/* Where it is listening, as text.  Always COM2 -- MENU.EXE programs 0x2F8 by
+   hand and holds no other port as an immediate -- unless PEEPEEBOX_PRN_PORT
+   moved it for this run. */
 extern void prn_cp80_where(char *out, size_t len);
 
 /* Has the guest ever sent it a byte?  For deciding whether to put the window on

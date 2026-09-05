@@ -58,6 +58,7 @@
 #include <86box/serial.h>
 #include <86box/plat.h>
 #include <86box/thread.h>
+#include <86box/photoplay.h>
 #include <86box/prn_cp80.h>
 
 #define CP80_RAW_FILE  "cp80-raw.bin"
@@ -77,16 +78,12 @@ typedef struct cp80_buf_t {
     int    full;                   /* hit the cap and said so */
 } cp80_buf_t;
 
-/* The port setting.  0..3 are COM1..COM4; CP80_PORT_BOTH listens on both of the
-   first two at once.
-
-   COM2 is the default and it is settled rather than assumed: MENU.EXE programs
-   0x2F8 by hand and contains no other port as an immediate.  "Both" was the
-   default while that was still open and is kept only for an image that turns
-   out to differ -- it is the wrong thing to run now, because the ENQ keepalive
-   would then be pushed at a port the cabinet never had a Dataprint on. */
-#define CP80_PORT_BOTH 4
-#define CP80_PORTS_MAX 2
+/* COM2, and not a setting.  MENU.EXE programs 0x2F8 by hand and holds no other
+   port as an immediate, so there is nothing to choose between.  There was a
+   dropdown here while that was still open; a control whose only correct value
+   is the default is a way to break a working setup. */
+#define CP80_PORT      1           /* zero-based: COM2 */
+#define CP80_PORTS_MAX 1
 
 typedef struct cp80_port_t {
     struct cp80_t *dev;
@@ -743,18 +740,6 @@ prn_cp80_set_connected(int on)
     pclog("CP80: Dataprint %s\n", dev->connected ? "plugged in" : "unplugged");
 }
 
-int
-prn_cp80_port_setting(void)
-{
-    return (cp80_inst != NULL) ? cp80_inst->setting : device_get_config_int("port");
-}
-
-void
-prn_cp80_set_port_setting(int setting)
-{
-    device_set_config_int("port", setting);
-}
-
 /* "COM1", or "COM1 and COM2", for the window to say where it is listening. */
 void
 prn_cp80_where(char *out, size_t len)
@@ -875,21 +860,17 @@ cp80_self_test(cp80_t *dev, const char *path)
           dev->paper.s ? dev->paper.s : "", dev->trace.s ? dev->trace.s : "");
 }
 
-/* PEEPEEBOX_PRN_PORT=1, 2, 3, 4 or "both" overrides the setting for one run,
-   which beats a trip through the settings and a reset when the whole question
-   is which port to try next. */
+/* PEEPEEBOX_PRN_PORT=1..4 still moves it for one run.  Not a setting, because
+   the answer is known -- but a knob for the next image that disagrees, without
+   which finding that out means a rebuild. */
 static int
 cp80_setting(void)
 {
     const char *env = getenv("PEEPEEBOX_PRN_PORT");
 
-    if (env != NULL) {
-        if ((env[0] == 'b') || (env[0] == 'B'))
-            return CP80_PORT_BOTH;
-        if ((env[0] >= '1') && (env[0] <= '4'))
-            return env[0] - '1';
-    }
-    return device_get_config_int("port");
+    if ((env != NULL) && (env[0] >= '1') && (env[0] <= '4'))
+        return env[0] - '1';
+    return CP80_PORT;
 }
 
 static int
@@ -1024,13 +1005,9 @@ cp80_attach(cp80_t *dev, int port)
         return;
     }
 
-    /* Online, paper in, not busy.  A serial printer that never says it is ready
-       is a guest that waits for it forever, and a run that produces no bytes
-       looks exactly like a guest that never wanted to print. */
-    serial_set_cts(p->serial, 1);
-    serial_set_dsr(p->serial, 1);
-    serial_set_dcd(p->serial, 1);
-
+    /* Modem lines are set from the connected state once everything is up; see
+       cp80_wire.  Online means CTS, DSR and DCD asserted, because a serial
+       printer that never says it is ready is a guest that waits forever. */
     dev->nports++;
     pclog("CP80: receipt printer listening on COM%d, ready\n", port + 1);
 }
@@ -1043,6 +1020,26 @@ cp80_init(UNUSED(const device_t *info))
     if (dev == NULL)
         return NULL;
 
+    /* Not on I.G.O. 8.  That generation moved its dongle onto COM2 -- a serial
+       smart-card reader, in dongle_igo8.c -- so the port is spoken for and two
+       devices on it would be a fight neither wins.  serial_attach would refuse
+       the second comer anyway, but failing quietly at the wrong layer is how a
+       morning goes missing; say so instead.
+
+       Whether these cabinets carried a Dataprint at all on 2008 hardware, and
+       where it went if they did, is a separate question for later. */
+    {
+        char banner[64] = "";
+
+        if (photoplay_image_ident(banner, sizeof(banner), NULL, 0) &&
+            (strstr(banner, "2008") != NULL)) {
+            pclog("CP80: %s is an I.G.O. 8 image and its dongle owns COM2; "
+                  "no printer attached\n", banner);
+            free(dev);
+            return NULL;
+        }
+    }
+
     dev->lock = thread_create_mutex();
     if (dev->lock == NULL) {
         free(dev);
@@ -1050,11 +1047,7 @@ cp80_init(UNUSED(const device_t *info))
     }
 
     dev->setting = cp80_setting();
-    if (dev->setting == CP80_PORT_BOTH) {
-        cp80_attach(dev, 0);
-        cp80_attach(dev, 1);
-    } else
-        cp80_attach(dev, dev->setting);
+    cp80_attach(dev, dev->setting);
 
     if (dev->nports == 0) {
         pclog("CP80: no free port; no printer attached\n");
@@ -1063,7 +1056,12 @@ cp80_init(UNUSED(const device_t *info))
         return NULL;
     }
 
-    dev->connected = 1;
+    /* Unplugged until asked.  With the unit visible the DATAPRINT menu drops
+       straight into the print dialog and there is no way back to the rest of
+       it, so a cabinet that boots with the printer already connected is a
+       cabinet whose operator menu you cannot use. */
+    dev->connected = 0;
+    cp80_wire(dev, 0);
     dev->enq_on    = (device_get_config_int_ex("enq", 1) != 0);
     {
         const char *env = getenv("PEEPEEBOX_PRN_ENQ");
@@ -1120,26 +1118,6 @@ cp80_close(void *priv)
 
 static const device_config_t cp80_config[] = {
   // clang-format off
-    {
-        .name           = "port",
-        .description    = "Serial Port",
-        .type           = CONFIG_SELECTION,
-        .default_string = NULL,
-        /* COM2, because MENU.EXE programs 0x2F8 by hand and nothing else.
-           The other choices stay for images that turn out to differ. */
-        .default_int    = 1,
-        .file_filter    = NULL,
-        .spinner        = { 0 },
-        .selection      = {
-            { .description = "COM2 (what the software uses)", .value = 1 },
-            { .description = "COM1",          .value = 0 },
-            { .description = "COM3",          .value = 2 },
-            { .description = "COM4",          .value = 3 },
-            { .description = "COM1 and COM2", .value = CP80_PORT_BOTH },
-            { .description = ""                          }
-        },
-        .bios           = { { 0 } }
-    },
     {
         .name           = "enq",
         .description    = "Announce itself (ENQ)",
