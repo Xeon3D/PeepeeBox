@@ -65,9 +65,28 @@ typedef struct cp80_buf_t {
     int    full;                   /* hit the cap and said so */
 } cp80_buf_t;
 
+/* The port setting.  0..3 are COM1..COM4; CP80_PORT_BOTH listens on COM1 and
+   COM2 at once.
+
+   Both is the default, and it is not a hedge.  Which port the cabinet's printer
+   hangs off is unknown -- the DB9 is an extension of an onboard header and
+   nothing says which one -- and a guest that sits on "waiting for printer"
+   tells you nothing about where it was looking.  Listening on both answers that
+   in one run, and the trace names the port the first byte arrives on. */
+#define CP80_PORT_BOTH 4
+#define CP80_PORTS_MAX 2
+
+typedef struct cp80_port_t {
+    struct cp80_t *dev;
+    serial_t      *serial;
+    int            port;
+    int            seen;           /* a byte has arrived here */
+} cp80_port_t;
+
 typedef struct cp80_t {
-    serial_t  *serial;
-    int        port;
+    cp80_port_t ports[CP80_PORTS_MAX];
+    int         nports;
+    int         setting;
 
     cp80_buf_t paper;
     cp80_buf_t trace;
@@ -512,17 +531,24 @@ cp80_byte(cp80_t *dev, uint8_t c)
 static void
 cp80_write(UNUSED(serial_t *serial), void *priv, uint8_t val)
 {
-    cp80_t *dev = (cp80_t *) priv;
+    cp80_port_t *p   = (cp80_port_t *) priv;
+    cp80_t      *dev = (p != NULL) ? p->dev : NULL;
 
     if (dev == NULL)
         return;
 
     thread_wait_mutex(dev->lock);
 
-    if (!dev->dirty) {
-        dev->dirty = 1;
-        pclog("CP80: the guest has started printing\n");
+    /* Which port it turned up on is the answer to the question this device was
+       built for, so it is said once, loudly, per port. */
+    if (!p->seen) {
+        p->seen = 1;
+        pclog("CP80: the guest is printing to COM%d\n", p->port + 1);
+        cp80_tracef(dev, "-- printing to COM%d --\n", p->port + 1);
     }
+
+    if (!dev->dirty)
+        dev->dirty = 1;
 
     if (!dev->raw_tried) {
         dev->raw_tried = 1;
@@ -547,7 +573,38 @@ cp80_write(UNUSED(serial_t *serial), void *priv, uint8_t val)
 int
 prn_cp80_present(void)
 {
-    return (cp80_inst != NULL) && (cp80_inst->serial != NULL);
+    return (cp80_inst != NULL) && (cp80_inst->nports > 0);
+}
+
+int
+prn_cp80_port_setting(void)
+{
+    return (cp80_inst != NULL) ? cp80_inst->setting : device_get_config_int("port");
+}
+
+void
+prn_cp80_set_port_setting(int setting)
+{
+    device_set_config_int("port", setting);
+}
+
+/* "COM1", or "COM1 and COM2", for the window to say where it is listening. */
+void
+prn_cp80_where(char *out, size_t len)
+{
+    const cp80_t *dev = cp80_inst;
+
+    if ((out == NULL) || (len == 0))
+        return;
+    if ((dev == NULL) || (dev->nports == 0)) {
+        snprintf(out, len, "not attached to any port");
+        return;
+    }
+    if (dev->nports == 1)
+        snprintf(out, len, "COM%d", dev->ports[0].port + 1);
+    else
+        snprintf(out, len, "COM%d and COM%d",
+                 dev->ports[0].port + 1, dev->ports[1].port + 1);
 }
 
 int
@@ -651,6 +708,70 @@ cp80_self_test(cp80_t *dev, const char *path)
           dev->paper.s ? dev->paper.s : "", dev->trace.s ? dev->trace.s : "");
 }
 
+/* PEEPEEBOX_PRN_PORT=1, 2, 3, 4 or "both" overrides the setting for one run,
+   which beats a trip through the settings and a reset when the whole question
+   is which port to try next. */
+static int
+cp80_setting(void)
+{
+    const char *env = getenv("PEEPEEBOX_PRN_PORT");
+
+    if (env != NULL) {
+        if ((env[0] == 'b') || (env[0] == 'B'))
+            return CP80_PORT_BOTH;
+        if ((env[0] >= '1') && (env[0] <= '4'))
+            return env[0] - '1';
+    }
+    return device_get_config_int("port");
+}
+
+/* The guest raising DTR is it opening the port.  That matters more than it
+   sounds: a run where DTR goes up on COM2 and not one byte follows says the
+   software found the port and is waiting for something from us, which is a
+   completely different problem from it looking at a port we are not on.  With
+   only the byte stream to go on, those two produce the same empty capture. */
+static void
+cp80_dtr(UNUSED(serial_t *serial), int status, void *priv)
+{
+    cp80_port_t *p = (cp80_port_t *) priv;
+
+    if (p == NULL)
+        return;
+
+    pclog("CP80: COM%d DTR %s by the guest\n", p->port + 1,
+          status ? "raised" : "dropped");
+}
+
+static void
+cp80_attach(cp80_t *dev, int port)
+{
+    cp80_port_t *p;
+
+    if (dev->nports >= CP80_PORTS_MAX)
+        return;
+
+    p         = &dev->ports[dev->nports];
+    p->dev    = dev;
+    p->port   = port;
+    p->seen   = 0;
+    p->serial = serial_attach_ex_2(port, NULL, cp80_write, cp80_dtr, p);
+
+    if (p->serial == NULL) {
+        pclog("CP80: COM%d is already taken; not listening there\n", port + 1);
+        return;
+    }
+
+    /* Online, paper in, not busy.  A serial printer that never says it is ready
+       is a guest that waits for it forever, and a run that produces no bytes
+       looks exactly like a guest that never wanted to print. */
+    serial_set_cts(p->serial, 1);
+    serial_set_dsr(p->serial, 1);
+    serial_set_dcd(p->serial, 1);
+
+    dev->nports++;
+    pclog("CP80: receipt printer listening on COM%d, ready\n", port + 1);
+}
+
 static void *
 cp80_init(UNUSED(const device_t *info))
 {
@@ -659,27 +780,27 @@ cp80_init(UNUSED(const device_t *info))
     if (dev == NULL)
         return NULL;
 
-    dev->port   = device_get_config_int("port");
-    dev->lock   = thread_create_mutex();
-    dev->serial = serial_attach(dev->port, NULL, cp80_write, dev);
-
-    if ((dev->serial == NULL) || (dev->lock == NULL)) {
-        pclog("CP80: COM%d is not free; no printer attached\n", dev->port + 1);
-        if (dev->lock != NULL)
-            thread_close_mutex(dev->lock);
+    dev->lock = thread_create_mutex();
+    if (dev->lock == NULL) {
         free(dev);
         return NULL;
     }
 
-    /* Online, paper in, not busy.  A serial printer that never says it is ready
-       is a guest that waits for it forever, and a run that produces no bytes
-       looks exactly like a guest that never wanted to print. */
-    serial_set_cts(dev->serial, 1);
-    serial_set_dsr(dev->serial, 1);
-    serial_set_dcd(dev->serial, 1);
+    dev->setting = cp80_setting();
+    if (dev->setting == CP80_PORT_BOTH) {
+        cp80_attach(dev, 0);
+        cp80_attach(dev, 1);
+    } else
+        cp80_attach(dev, dev->setting);
+
+    if (dev->nports == 0) {
+        pclog("CP80: no free port; no printer attached\n");
+        thread_close_mutex(dev->lock);
+        free(dev);
+        return NULL;
+    }
 
     cp80_inst = dev;
-    pclog("CP80: receipt printer on COM%d, ready\n", dev->port + 1);
 
     {
         const char *test = getenv("PEEPEEBOX_PRN_TEST");
@@ -715,15 +836,16 @@ static const device_config_t cp80_config[] = {
         .description    = "Serial Port",
         .type           = CONFIG_SELECTION,
         .default_string = NULL,
-        .default_int    = 0,
+        .default_int    = CP80_PORT_BOTH,
         .file_filter    = NULL,
         .spinner        = { 0 },
         .selection      = {
-            { .description = "COM1", .value = 0 },
-            { .description = "COM2", .value = 1 },
-            { .description = "COM3", .value = 2 },
-            { .description = "COM4", .value = 3 },
-            { .description = ""                 }
+            { .description = "COM1 and COM2", .value = CP80_PORT_BOTH },
+            { .description = "COM1",          .value = 0 },
+            { .description = "COM2",          .value = 1 },
+            { .description = "COM3",          .value = 2 },
+            { .description = "COM4",          .value = 3 },
+            { .description = ""                          }
         },
         .bios           = { { 0 } }
     },

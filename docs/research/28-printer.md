@@ -94,3 +94,31 @@ Open: whether the printer is on COM1 on the real cabinets. COM1 is the default
 because that is where it was asked for; COM3 is the touchscreen on the I.G.O. 6
 rig and COM2 is free, so all three are available and the device takes a `port`
 setting.
+
+## 6. Which port, and telling apart two ways of finding nothing
+
+The guest puts up a dialog that waits for a printer and never leaves it, so the
+software **is** looking for one -- the question is where.
+
+The port is now a setting: **COM1 and COM2** (the default), COM1, COM2, COM3 or
+COM4, on a dropdown in the printer window and overridable for one run with
+`PEEPEEBOX_PRN_PORT=1|2|3|4|both`. A serial attachment is made once at machine
+start, so the dropdown takes effect on the next hard reset and says so.
+
+Listening on both by default is not a hedge. A guest stuck on "waiting for
+printer" does not say which port it was looking at, so listening on both and
+letting the log name it answers in one run what would otherwise take four.
+
+**DTR is reported as well as data**, and that is the part that matters:
+
+| Log says | Diagnosis |
+|---|---|
+| DTR raised, no bytes | **Right port, wrong protocol.** The software opened it and is waiting for something back -- a status reply, most likely. |
+| No DTR, no bytes | **Wrong port.** It is not looking at COM1 or COM2, and LPT is the next place. |
+| Bytes | `cp80-raw.bin` settles the command set. |
+
+With only the byte stream to go on, the first two produce identical empty
+captures. That is the same trap as the port B run in [27](27-io-card.md#17),
+where "no counter moved" and "no coin was pressed" logged the same way -- an
+instrument that cannot tell its own null result from not being used is not an
+instrument.

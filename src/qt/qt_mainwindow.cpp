@@ -1580,13 +1580,40 @@ cp80_show(QWidget *parent)
         split->setStretchFactor(0, 3);
         split->setStretchFactor(1, 2);
 
+        /* Which port to listen on.  A serial attachment is made once, at
+           machine start, so this cannot move a live printer -- it stores the
+           choice and the next hard reset picks it up.  Saying that on the
+           control beats a user concluding the setting does not work. */
+        char where[64] = "";
+
+        prn_cp80_where(where, sizeof(where));
+
+        auto *port = new QComboBox(cp80_win);
+
+        port->addItem(QObject::tr("COM1 and COM2"), PRN_CP80_PORT_BOTH);
+        port->addItem(QStringLiteral("COM1"), 0);
+        port->addItem(QStringLiteral("COM2"), 1);
+        port->addItem(QStringLiteral("COM3"), 2);
+        port->addItem(QStringLiteral("COM4"), 3);
+        port->setCurrentIndex(port->findData(prn_cp80_port_setting()));
+        port->setToolTip(QObject::tr("Applies on the next hard reset"));
+
+        QObject::connect(port, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                         cp80_win, [port](int at) {
+            prn_cp80_set_port_setting(port->itemData(at).toInt());
+        });
+
         const char *raw = prn_cp80_raw_path();
         auto       *lbl = new QLabel(cp80_win);
 
-        lbl->setText(raw ? QObject::tr("Every byte is also going to %1")
-                               .arg(QString::fromUtf8(raw))
-                         : QObject::tr("Every byte will also be captured to a file"));
+        lbl->setText(QObject::tr("Listening on %1. %2")
+                         .arg(QString::fromUtf8(where))
+                         .arg(raw ? QObject::tr("Every byte is also going to %1.")
+                                        .arg(QString::fromUtf8(raw))
+                                  : QObject::tr("Every byte will also be captured "
+                                                "to a file.")));
         lbl->setEnabled(false);
+        lbl->setWordWrap(true);
 
         auto *tear = new QPushButton(QObject::tr("Tear off"), cp80_win);
         auto *save = new QPushButton(QObject::tr("Save paper…"), cp80_win);
@@ -1617,13 +1644,15 @@ cp80_show(QWidget *parent)
         });
 
         auto *row = new QHBoxLayout;
-        row->addWidget(lbl);
+        row->addWidget(new QLabel(QObject::tr("Port:"), cp80_win));
+        row->addWidget(port);
         row->addStretch(1);
         row->addWidget(tear);
         row->addWidget(save);
 
         auto *box = new QVBoxLayout(cp80_win);
         box->addWidget(split);
+        box->addWidget(lbl);
         box->addLayout(row);
     }
 

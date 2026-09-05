@@ -29,6 +29,21 @@ extern "C" {
    else claimed the port first. */
 extern int prn_cp80_present(void);
 
+/* Which port it is set to: 0..3 for COM1..COM4, or both of the first two.
+   Both is the default, because which port the cabinet's printer hangs off is
+   not known and a guest stuck on "waiting for printer" does not say where it
+   was looking. */
+#define PRN_CP80_PORT_BOTH 4
+
+extern int  prn_cp80_port_setting(void);
+
+/* Takes effect on the next hard reset -- a serial attachment is made once, at
+   machine start. */
+extern void prn_cp80_set_port_setting(int setting);
+
+/* Where it is actually listening, as text: "COM1", or "COM1 and COM2". */
+extern void prn_cp80_where(char *out, size_t len);
+
 /* Has the guest ever sent it a byte?  For deciding whether to put the window on
    screen without being asked. */
 extern int prn_cp80_dirty(void);
