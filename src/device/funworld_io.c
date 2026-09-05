@@ -36,8 +36,13 @@
  *
  *             So the coins and the buttons arrive on A and C, and B is what
  *             drives the ULN2003 -- the acceptor's inhibit line, the counters
- *             and the lamps.  Which *bit* is which is still open, and the map
- *             below is a guess kept in one place until it is not.
+ *             and the lamps.
+ *
+ *             Which bit is which was then measured, one line at a time, against
+ *             the operator setup's book-keeping page on an I.G.O. 6 rig: six
+ *             coins on A6, A7 and C4..C7, four notes on C0..C3, and the two
+ *             groups rest opposite ways round.  The map and the idle levels
+ *             below carry the working; neither is a guess any more.
  *
  * Authors:    The HUEG PP team.
  *
@@ -71,16 +76,14 @@
 #define FWIO_PROBE_FIRST 0x200
 #define FWIO_PROBE_LAST  0x2fc
 
-/* How long a coin holds its line.  The C120 says 100 ms +/- 20%, and the host
-   is required to want at least 50 ms of it. */
-/* The C120 holds an accept line for 100 ms and its manual requires the host to
-   see at least 50 of them.  This software does not appear to debounce that way:
-   one 100 ms hold books *five* coins on a coin line, while the same hold books
-   exactly one note on a note line.  So the two groups are read by different code
-   and the coin side counts something per poll rather than per edge.
+/* How long a coin holds its line.  The C120 says 100 ms +/- 20%, and the host is
+   required to want at least 50 ms of it.  One hold books one coin, confirmed on
+   the rig once the idle levels were right.
 
-   PEEPEEBOX_IO_MS overrides the hold so the width that books one coin can be
-   found by measurement instead of argued about. */
+   This was for a while believed to be broken -- one hold appeared to book five
+   coins -- which was the wrong idle level rather than a debounce fault; see the
+   idle comment below.  PEEPEEBOX_IO_MS is kept because measuring a width is
+   still cheaper than arguing about one, not because anything needs it. */
 static double fwio_hold_ms = 100.0;
 
 #define FWIO_COIN_MS  fwio_hold_ms
@@ -93,7 +96,7 @@ typedef struct fwio_t {
     uint8_t    in[3];              /* what the card presents to the guest */
 
     pc_timer_t release[FWIO_IN_LINES];
-    uint8_t    held;               /* bitmap of lines currently asserted  */
+    uint16_t   held;               /* bitmap of lines currently asserted  */
 
     pc_timer_t train;              /* a burst of pulses on one line       */
     int        train_left;
@@ -129,68 +132,84 @@ fwio_log(const char *fmt, ...)
 
 /* What the inputs read when nothing is happening.
 
-   This is the guess that matters.  A C120's accept output is active low, but the
-   74HC14 between it and the 8255 inverts, so whether "no coin" arrives at the
-   port as a 1 or a 0 depends on wiring nobody has traced.  Idling high and
-   pulsing low found the operator setup on A0 and the CRC check on A1, and
-   nothing at all on the other fourteen lines -- which is what a wrong idle level
-   looks like: the two lines wired the other way answer, and every line that is
-   not has been sitting asserted since boot and so never makes a transition.
+   Two devices share this loom and they rest opposite ways round, which is what
+   made every earlier reading of the card wrong.
 
-   PEEPEEBOX_IO_IDLE=00 rests them low instead, and a pulse then drives high.  An
-   environment variable rather than a rebuild, because it is one run either way.
+   The six C120 coin lines rest **high**, and a coin pulls one **low** -- exactly
+   what the validator's manual says its open-collector outputs do.  The four bill
+   validator lines rest **low** and a note drives one **high**.  A0 (the setup
+   button) and A1 (the CRC check) rest high, with the coins.
 
-   It does not apply to the two lines already known, and it must not: A0 and A1
-   answer a falling edge, so resting them low holds them asserted from power-on.
-   The first attempt at idling low went straight into the CRC check before the
-   machine had finished booting, because A1 was held down the whole time.  They
-   keep the idle they are known to want whatever the experiment is doing. */
-#define FWIO_A_KNOWN 0x03          /* A0 the setup button, A1 the CRC check */
+       port A  idle FF   A0 setup, A1 CRC, A6 A7 coins, A2..A5 nothing
+       port B  output    never read
+       port C  idle F0   C0..C3 the notes, C4..C7 coins
 
-static uint8_t fwio_idle = 0xff;
+   How that was settled.  With everything rested low -- the old
+   PEEPEEBOX_IO_IDLE=00 -- pulsing one coin line high booked a coin on *each of
+   the other five*, while pulsing a note line booked its one note.  Six presses,
+   six sets of five, and every set is the six coin channels minus one:
 
-/* PEEPEEBOX_IO_PHASE: only present an asserted line while port B bit 7 is 0 or 1.
+       A6 -> everything but 2.00       C4 -> everything but 0.10
+       A7 -> everything but TOKEN 10   C5 -> everything but 0.20
+                                       C6 -> everything but 0.50
+                                       C7 -> everything but 1.00
 
-   B7 is not idle -- the software drives it as a roughly 3 Hz square wave for the
-   whole run, thousands of transitions, which is not what a coin counter or a
-   lamp looks like.  A card with a ULN2003 and one spare output line squaring away
-   like that is doing one of two things: kicking a watchdog, or **selecting a bank
-   of inputs**.  If it is a bank select, then port A means one set of signals when
-   B7 is low and another when it is high, and a line held across both phases is
-   contradictory rather than asserted -- which would look exactly like what has
-   been happening: the card answers, the software polls it twenty thousand times,
-   and nothing arrives.
+   That is not six coin lines misfiring.  It is the software reading the port and
+   booking every coin line it finds low -- finding five, because we were resting
+   them all there, and the pressed line was the only one we had lifted.  So the
+   coin a line carries is the one *missing* from its set, and the notes read
+   correctly all along because they are the group we happened to be driving the
+   right way up.  (Marcos, on the I.G.O. 6 rig, 2026-09-05.)
 
-   With this set, an asserted line is presented only in the chosen phase and reads
-   idle in the other. */
-static int  fwio_phase        = -1;
+   It also disposes of the "one 100 ms hold books five coins" defect recorded in
+   the research notes: never five counts of one coin, but one count on each of
+   five other channels.  There is nothing wrong with the debounce.
+
+   PEEPEEBOX_IO_IDLE=ff,ff,f0 overrides the three ports in order, for when some
+   other image disagrees. */
+static uint8_t fwio_idle[3] = { 0xff, 0xff, 0xf0 };
+
+/* There was a PEEPEEBOX_IO_PHASE here, which presented an asserted line only
+   while port B bit 7 was high or low.  It existed because B7 looked like a ~3 Hz
+   square wave and a spare ULN2003 output squaring away like that reads as a bank
+   select.  It is not a bank select and it is not a square wave: **B7 is a
+   mechanical coin counter**, and what looked like a free-running wave was the
+   counter being driven five times per press, back when a press booked five
+   channels.  The knob is gone with the theory. */
+
+/* PEEPEEBOX_IO_HOLD=A2,A3 -- lines pinned to their asserted state for the whole
+   run, on top of whatever the walk is doing.
+
+   The walk clears every line to idle before each click, which is right for
+   finding a pulse and wrong if some line has to be *held* for the pulse to mean
+   anything -- an acceptor-enabled or acceptor-present signal, the sort of thing
+   a validator loom carries alongside its accept lines.  Anything like that has
+   been knocked down before every click so far.
+
+   A2..A5 look like the candidates, being the lines that have never answered
+   anything -- but note that until fwio_read_env() they were never tested
+   individually either, so "A2..A5 must be enabling something" is a reading of a
+   walk that was ignoring its own settings.  Try the pin first; this is for if
+   that comes back negative. */
+static uint8_t fwio_hold_mask[3] = { 0, 0, 0 };
 
 static uint8_t
 fwio_idle_of(uint8_t port)
 {
-    uint8_t idle = fwio_idle;
-
-    if (port == FWIO_PORT_A)
-        idle |= FWIO_A_KNOWN;
-
-    return idle;
+    return (port < 3) ? fwio_idle[port] : 0xff;
 }
 
 static void
 fwio_idle_all(fwio_t *dev)
 {
+    /* Held lines read asserted, which is away from their idle -- so flip them. */
     for (uint8_t port = 0; port < 3; port++)
-        dev->in[port] = fwio_idle_of(port);
+        dev->in[port] = fwio_idle_of(port) ^ fwio_hold_mask[port];
 }
 
 static void
 fwio_reset(fwio_t *dev)
 {
-    const char *env = getenv("PEEPEEBOX_IO_IDLE");
-
-    if (env != NULL)
-        fwio_idle = (uint8_t) strtoul(env, NULL, 16);
-
     dev->ctrl = 0x9b;              /* all ports input, mode 0 */
     memset(dev->out, 0x00, sizeof(dev->out));
     fwio_idle_all(dev);
@@ -209,12 +228,6 @@ fwio_read(uint16_t port, void *priv)
         case FWIO_PORT_B:
         case FWIO_PORT_C:
             ret = dev->in[reg];
-            if ((fwio_phase >= 0) && (reg != FWIO_PORT_B)) {
-                const int b7 = (dev->out[FWIO_PORT_B] >> 7) & 1;
-
-                if (b7 != fwio_phase)
-                    ret = fwio_idle_of(reg);   /* the other bank: nothing here */
-            }
             break;
 
         case FWIO_CTRL:
@@ -232,6 +245,58 @@ fwio_read(uint16_t port, void *priv)
     return ret;
 }
 
+/* Port B is the card's output side: the ULN2003 drives the coin acceptor's
+   inhibit line, the lamps, and the **two mechanical coin counters** that leave
+   on the DB15.  Which bit is which has never been known, and the guest will say
+   so if asked -- book a coin and watch which bit pulses.  That is cheaper than
+   tracing wire, and it works on any image rather than on the one cabinet whose
+   loom is in front of us.
+
+   B7 was excluded at first, on the ~3 Hz square wave recorded in the research
+   notes -- and that was a mistake waiting to happen, because there are two
+   counters and blanking a bit could hide one of them.  A plain I.G.O. 6 boot
+   writes port B exactly once, so that square wave is not a property of this
+   image anyway.  Every bit is logged and every bit is capped instead: a bit that
+   turns out to be chatty costs one line, not a gigabyte, and nothing is hidden
+   on the strength of an observation made somewhere else. */
+#define FWIO_OUT_LOG_CAP 200
+
+/* Milliseconds since the first thing this card logged.  Five pulses is a number;
+   five pulses 120 ms apart and 60 ms wide is a mechanical counter being driven,
+   and five pulses seconds apart is something else entirely.  Without the stamp
+   those readings are indistinguishable in the log, which is how "B7 is a ~3 Hz
+   square wave" got written down. */
+static uint32_t
+fwio_ms(void)
+{
+    static uint32_t base = 0;
+    const uint32_t  now  = plat_get_ticks();
+
+    if (base == 0)
+        base = now ? now : 1;
+    return now - base;
+}
+
+static void
+fwio_log_out_b(uint8_t was, uint8_t now)
+{
+    static unsigned seen[8];
+    const uint8_t   changed = (uint8_t) (was ^ now);
+
+    for (uint8_t bit = 0; bit < 8; bit++) {
+        if (!(changed & (1 << bit)))
+            continue;
+
+        if (seen[bit] < FWIO_OUT_LOG_CAP)
+            pclog("FWIO-OUT: %6u ms  port B bit %d -> %d\n",
+                  fwio_ms(), bit, (now >> bit) & 1);
+        else if (seen[bit] == FWIO_OUT_LOG_CAP)
+            pclog("FWIO-OUT: port B bit %d has changed %d times; not logging it "
+                  "again\n", bit, FWIO_OUT_LOG_CAP);
+        seen[bit]++;
+    }
+}
+
 static void
 fwio_write(uint16_t port, uint8_t val, void *priv)
 {
@@ -239,15 +304,28 @@ fwio_write(uint16_t port, uint8_t val, void *priv)
     const uint8_t reg = (uint8_t) (port - dev->base);
 
     switch (reg) {
-        case FWIO_PORT_A:
         case FWIO_PORT_B:
+            fwio_log_out_b(dev->out[reg], val);
+            dev->out[reg] = val;
+            break;
+
+        case FWIO_PORT_A:
         case FWIO_PORT_C:
             dev->out[reg] = val;
             break;
 
         case FWIO_CTRL:
             if (val & 0x80) {
-                /* Mode set: the 8255 clears its output latches. */
+                /* Mode set: the 8255 clears its output latches.  Logged because
+                   it says which ports are inputs, and a run where that differs
+                   from the 0x99 we decoded is a run whose every other reading
+                   has to be re-examined. */
+                pclog("FWIO: control %02X -- port A %s, port B %s, "
+                      "port C upper %s, lower %s\n", val,
+                      (val & 0x10) ? "in" : "out",
+                      (val & 0x02) ? "in" : "out",
+                      (val & 0x08) ? "in" : "out",   /* upper half */
+                      (val & 0x01) ? "in" : "out");  /* lower half */
                 dev->ctrl = val;
                 memset(dev->out, 0x00, sizeof(dev->out));
             } else {
@@ -270,33 +348,77 @@ fwio_write(uint16_t port, uint8_t val, void *priv)
 
 /* ------------------------------------------------------------- input lines */
 
-/* Port A bit 0 is the operator setup button.  That one is known: it was mapped as
-   coin 1 to begin with, and pressing the coin button opened the operator setup
-   instead (Marcos, on an I.G.O. 8 rig).  Nothing on port C did anything.
+/* The map, and it is measured rather than reasoned about now.
 
-   That arithmetic -- eight lines, two buttons and six coins -- was tried next and
-   is wrong.  **A1 starts the CRC check**, not the calibration, and **A2 does
-   nothing at all**.  So port A is not six coins in a row after the buttons, and
-   the coins are somewhere else; port C is the other input port and the obvious
-   place to look.  Marcos, on an I.G.O. 8 rig, 2026-09-05.
+   Ten lines, each pulled once from a cleared book-keeping page on an I.G.O. 6
+   rig, reading off which channel it incremented.  See the idle-level comment
+   above for why the six coins had to be read as the channel each press did *not*
+   book, and the four notes straight off.
 
-   Until the walk says otherwise the coin and calibration entries below are
-   placeholders that are known to be wrong, kept only so the buttons have
-   somewhere to point.  A0 is the only line here that is real.
+       A0   operator setup button          confirmed, active low
+       A1   the other door button          active low; see below
+       A2   probably not connected
+       A3   probably not connected
+       A4   probably not connected
+       A5   probably not connected
+       A6   coin  2.00 EUR
+       A7   coin  TOKEN 10
+       C0   note  5 EUR
+       C1   note  10 EUR
+       C2   note  20 EUR
+       C3   note  50 EUR
+       C4   coin  0.10 EUR
+       C5   coin  0.20 EUR
+       C6   coin  0.50 EUR
+       C7   coin  1.00 EUR
+
+   A1 is very probably the touchscreen calibration button, on a count of wires
+   rather than on anything seen on screen.  The card has two connectors: a DB25
+   carrying the acceptor loom, which is the ten money lines above, and a DB15
+   carrying two mechanical coin counters (outputs, through the ULN2003), two
+   buttons -- operator setup and calibration -- and two pins that join a serial
+   connector.  Ten money lines plus two buttons is twelve inputs; ports A and C
+   have sixteen bits between them; A0 is the setup button.  So the calibration
+   button is A1, and A2..A5 are the four spare bits with nothing on them.
+
+   What A1 does is then context-dependent, which this software's controls already
+   are -- the C key is a credit on a game's start page and the CRC check on the
+   menu.  Pressed from the menu, A1 starts a CRC check.  Whether it calibrates
+   from somewhere else has not been tried yet.
+
+   Do not read "A2..A5 do nothing" as tested.  They were pulled only during runs
+   that rested port A low -- which holds an active-low line asserted from
+   power-on, so it can never make the transition anything is looking for -- and
+   during runs where the pin was silently ignored.  With the idle levels right,
+   nobody has pressed them.  The wire count says they are unconnected; that is a
+   prediction, and pulling them one at a time is what would falsify it.
 
    One table, so that correcting it stays a one-line job. */
 static const struct {
     uint8_t port;
     uint8_t bit;
 } fwio_line_map[FWIO_IN_LINES] = {
-    { FWIO_PORT_A, 2 }, /* coin 1 */
-    { FWIO_PORT_A, 3 }, /* coin 2 */
-    { FWIO_PORT_A, 4 }, /* coin 3 */
-    { FWIO_PORT_A, 5 }, /* coin 4 */
-    { FWIO_PORT_A, 6 }, /* coin 5 */
-    { FWIO_PORT_A, 7 }, /* coin 6 */
-    { FWIO_PORT_A, 0 }, /* operator setup button -- confirmed */
-    { FWIO_PORT_A, 1 }, /* calibration button                 */
+    { FWIO_PORT_C, 4 }, /* coin 1 -- 0.10 EUR                  */
+    { FWIO_PORT_C, 5 }, /* coin 2 -- 0.20 EUR                  */
+    { FWIO_PORT_C, 6 }, /* coin 3 -- 0.50 EUR                  */
+    { FWIO_PORT_C, 7 }, /* coin 4 -- 1.00 EUR                  */
+    { FWIO_PORT_A, 6 }, /* coin 5 -- 2.00 EUR                  */
+    { FWIO_PORT_A, 7 }, /* coin 6 -- TOKEN 10                  */
+    { FWIO_PORT_A, 0 }, /* operator setup button -- confirmed  */
+    { FWIO_PORT_A, 1 }, /* second door button: CRC from the menu */
+    { FWIO_PORT_C, 0 }, /* note 1 -- 5 EUR                     */
+    { FWIO_PORT_C, 1 }, /* note 2 -- 10 EUR                    */
+    { FWIO_PORT_C, 2 }, /* note 3 -- 20 EUR                    */
+    { FWIO_PORT_C, 3 }, /* note 4 -- 50 EUR                    */
+};
+
+/* For the log.  A run has to say what was pressed as well as what happened, or
+   "nothing in the log" cannot be told apart from "nothing was pressed" -- which
+   is exactly how the first port B run came back unreadable. */
+static const char *fwio_line_names[FWIO_IN_LINES] = {
+    "coin 1", "coin 2", "coin 3", "coin 4", "coin 5", "coin 6",
+    "setup button", "second door button",
+    "note 1", "note 2", "note 3", "note 4"
 };
 
 static void
@@ -327,11 +449,10 @@ fwio_set_line(fwio_t *dev, int line, int asserted)
    and the guest never reads it -- so driving it could only waste clicks.  And A1
    starts the CRC check, which takes the machine away for minutes and says
    nothing new.  That leaves A0, A2..A7 and C0..C7: fifteen clicks. */
-/* Twenty-four lines on the card, then the C120's four on COM2 -- the same
-   button covers both, because "which of these twenty-eight things is the coin"
-   is one question and splitting it across two tools invites losing count. */
-#define FWIO_CARD_STEPS 24
-#define FWIO_WALK_STEPS (FWIO_CARD_STEPS + C120_LINES)
+/* Twenty-four lines, which is the whole card.  The walk used to carry on to
+   four more on COM2, back when the validator was thought to be on the serial
+   port; there is nothing there. */
+#define FWIO_WALK_STEPS 24
 
 static int  fwio_walk         = -1;
 static int  fwio_walk_at      = 0;
@@ -355,9 +476,8 @@ static char fwio_walk_last[48] = "";
 
 static const uint8_t fwio_walk_skip[FWIO_WALK_STEPS] = {
     0, 1, 0, 0, 0, 0, 0, 0,   /* port A -- A1 is the CRC check, never walked */
-    1, 1, 1, 1, 1, 1, 1, 1,   /* port B -- outputs: the mechanical coin counter */
-    0, 0, 0, 0, 0, 0, 0, 0,   /* port C */
-    0, 0, 0, 0                /* COM2: CTS, DSR, DCD, RI */
+    1, 1, 1, 1, 1, 1, 1, 1,   /* port B -- outputs: the mechanical coin counters */
+    0, 0, 0, 0, 0, 0, 0, 0    /* port C */
 };
 
 static void
@@ -402,8 +522,96 @@ fwio_release(void *priv)
         return;
 
     fwio_set_line(dev, line, 0);
-    dev->held &= (uint8_t) ~(1 << line);
+    dev->held &= (uint16_t) ~(1 << line);
     fwio_log("FWIO: line %d released\n", line);
+}
+
+/* The environment is read once, here, and not on the first pulse.
+
+   It used to be read on the first pulse, behind an `if (fwio_walk < 0)` guard --
+   and that guard can never be true there.  fwio_init sets fwio_walk before it
+   publishes fwio_inst, and a pulse with no fwio_inst returns before reaching the
+   guard, so by the time any pulse could run it fwio_walk is already 0 or 1.  The
+   block was dead from the day the same variable was given a default in init:
+   PEEPEEBOX_IO_LINE, _MS, _PULSES, _PHASE and _HOLD were parsed nowhere, and
+   every run that set one of them quietly did the plain full walk instead.
+
+   Which is the answer to "the coins only credit if I walk A2..A5 first": pinning
+   never took, so reaching A6 always meant clicking through A2..A5 to get there.
+   They are steps on the way, not an enable.
+
+   The settings are logged, because a variable that is read and ignored looks
+   exactly like a variable that is read and obeyed. */
+static void
+fwio_read_env(void)
+{
+    const char *line   = getenv("PEEPEEBOX_IO_LINE");
+    const char *hold   = getenv("PEEPEEBOX_IO_HOLD");
+    const char *ms     = getenv("PEEPEEBOX_IO_MS");
+    const char *pulses = getenv("PEEPEEBOX_IO_PULSES");
+    const char *idle   = getenv("PEEPEEBOX_IO_IDLE");
+
+    /* "ff,ff,f0" -- one byte per port, in order, short lists leaving the rest
+       at the wiring the cabinet actually has. */
+    for (int i = 0; (idle != NULL) && (i < 3) && (idle[0] != 0); i++) {
+        fwio_idle[i] = (uint8_t) strtoul(idle, NULL, 16);
+        idle = strchr(idle, ',');
+        if (idle == NULL)
+            break;
+        idle++;
+    }
+
+    fwio_walk = (getenv("PEEPEEBOX_IO_WALK") != NULL) || (line != NULL);
+
+    for (const char *q = hold; (q != NULL) && (q[0] != 0) && (q[1] != 0); ) {
+        const int hp = (q[0] & ~0x20) - 'A';
+        const int hb = q[1] - '0';
+
+        if ((hp >= 0) && (hp < 3) && (hb >= 0) && (hb < 8))
+            fwio_hold_mask[hp] |= (uint8_t) (1 << hb);
+        q = strchr(q, ',');
+        if (q != NULL)
+            q++;
+    }
+
+    if (ms != NULL) {
+        const double v = atof(ms);
+
+        if ((v >= 1.0) && (v <= 5000.0))
+            fwio_hold_ms = v;
+    }
+
+    if (pulses != NULL) {
+        const int n = atoi(pulses);
+
+        if ((n >= 1) && (n <= 64))
+            fwio_pulses = n;
+    }
+
+    /* "A6" pins one line.  "C" on its own walks that port and nothing else,
+       which is how to reach port C without click one being A0 -- A0 opens the
+       operator setup, and everything after it then happens in the wrong machine
+       state.  That is what spoiled the first port C pass. */
+    if ((line != NULL) && (line[0] != '\0')) {
+        const int port = (line[0] & ~0x20) - 'A';
+
+        if ((port >= 0) && (port < 3)) {
+            if (line[1] == '\0') {
+                fwio_only_port = port;
+            } else {
+                const int bit = line[1] - '0';
+
+                if ((bit >= 0) && (bit < 8))
+                    fwio_pin = (port * 8) + bit;
+            }
+        }
+    }
+
+    pclog("FWIO: idle A=%02X B=%02X C=%02X, walk %d, pin %d, only port %d, "
+          "%g ms, x%d, hold A=%02X B=%02X C=%02X\n",
+          fwio_idle[0], fwio_idle[1], fwio_idle[2], fwio_walk, fwio_pin,
+          fwio_only_port, fwio_hold_ms, fwio_pulses,
+          fwio_hold_mask[0], fwio_hold_mask[1], fwio_hold_mask[2]);
 }
 
 void
@@ -413,53 +621,6 @@ funworld_io_pulse(int line)
 
     if ((dev == NULL) || (line < 0) || (line >= FWIO_IN_LINES))
         return;
-
-    if (fwio_walk < 0) {
-        const char *line = getenv("PEEPEEBOX_IO_LINE");
-
-        const char *pulses = getenv("PEEPEEBOX_IO_PULSES");
-
-        fwio_walk = (getenv("PEEPEEBOX_IO_WALK") != NULL) || (line != NULL);
-
-        const char *ms    = getenv("PEEPEEBOX_IO_MS");
-        const char *phase = getenv("PEEPEEBOX_IO_PHASE");
-
-        if (ms != NULL) {
-            const double v = atof(ms);
-
-            if ((v >= 1.0) && (v <= 5000.0))
-                fwio_hold_ms = v;
-        }
-
-        if (phase != NULL)
-            fwio_phase = (atoi(phase) != 0);
-
-        if (pulses != NULL) {
-            const int n = atoi(pulses);
-
-            if ((n >= 1) && (n <= 64))
-                fwio_pulses = n;
-        }
-
-        /* "A6" pins one line.  "C" on its own walks that port and nothing else,
-           which is how to reach port C without click one being A0 -- A0 opens
-           the operator setup, and everything after it then happens in the wrong
-           machine state.  That is what spoiled the first port C pass. */
-        if ((line != NULL) && (line[0] != '\0')) {
-            const int port = (line[0] & ~0x20) - 'A';
-
-            if ((port >= 0) && (port < 3)) {
-                if (line[1] == '\0') {
-                    fwio_only_port = port;
-                } else {
-                    const int bit = line[1] - '0';
-
-                    if ((bit >= 0) && (bit < 8))
-                        fwio_pin = (port * 8) + bit;
-                }
-            }
-        }
-    }
 
     /* Only the coin button is hijacked.  The setup and calibration buttons keep
        working off the map, because reaching the operator setup is how you get the
@@ -484,21 +645,6 @@ funworld_io_pulse(int line)
         for (int guard = 0; fwio_walk_skip[fwio_walk_at] && (guard < FWIO_WALK_STEPS); guard++)
             fwio_walk_at = (fwio_walk_at + 1) % FWIO_WALK_STEPS;
 
-        /* Past the card's own lines, the walk is on the validator instead. */
-        if (fwio_walk_at >= FWIO_CARD_STEPS) {
-            const int sline = fwio_walk_at - FWIO_CARD_STEPS;
-
-            snprintf(fwio_walk_last, sizeof(fwio_walk_last), "COM2 %s  (C120)",
-                     coin_c120_line_name(sline));
-            pclog("FWIO-WALK: %s\n", fwio_walk_last);
-            coin_c120_pulse(sline);
-
-            fwio_walk_at = (fwio_walk_at + 1) % FWIO_WALK_STEPS;
-            if ((fwio_only_port >= 0) && ((fwio_walk_at / 8) != fwio_only_port))
-                fwio_walk_at = fwio_only_port * 8;
-            return;
-        }
-
         port = (uint8_t) (fwio_walk_at / 8);
         bit  = (uint8_t) (fwio_walk_at % 8);
 
@@ -519,7 +665,7 @@ funworld_io_pulse(int line)
                      (char) ('A' + port), bit, fwio_pulses);
         else
             snprintf(fwio_walk_last, sizeof(fwio_walk_last), "port %c bit %d  (idle %02X)",
-                     (char) ('A' + port), bit, fwio_idle);
+                     (char) ('A' + port), bit, fwio_idle_of(port));
         pclog("FWIO-WALK: %s held %g ms\n", fwio_walk_last, FWIO_COIN_MS);
         timer_on_auto(&dev->release[0], FWIO_COIN_MS * 1000.0);
         fwio_walk_at = (fwio_walk_at + 1) % FWIO_WALK_STEPS;
@@ -528,20 +674,22 @@ funworld_io_pulse(int line)
         return;
     }
 
-    /* A second coin while the first is still on the wire is not a thing the
-       validator can do -- it holds the line for 100 ms and will not start
-       another until it lets go.  Restarting the timer instead of stacking
-       keeps that true. */
-    /* A coin is the validator's business, not the card's. */
-    if ((line <= FWIO_LINE_COIN6) && coin_c120_present()) {
-        coin_c120_pulse(C120_LINE_CTS);
-        return;
-    }
+    /* Coins used to be forwarded to the C120 on COM2 here, on the reading that
+       the validator was on the serial port.  It is not: all ten money lines are
+       on this card, measured one at a time on I.G.O. 6.  The forward is gone
+       because it swallowed every coin the map would otherwise have delivered.
 
+       A second coin while the first is still on the wire is not a thing the
+       validator can do -- it holds the line for 100 ms and will not start
+       another until it lets go.  Restarting the timer instead of stacking keeps
+       that true. */
     fwio_set_line(dev, line, 1);
-    dev->held |= (uint8_t) (1 << line);
+    dev->held |= (uint16_t) (1 << line);
     timer_on_auto(&dev->release[line], FWIO_COIN_MS * 1000.0);
-    fwio_log("FWIO: line %d asserted for %g ms\n", line, FWIO_COIN_MS);
+    pclog("FWIO-IN:  %6u ms  %s -- port %c bit %d, held %g ms\n",
+          fwio_ms(), fwio_line_names[line],
+          (char) ('A' + fwio_line_map[line].port),
+          fwio_line_map[line].bit, FWIO_COIN_MS);
 }
 
 int
@@ -561,15 +709,14 @@ fwio_init(const device_t *info)
         return NULL;
 
     dev->base = (uint16_t) device_get_config_hex16("base");
-    if (fwio_walk < 0)
-        fwio_walk = (getenv("PEEPEEBOX_IO_WALK") != NULL);
+    fwio_read_env();               /* before the reset: it sets the hold mask */
     fwio_reset(dev);
 
     timer_add(&dev->train, fwio_train_tick, NULL, 0);
 
     for (int i = 0; i < FWIO_IN_LINES; i++)
         timer_add(&dev->release[i],
-                  (getenv("PEEPEEBOX_IO_WALK") != NULL) ? fwio_walk_release : fwio_release,
+                  fwio_walk ? fwio_walk_release : fwio_release,
                   (void *) (intptr_t) i, 0);
 
     io_sethandler(dev->base, FWIO_LEN, fwio_read, NULL, NULL,
