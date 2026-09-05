@@ -329,6 +329,62 @@ io_debug_check_addr(uint16_t port)
 }
 #endif
 
+/* PeepeeBox: which I/O ports does the cabinet's software talk to that nothing in
+   this build answers?
+
+   The machines had an I/O board, with a coin acceptor (NRI or Coin Control) wired
+   to it and two buttons -- one for the operator setup, one for the calibration
+   screen.  None of that is emulated, and none of it names itself in MENU.EXE's
+   strings, so the way to find it is to watch the guest ask: a port the game keeps
+   poking that nobody claims is the shape of the missing board.
+
+   Set PEEPEEBOX_IO_TRACE=1.  Each unclaimed port reports its first few accesses
+   with the CS:IP that made them -- enough to find the polling loop in a
+   disassembly -- then goes quiet, so a long run stays readable.  Reads and byte
+   writes only: a board like this is strobed and polled a byte at a time, and the
+   word and dword paths are all chipset noise here.  Off and free when the variable
+   is not set.  Same idea as PEEPEEBOX_LPT_TRACE in dongle_photoplay.c. */
+#define PP_IO_TRACE_EACH 6
+
+static int8_t   pp_io_trace = -1;
+static uint8_t *pp_io_seen  = NULL;
+
+static void
+pp_io_unclaimed(uint16_t port, int write, uint32_t val)
+{
+    if (pp_io_trace < 0) {
+        pp_io_trace = (getenv("PEEPEEBOX_IO_TRACE") != NULL);
+        if (pp_io_trace)
+            pclog("PP-IO: tracing unclaimed port accesses\n");
+    }
+    if (!pp_io_trace)
+        return;
+
+    if (pp_io_seen == NULL) {
+        pp_io_seen = (uint8_t *) calloc(NPORTS, 1);
+        if (pp_io_seen == NULL) {
+            pp_io_trace = 0;
+            return;
+        }
+    }
+
+    if (pp_io_seen[port] > PP_IO_TRACE_EACH)
+        return;
+    pp_io_seen[port]++;
+    if (pp_io_seen[port] > PP_IO_TRACE_EACH) {
+        pclog("PP-IO: port %04X seen %d times, saying no more about it\n",
+              port, PP_IO_TRACE_EACH);
+        return;
+    }
+
+    if (write)
+        pclog("PP-IO: out %04X, %02X  from %04X:%08X\n",
+              port, (uint8_t) val, CS, cpu_state.pc);
+    else
+        pclog("PP-IO: in  %04X      from %04X:%08X\n",
+              port, CS, cpu_state.pc);
+}
+
 uint8_t
 inb(uint16_t port)
 {
@@ -373,8 +429,10 @@ inb(uint16_t port)
         }
     }
 
-    if (!found)
+    if (!found) {
         cycles -= io_delay;
+        pp_io_unclaimed(port, 0, 0);
+    }
 
     /* TriGem 486-BIOS MHz output. */
 #if 0
@@ -438,6 +496,8 @@ outb(uint16_t port, uint8_t val)
             update_tsc();
 #endif
     }
+    if (!found)
+        pp_io_unclaimed(port, 1, val);
 
     io_log("[%04X:%08X] (%i, %i, %04i) outb(%04X, %02X)\n", CS, cpu_state.pc, in_smm, found, qfound, port, val);
 
