@@ -1,8 +1,0 @@
-# Phase 0.0 ground truth  2026-09-03T01:35:38Z
-## image
--rwxrwxrwx 1 xeon3d xeon3d 2038063104 2026-09-03 02:19:40.651252700 +0100 /mnt/f/funny_interactive_de.img/Fixed.img
-776801cd0a257527b7130622b7b77714bd1f8f56feed389505b54691ba01ef06  /mnt/f/funny_interactive_de.img/Fixed.img
-## emulator side
-5036dddf6de858dcb0d99bb702c86ab7b7a14061ed1340816b6f370ee6d35e3c  /mnt/f/funny_interactive_de.img/PeepeeBox.exe
-fbc662979838c8fbe3fb7782af81ab487a764f5d1ad201aba65fa368034aaff3  /mnt/f/funny_interactive_de.img/ppfix.exe
-3a765ab43364ef1bb728765e4eea621c884cbeda41834eb47249053d02cb5204  /mnt/f/funny_interactive_de.img/86Box.exe

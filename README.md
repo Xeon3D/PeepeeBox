@@ -66,6 +66,17 @@ dongles (`docs/research/20`), not from inference.
 | I.G.O. 7 (2007) | HASP4 `68BB/1329` | plain GIF | **runs** — games and photo games |
 | I.G.O. 8 (2008) | serial reader, COM2 | plain GIF | **runs** — games and photo games |
 | I.G.O. Italy (2008-era) | HASP4, probed | plain GIF | **runs** — games and photo games |
+| Photo Play Junior 1.5 / Touchtoy | CDONGLE, parallel, with the DS1982 iButton | n/a — no photo game | **runs** — all six games |
+
+Junior is the small cabinet rather than a generation of the big one: six games
+(`ZEICHNEN, SIMON, PUZZLE, MEMORY, FINDIT, ANMALEN`), no photo game, and so
+nothing that needs the picture cipher. It is a Photo Play through and through --
+PTS-DOS, `\MENU\MENU.EXE`, `\MENU\NSB.NR`, its release named in
+`\FOTO\SETTINGS\MAIN.SET`, and a MicroTouch on COM3 -- so the profile and the
+token are the ordinary ones. Three images run: `Junior 1.5 (NL)` NSB 8A5B,
+`Junior 1.5 (DE)` NSB E239, and `Junior 1.5 (IL)` NSB TT01, the last branded
+Touchtoy. Some of them are filed under Funny's, who distributed them; they are
+not the Funny Interactive cabinet, which this emulator does not run.
 
 Photo Play 2.0 is the odd one out: no dongle at all.  Its games are wrapped in
 Microcosm CopyControl, whose key is the **physical layout of the disk** -- where
@@ -103,11 +114,12 @@ boot at all.
 What you *can* change
 ---------------------
 
-Four things, all under the **Tools** menu:
+Five things, all under the **Tools** menu:
 
 | Item | What it does |
 |---|---|
 | **Dongle…** | The version banner and territory the dongle reports, and whether the iButton is present. The banner must match `MAIN.SET["Version"]` for the image you are running. |
+| **Touchscreen…** | Which part is fitted — a 3M MicroTouch or an Elo SmartSet — and its port, IRQ and speed. The cabinets shipped a MicroTouch on COM3, IRQ 4, 9600 baud, and that is the default. Move it and touch stops working with nothing on screen saying so. |
 | **Network…** | Network card selection, as upstream. The cabinets are offline, but adding a NIC is harmless. |
 | **CD-ROM drive** | Attaches a generic 52× ATAPI CD-ROM as secondary master. Off by default. |
 | **Floppy drive** | Attaches a 3.5" 1.44 MB drive as A:. Off by default. |
@@ -115,8 +127,8 @@ Four things, all under the **Tools** menu:
 With a CD-ROM or floppy attached, the **Media** menu gains the usual
 new / existing image / eject actions for it.
 
-Everything else — machine, CPU, RAM, video card, sound card, touchscreen, hard
-disk — is fixed by the Photo Play profile in
+Everything else — machine, CPU, RAM, video card, sound card, hard disk — is
+fixed by the Photo Play profile in
 [`src/photoplay.c`](src/photoplay.c), which is applied *after* the config file is
 parsed. A stale or hand-edited `86box.cfg` cannot produce a machine that is not a
 Photo Play cabinet.

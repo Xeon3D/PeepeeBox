@@ -1,6 +1,6 @@
 /*
  * PeepeeBox   A fork of 86Box that emulates the funworld Photo Play / I.G.O.
- *             arcade kiosk hardware, including its two protection tokens.
+ *             arcade kiosk hardware, including its protection token.
  *
  *             Inert 8514/A and XGA hooks for the SVGA core.
  *

@@ -504,7 +504,13 @@ mtouch_init(UNUSED(const device_t *info))
     mouse_microtouch_t *dev = calloc(1, sizeof(mouse_microtouch_t));
     
     dev->serial = serial_attach(device_get_config_int("port"), NULL, mtouch_write, dev);
-    dev->baud_rate = 9600;
+
+    /* The line the controller comes up on.  The guest's own 'S' command can still
+       move it; this is only where it starts.  9600 is what the cabinets used and
+       what every disk image expects. */
+    dev->baud_rate = device_get_config_int("speed");
+    if (dev->baud_rate <= 0)
+        dev->baud_rate = 9600;
     if (dev->serial) {
         const int irq = device_get_config_int("irq");
 
@@ -602,6 +608,26 @@ static const device_config_t mtouch_config[] = {
             { .description = "IRQ 11",                  .value = 11 },
             { .description = "IRQ 12",                  .value = 12 },
             { .description = ""                                     }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        /* Where the line starts.  The controller's own 'S' command can change it at
+           runtime, so this is the power-on rate rather than a fixed one. */
+        .name           = "speed",
+        .description    = "Speed",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 9600,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "1200 baud",  .value =  1200 },
+            { .description = "2400 baud",  .value =  2400 },
+            { .description = "4800 baud",  .value =  4800 },
+            { .description = "9600 baud",  .value =  9600 },
+            { .description = "19200 baud", .value = 19200 },
+            { .description = ""                           }
         },
         .bios           = { { 0 } }
     },

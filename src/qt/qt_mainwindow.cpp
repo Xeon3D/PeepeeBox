@@ -1313,104 +1313,20 @@ pp_touchscreen_dialog(QWidget *parent)
 
 /* PeepeeBox: what used to open the eleven-page machine settings dialog now opens
    the dongle.  Every other setting that dialog offered -- machine, CPU, RAM,
-   video, sound, input, ports, drives -- follows from which cabinet this is (see
+   video, sound, input, ports, drives -- follows from the cabinet (see
    src/photoplay.c) and is not a choice.
 
    The dongle is the exception, and it genuinely has to stay adjustable: the
    version banner it reports must match MAIN.SET["Version"] for the image being
    run, and that differs per image and per territory.  Get it wrong and the game
-   reports "Wrong Version".
-
-   There are two tokens now, so this dialog has to pick one before it can offer
-   its options -- handing the Photo Play dongle's settings to someone running a
-   Funny disk would edit a device that is not even on the port.
-
-   The two buttons are for when identification cannot help: it needs an image
-   present and recognised, and a rig being built, an image restored file by
-   file, or a release nobody has taught it about yet all read as Photo Play.
-   That is the wrong board, the wrong IRQ and the wrong touchscreen for a Funny
-   disk, and none of those say so when they are wrong -- they just fail to
-   work.  Pressing one pins the answer and sets that cabinet's defaults.
+   reports "Wrong Version".  There is only one token, so this goes straight to
+   that device's own config dialog.
 
    Returns 1 when something changed and the machine has to be restarted for it. */
 static int
 pp_dongle_dialog(QWidget *parent)
 {
-    QDialog dlg(parent);
-    dlg.setWindowTitle(QObject::tr("Dongle"));
-    dlg.setWindowFlags(dlg.windowFlags() & ~Qt::WindowContextHelpButtonHint);
-
-    auto *form = new QFormLayout();
-
-    const bool    funny  = photoplay_is_funny();
-    const QString forced = QString::fromUtf8(photoplay_product());
-    auto         *which  = new QLabel(
-        funny ? QString::fromUtf8(PHOTOPLAY_FUNNY_DISPLAY)
-              : QObject::tr("Photo Play / I.G.O."));
-    form->addRow(QObject::tr("Cabinet:"), which);
-
-    auto *how = new QLabel(forced == QString::fromUtf8(PHOTOPLAY_PRODUCT_AUTO)
-                               ? QObject::tr("from the disk image")
-                               : QObject::tr("set here, not from the image"));
-    form->addRow(QString(), how);
-
-    auto *opts = new QPushButton(QObject::tr("&Options..."));
-    form->addRow(QString(), opts);
-
-    auto *pp    = new QPushButton(QObject::tr("Photoplay"));
-    auto *fi    = new QPushButton(QObject::tr("Funny Interactive"));
-    auto *presets = new QHBoxLayout();
-    presets->addWidget(pp);
-    presets->addWidget(fi);
-    form->addRow(QObject::tr("Defaults for:"), presets);
-
-    auto *note = new QLabel(QObject::tr(
-        "Photoplay is a 486 on a Zida Tomato 4DPS with a MicroTouch on COM3 IRQ 4. "
-        "Funny Interactive is a Pentium MMX on a PC Partner MB540N with an Elo on "
-        "COM3 IRQ 3.\n\nSetting either one pins the cabinet and restarts the "
-        "machine."));
-    note->setWordWrap(true);
-    form->addRow(note);
-
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    auto *outer   = new QVBoxLayout(&dlg);
-    outer->addLayout(form);
-    outer->addWidget(buttons);
-
-    /* Options belong to whichever token is actually fitted. */
-    int inner_changed = 0;
-    QObject::connect(opts, &QPushButton::clicked, [&]() {
-        const device_t *dev = photoplay_is_funny() ? &lpt_dongle_funny_device
-                                                   : &lpt_dongle_photoplay_device;
-
-        inner_changed |= DeviceConfig::ConfigureDevice(dev, 0, &dlg);
-    });
-
-    /* A preset is a whole cabinet, not just a token: the board, the CPU, the RAM and
-       the IRQ all follow from the product, and the touchscreen is set explicitly
-       because a choice already in the ini would otherwise outrank the new default and
-       leave a Funny rig on a MicroTouch. */
-    int preset = 0;
-    QObject::connect(pp, &QPushButton::clicked, [&]() {
-        photoplay_set_product(PHOTOPLAY_PRODUCT_PP);
-        photoplay_set_touchscreen(PHOTOPLAY_TABLET);
-        preset = 1;
-        dlg.accept();
-    });
-    QObject::connect(fi, &QPushButton::clicked, [&]() {
-        photoplay_set_product(PHOTOPLAY_PRODUCT_FUNNY);
-        photoplay_set_touchscreen(PHOTOPLAY_TABLET_ELO);
-        preset = 1;
-        dlg.accept();
-    });
-
-    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-    QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-
-    if (dlg.exec() != QDialog::Accepted)
-        return inner_changed; /* the device dialog saves its own; Cancel cannot undo it */
-
-    return preset | inner_changed;
+    return DeviceConfig::ConfigureDevice(&lpt_dongle_photoplay_device, 0, parent);
 }
 
 void

@@ -119,6 +119,9 @@ typedef struct mouse_elo_t {
     pc_timer_t reset_timer;
 } mouse_elo_t;
 
+/* The rates the SmartSet's 'P' command indexes, in its own order. */
+static const int elo_baud_table[8] = { 300, 600, 1200, 2400, 4800, 9600, 19200, 38400 };
+
 static mouse_elo_t *elo_inst = NULL;
 
 static void
@@ -454,7 +457,7 @@ elo_process_command(mouse_elo_t *dev, const uint8_t *body)
             resp[1] = '0'; /* serial */
             resp[2] = '0'; /* booting from jumpers */
             resp[3] = '1'; /* Stream mode */
-            resp[4] = 5;   /* baud index: 9600 */
+            resp[4] = (uint8_t) (dev->ser1 & 7); /* baud index */
             resp[5] = 1;   /* hardware handshaking enabled */
             resp[6] = 1;   /* binary mode */
             break;
@@ -511,10 +514,9 @@ elo_process_command(mouse_elo_t *dev, const uint8_t *body)
 
         case 'P':
             if (!query) {
-                static const int baud_table[8] = { 300, 600, 1200, 2400, 4800, 9600, 19200, 38400 };
-                dev->ser1                      = data[1];
-                dev->ser2                      = data[2];
-                dev->baud_rate                 = baud_table[dev->ser1 & 7];
+                dev->ser1      = data[1];
+                dev->ser2      = data[2];
+                dev->baud_rate = elo_baud_table[dev->ser1 & 7];
                 timer_stop(&dev->host_to_serial_timer);
                 timer_on_auto(&dev->host_to_serial_timer, (1000000. / dev->baud_rate) * 10.);
             }
@@ -756,6 +758,17 @@ elo_poll_global(void *arg)
     return elo_poll(elo_inst);
 }
 
+/* The rate the controller reports, and accepts, as an index into its own table.
+   Falls back to 9600 for anything not in it. */
+static int
+elo_baud_index(int baud)
+{
+    for (uint8_t i = 0; i < 8; i++)
+        if (elo_baud_table[i] == baud)
+            return i;
+    return 5;
+}
+
 void *
 elo_init(UNUSED(const device_t *info))
 {
@@ -763,8 +776,13 @@ elo_init(UNUSED(const device_t *info))
 
     dev->cmd_pos   = -1;
     dev->serial    = serial_attach(device_get_config_int("port"), NULL, elo_write, dev);
-    dev->baud_rate = 9600;
-    dev->ser1      = 5;    /* 9600 baud, 8N1 */
+    /* Where the line starts.  'P' can still move it from the guest; this is the
+       power-on rate, and ser1's low three bits are the same rate as the controller
+       reports it back, so the two have to be set together. */
+    dev->baud_rate = device_get_config_int("speed");
+    if (dev->baud_rate <= 0)
+        dev->baud_rate = 9600;
+    dev->ser1      = (uint8_t) elo_baud_index(dev->baud_rate); /* rate index, 8N1 */
     dev->ser2      = 0x04; /* hardware handshaking enabled */
     if (dev->serial) {
         const int irq = device_get_config_int("irq");
@@ -855,6 +873,30 @@ static const device_config_t elo_config[] = {
             { .description = "IRQ 11",                  .value = 11 },
             { .description = "IRQ 12",                  .value = 12 },
             { .description = ""                                     }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        /* Where the line starts.  The controller's own 'P' command can change it at
+           runtime, so this is the power-on rate rather than a fixed one.  The
+           cabinets' ELODEV command line asks for 9600. */
+        .name           = "speed",
+        .description    = "Speed",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 9600,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "300 baud",   .value =   300 },
+            { .description = "600 baud",   .value =   600 },
+            { .description = "1200 baud",  .value =  1200 },
+            { .description = "2400 baud",  .value =  2400 },
+            { .description = "4800 baud",  .value =  4800 },
+            { .description = "9600 baud",  .value =  9600 },
+            { .description = "19200 baud", .value = 19200 },
+            { .description = "38400 baud", .value = 38400 },
+            { .description = ""                           }
         },
         .bios           = { { 0 } }
     },

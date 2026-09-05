@@ -1,28 +1,21 @@
 /*
  * PeepeeBox   A fork of 86Box that emulates the funworld Photo Play / I.G.O.
- *             arcade kiosk hardware, including its two protection tokens.
+ *             arcade kiosk hardware, including its protection token.
  *
  *             The fixed Photo Play machine profile.
  *
  *             86Box is a general-purpose PC emulator: the user picks a
  *             motherboard, a CPU, a video card, a sound card and a set of
  *             drives, and the config file records that choice.  PeepeeBox is
- *             not general-purpose.  It emulates two cabinets, and the disk
- *             image in the folder says which -- nothing is chosen by hand.
+ *             not general-purpose.  It emulates one cabinet -- nothing about
+ *             the machine is chosen by hand.
  *
  *             Photo Play / I.G.O.:
  *                 Zida Tomato 4DPS (SiS 496), Intel iDX4 at 100 MHz, 16 MB
  *                 3M MicroTouch TouchPen on COM3, IRQ 4
  *                 the Photo Play protection dongle on LPT1
- *
- *             Funny's Interactive Playworld:
- *                 PC Partner MB540N (i430TX), Pentium MMX at 200 MHz, 64 MB
- *                 Elo SmartSet on COM3, IRQ 3
- *                 the Funny token on LPT1
- *
- *             Both share the rest: Cirrus Logic CL-GD5480, ESS ES1688
- *             AudioDrive, and one IDE disk -- HardDisk.img, next to the
- *             executable.
+ *                 Cirrus Logic CL-GD5480, ESS ES1688 AudioDrive, and one IDE
+ *                 disk -- HardDisk.img, next to the executable.
  *
  *             Every one of those is what the real cabinets shipped, and any
  *             deviation is a bug rather than a preference -- a different video
@@ -98,42 +91,15 @@ pp_profile_log(const char *fmt, ...)
     va_end(ap);
 }
 
-/* Is this Funny's Interactive Playworld rather than a Photo Play release?  Four things
-   hang off the answer -- the token, COM3's IRQ, the default touchscreen and the board
-   itself -- so it is worth asking in one place.
-
-   The image is what normally decides, and the identification behind that is cached, so
-   asking costs nothing.  A forced answer in the ini wins over it: identification needs
-   an image that is present and recognised, and when it is not, everything silently
-   falls back to Photo Play's hardware, which a Funny disk will not run on. */
-int
-photoplay_is_funny(void)
-{
-    const char *forced = photoplay_product();
-    char        banner[64] = { 0 };
-
-    if (!strcmp(forced, PHOTOPLAY_PRODUCT_FUNNY))
-        return 1;
-    if (!strcmp(forced, PHOTOPLAY_PRODUCT_PP))
-        return 0;
-
-    photoplay_image_ident(banner, sizeof(banner), NULL, 0);
-    return !strcmp(banner, PHOTOPLAY_FUNNY_BANNER);
-}
-
-/* Pin the motherboard, CPU and RAM.
-
-   Two cabinets, two sets of hardware.  Photo Play is a 486 on a Zida Tomato 4DPS;
-   Funny's Interactive Playworld is a Pentium MMX on a PC Partner MB540N with four
-   times the RAM.  The image says which, so neither one has to be chosen by hand. */
+/* Pin the motherboard, CPU and RAM: a 486 on a Zida Tomato 4DPS, which is what every
+   Photo Play / I.G.O. cabinet is. */
 static void
 pp_apply_machine(void)
 {
-    const int   funny       = photoplay_is_funny();
-    const char *machine_nm  = funny ? PHOTOPLAY_FUNNY_MACHINE    : PHOTOPLAY_MACHINE;
-    const char *cpu_family  = funny ? PHOTOPLAY_FUNNY_CPU_FAMILY : PHOTOPLAY_CPU_FAMILY;
-    const int   cpu_speed   = funny ? PHOTOPLAY_FUNNY_CPU_SPEED  : PHOTOPLAY_CPU_SPEED;
-    const int   memory_size = funny ? PHOTOPLAY_FUNNY_MEM_SIZE   : PHOTOPLAY_MEM_SIZE;
+    const char *machine_nm  = PHOTOPLAY_MACHINE;
+    const char *cpu_family  = PHOTOPLAY_CPU_FAMILY;
+    const int   cpu_speed   = PHOTOPLAY_CPU_SPEED;
+    const int   memory_size = PHOTOPLAY_MEM_SIZE;
 
     machine = machine_get_machine_from_internal_name((char *) machine_nm);
     if (machine < 0)
@@ -235,12 +201,7 @@ pp_apply_ports(void)
         com_ports[i].device  = 0;
     }
 
-    /* Which token goes on LPT1 is the one thing about this machine the image gets to
-       decide, because the two cabinets this build runs carry different ones and nothing
-       else tells them apart.  Photo Play / I.G.O. is the default; an image that
-       identifies as Funny's Interactive Playworld gets its own part instead.  See
-       dongle_funny.c for what that is and why it is not the same device. */
-    const char *dongle_name = photoplay_is_funny() ? PHOTOPLAY_FUNNY_DONGLE : PHOTOPLAY_DONGLE;
+    const char *dongle_name = PHOTOPLAY_DONGLE;
 
     lpt_ports[0].enabled = 1;
     lpt_ports[0].device  = char_get_from_internal_name(dongle_name, DEVICE_LPT);
@@ -654,6 +615,22 @@ photoplay_set_cdrom_enabled(int enabled)
     config_set_int(PHOTOPLAY_SECTION, "cdrom", !!enabled);
 }
 
+/* Which IRQ the touchscreen's COM3 is wired to: the PC standard 4, which is what the
+   cabinets used.
+
+   Getting this wrong fails in the most misleading way available.  A touchscreen driver
+   *polls* the port while it interrogates and configures the controller, so detection
+   succeeds on either IRQ and the cabinet cheerfully reports the part as found.  It then
+   installs its own ISR and never polls again, so the first touch packet puts one byte in
+   the receive register, nothing services the interrupt, Data Ready stays set, and the
+   part stalls with the rest of the packet still queued.  Touch is dead and nothing says
+   so.  A rig that moved the interrupt moves it in the touchscreen's own options. */
+int
+photoplay_com3_irq(void)
+{
+    return COM3_IRQ;
+}
+
 /* Which touchscreen is attached.
 
    The cabinets shipped a 3M MicroTouch on COM3, and that is still the default and
@@ -664,44 +641,14 @@ photoplay_set_cdrom_enabled(int enabled)
 
    A name this build does not have is ignored rather than fatal: an ini file is
    easy to mistype, and dropping back to the MicroTouch always boots. */
-/* Which IRQ the touchscreen's COM3 is wired to.
-
-   The PC standard for COM3 is 4, and that is what Photo Play gets.  Funny's Interactive
-   Playworld wires it to 3, and its disk says so twice: AUTOEXEC.BAT loads
-   `ELODEV 2310,3,9600,3`, whose fourth field is the IRQ, and FSYSTEM.EXE is started as
-   `FSYSTEM.EXE C3 I3` -- the `I` switch, which it unmasks on the PIC itself at CS:0xC3D9.
-
-   Getting this wrong fails in the most misleading way available.  ELODEV *polls* the port
-   while it interrogates and configures the controller, so detection succeeds on either
-   IRQ and the cabinet cheerfully prints "Controller 2310 found. Version: 1.7".  It then
-   installs its own ISR and never polls again, so the first touch packet puts one byte in
-   the receive register, nothing services the interrupt, Data Ready stays set, and the
-   part stalls with the rest of the packet still queued.  Touch is dead and nothing says
-   so. */
-int
-photoplay_com3_irq(void)
-{
-    return photoplay_is_funny() ? 3 : COM3_IRQ;
-}
-
 const char *
 photoplay_touchscreen(void)
 {
     static char name[64];
     const char *dflt = PHOTOPLAY_TABLET;
 
-    /* The image gets the first word, the same way it does for the token.  Photo Play
-       shipped MicroTouch and every one of its releases expects one, so that stays the
-       default.  Funny's Interactive Playworld is the exception that made this worth
-       doing: its own AUTOEXEC.BAT loads Elo's driver -- `ELODEV 2310,3,9600,3`, an
-       E271-2310 on COM3 at 9600 -- and FSYSTEM.EXE probes for Elo before it will look
-       at anything else, so an unconfigured rig should come up on the part the disk
-       actually asks for rather than on one the user has to go and find.
-
-       A choice already in the ini still wins: this only supplies the default. */
-    if (photoplay_is_funny() && tablet_get_from_internal_name((char *) PHOTOPLAY_TABLET_ELO))
-        dflt = PHOTOPLAY_TABLET_ELO;
-
+    /* The cabinets shipped MicroTouch and every I.G.O. release expects one, so that is
+       the default.  A choice already in the ini still wins: this only supplies it. */
     const char *s = config_get_string(PHOTOPLAY_SECTION, "touchscreen", (char *) dflt);
 
     if ((s == NULL) || !tablet_get_from_internal_name((char *) s))
@@ -714,29 +661,6 @@ void
 photoplay_set_touchscreen(const char *internal_name)
 {
     config_set_string(PHOTOPLAY_SECTION, "touchscreen", (char *) internal_name);
-}
-
-/* Which cabinet to be, when the image should not be the one to say.  An unrecognised
-   value reads as "auto" rather than being fatal, for the same reason a bad touchscreen
-   name does: an ini is easy to mistype, and asking the image always works. */
-const char *
-photoplay_product(void)
-{
-    static char name[16];
-    const char *s = config_get_string(PHOTOPLAY_SECTION, "product",
-                                      (char *) PHOTOPLAY_PRODUCT_AUTO);
-
-    if ((s == NULL) || (strcmp(s, PHOTOPLAY_PRODUCT_PP) &&
-                        strcmp(s, PHOTOPLAY_PRODUCT_FUNNY)))
-        return PHOTOPLAY_PRODUCT_AUTO;
-    snprintf(name, sizeof(name), "%s", s);
-    return name;
-}
-
-void
-photoplay_set_product(const char *product)
-{
-    config_set_string(PHOTOPLAY_SECTION, "product", (char *) product);
 }
 
 /* The optional 3.5" floppy drive.

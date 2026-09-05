@@ -1,6 +1,6 @@
 /*
  * PeepeeBox   A fork of 86Box that emulates the funworld Photo Play / I.G.O.
- *             arcade kiosk hardware, including its two protection tokens.
+ *             arcade kiosk hardware, including its protection token.
  *
  *             The fixed Photo Play machine profile.
  *
@@ -30,24 +30,6 @@ extern "C" {
 #define PHOTOPLAY_TABLET_PORT 2                  /* COM3                            */
 #define PHOTOPLAY_DONGLE      "dongle_photoplay"
 
-/* Funny's Interactive Playworld: a second cabinet this build also runs.  Same chassis,
-   same funworld FN_* portal suite, different token -- an Aladdin-shaped API over a plain
-   Microwire EEPROM.  The banner is what photoplay_identify_ex() reports for it and what
-   pp_apply_ports() switches the token on; the display name is what the window is called.
-   See dongle_funny.c. */
-#define PHOTOPLAY_FUNNY_BANNER  "Funny Interactive"
-#define PHOTOPLAY_FUNNY_DISPLAY "Funny's Interactive Playworld"
-#define PHOTOPLAY_FUNNY_DONGLE  "dongle_funny"
-
-/* And a machine to run it on.  Funny's is a Pentium MMX generation later than the
-   Photo Play cabinets: a PC Partner MB540N, i430TX, 200 MHz P55C, 64 MB.  The 486
-   profile above will not do -- the disk is built for the newer board -- so the
-   product decides the hardware the same way it decides the token and the IRQ. */
-#define PHOTOPLAY_FUNNY_MACHINE    "mb540n"        /* PC Partner MB540N, i430TX       */
-#define PHOTOPLAY_FUNNY_CPU_FAMILY "pentium_p55c"  /* Intel Pentium MMX               */
-#define PHOTOPLAY_FUNNY_CPU_SPEED  200000000       /* 200 MHz (3x 66 MHz bus)         */
-#define PHOTOPLAY_FUNNY_MEM_SIZE   65536           /* 64 MB, in KB                    */
-
 #define PHOTOPLAY_DISK_IMAGE  "HardDisk.img"
 
 /* The cabinets shipped without an optical drive, but service and installation
@@ -74,28 +56,9 @@ extern void photoplay_set_cdrom_enabled(int enabled);
 extern int  photoplay_fdd_enabled(void);
 extern void photoplay_set_fdd_enabled(int enabled);
 
-/* The IRQ the cabinet wires COM3 to.  Photo Play gets the PC-standard 4; Funny's
-   Interactive Playworld wires it to 3 and says so twice on its own disk.  See
-   photoplay.c.  Called from serial_init() when the standalone COM3 is created. */
+/* The IRQ the cabinet wires COM3 to: the PC-standard 4.  See photoplay.c.  Called
+   from serial_init() when the standalone COM3 is created. */
 extern int photoplay_com3_irq(void);
-
-/* Which cabinet this is.  Normally the disk image is asked and nobody has to know,
-   but identification needs an image present and recognisable -- a fresh rig being
-   built, an image restored file-by-file, or a release nobody has taught it about
-   yet all read as Photo Play, which is the wrong set of hardware for a Funny disk
-   and fails in ways that do not name themselves.  So the answer can be forced.
-
-   "auto" is the default and means ask the image.  See photoplay.c. */
-#define PHOTOPLAY_PRODUCT_AUTO  "auto"
-#define PHOTOPLAY_PRODUCT_PP    "photoplay"
-#define PHOTOPLAY_PRODUCT_FUNNY "funny"
-
-/* Which of the two cabinets this is: the forced answer if there is one, otherwise
-   what the disk image says.  The UI asks so it can offer the right dongle. */
-extern int         photoplay_is_funny(void);
-
-extern const char *photoplay_product(void);
-extern void        photoplay_set_product(const char *product);
 
 /* Which touchscreen is wired to the cabinet, by device internal name.  The
    machines shipped a 3M MicroTouch and that stays the default, but an Elo

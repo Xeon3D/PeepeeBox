@@ -114,7 +114,6 @@ extern const device_t      lpt_tnd_device;
 
 extern const device_t      lpt_hasp_savquest_device;
 extern const device_t      lpt_dongle_photoplay_device;
-extern const device_t      lpt_dongle_funny_device;
 
 extern const device_t      lpt_ditto_device;
 

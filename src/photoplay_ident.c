@@ -1,6 +1,6 @@
 /*
  * PeepeeBox   A fork of 86Box that emulates the funworld Photo Play / I.G.O.
- *             arcade kiosk hardware, including its two protection tokens.
+ *             arcade kiosk hardware, including its protection token.
  *
  *             Work out which release and territory a disk image is, so the
  *             window can say "IGO 5 PT" instead of whatever the working
@@ -352,34 +352,6 @@ photoplay_identify_ex(const char *img_path, char *out, size_t outsz,
         return 0;
 
     int ok = 0;
-
-    /* Funny's Interactive Playworld -- a different cabinet from the same corner of the
-       arcade world, and the reason this function has two answers.  It carries no
-       FOTO\SETTINGS\MAIN.SET to name itself with: AUTOEXEC.BAT runs GAME\FSYSTEM.EXE,
-       which probes the touchscreen, checks its dongle and then execs GAME\FUNNY.DLL --
-       a WDOSX executable despite the extension, and the whole game.  Those two files
-       together are the signature; no Photo Play release has either.  The banner is what
-       picks the token in photoplay.c, so it has to be recognisable there. */
-    if (pp_dir_find(&fs, 0, "GAME       ", &clus, &size, &isdir) && isdir) {
-        uint16_t sub;
-        uint32_t ssize;
-        int      sdir;
-
-        if (pp_dir_find(&fs, clus, "FSYSTEM EXE", &sub, &ssize, &sdir) && !sdir &&
-            pp_dir_find(&fs, clus, "FUNNY   DLL", &sub, &ssize, &sdir) && !sdir) {
-            snprintf(out, outsz, "%s", PHOTOPLAY_FUNNY_DISPLAY);
-            if (banner_out != NULL)
-                snprintf(banner_out, bsz, "%s", PHOTOPLAY_FUNNY_BANNER);
-            /* No territory: this cabinet records one nowhere the image can be asked for
-               it, and its token does not carry one either.  The build to hand is German
-               -- KEYB GR+, COUNTRY=49, LASTGAME.LOG says GER -- but that is a fact about
-               this image, not something read out of it. */
-            if (terr_out != NULL)
-                terr_out[0] = '\0';
-            fclose(fs.f);
-            return 1;
-        }
-    }
 
     if (pp_dir_find(&fs, 0, "FOTO       ", &clus, &size, &isdir) && isdir &&
         pp_dir_find(&fs, clus, "SETTINGS   ", &clus, &size, &isdir) && isdir &&
