@@ -112,16 +112,31 @@ fwio_log(const char *fmt, ...)
 
 /* ---------------------------------------------------------------- the card */
 
-/* An 8255 out of reset has all three ports as inputs.  Until the bit map is
-   known, every input line idles in the state a C120 leaves it: not asserted.
-   The 74HC14 inverts, so "not asserted" at the connector is a 1 here; that is a
-   guess about polarity and it is written down as one. */
+/* What the inputs read when nothing is happening.
+
+   This is the guess that matters.  A C120's accept output is active low, but the
+   74HC14 between it and the 8255 inverts, so whether "no coin" arrives at the
+   port as a 1 or a 0 depends on wiring nobody has traced.  Idling high and
+   pulsing low found the operator setup on A0 and the CRC check on A1, and
+   nothing at all on the other fourteen lines -- which is what a wrong idle level
+   looks like: the two lines wired the other way answer, and every line that is
+   not has been sitting asserted since boot and so never makes a transition.
+
+   PEEPEEBOX_IO_IDLE=00 rests them low instead, and a pulse then drives high.  An
+   environment variable rather than a rebuild, because it is one run either way. */
+static uint8_t fwio_idle = 0xff;
+
 static void
 fwio_reset(fwio_t *dev)
 {
+    const char *env = getenv("PEEPEEBOX_IO_IDLE");
+
+    if (env != NULL)
+        fwio_idle = (uint8_t) strtoul(env, NULL, 16);
+
     dev->ctrl = 0x9b;              /* all ports input, mode 0 */
     memset(dev->out, 0x00, sizeof(dev->out));
-    memset(dev->in, 0xff, sizeof(dev->in));
+    memset(dev->in, fwio_idle, sizeof(dev->in));
     dev->held = 0;
 }
 
@@ -225,13 +240,12 @@ static void
 fwio_set_bit(fwio_t *dev, uint8_t port, uint8_t bit, int asserted)
 {
     const uint8_t mask = (uint8_t) (1 << bit);
+    const int     high = !(fwio_idle & mask);   /* asserted is away from idle */
 
-    /* Asserted is low at the connector; the 74HC14 in between is why this is a
-       guess rather than a fact.  One place to flip it when it is known. */
-    if (asserted)
-        dev->in[port] &= (uint8_t) ~mask;
-    else
+    if (asserted == high)
         dev->in[port] |= mask;
+    else
+        dev->in[port] &= (uint8_t) ~mask;
 }
 
 static void
@@ -268,7 +282,7 @@ fwio_walk_release(UNUSED(void *priv))
     fwio_t *dev = fwio_inst;
 
     if (dev != NULL) {
-        memset(dev->in, 0xff, sizeof(dev->in));
+        memset(dev->in, fwio_idle, sizeof(dev->in));
         pclog("FWIO-WALK: released\n");
     }
 }
@@ -308,10 +322,10 @@ funworld_io_pulse(int line)
         port = (uint8_t) (fwio_walk_at / 8);
         bit  = (uint8_t) (fwio_walk_at % 8);
 
-        memset(dev->in, 0xff, sizeof(dev->in));
+        memset(dev->in, fwio_idle, sizeof(dev->in));
         fwio_set_bit(dev, port, bit, 1);
-        snprintf(fwio_walk_last, sizeof(fwio_walk_last), "port %c bit %d",
-                 (char) ('A' + port), bit);
+        snprintf(fwio_walk_last, sizeof(fwio_walk_last), "port %c bit %d  (idle %02X)",
+                 (char) ('A' + port), bit, fwio_idle);
         pclog("FWIO-WALK: %s held %g ms\n", fwio_walk_last, FWIO_COIN_MS);
         timer_on_auto(&dev->release[0], FWIO_COIN_MS * 1000.0);
         fwio_walk_at = (fwio_walk_at + 1) % FWIO_WALK_STEPS;
