@@ -1,0 +1,91 @@
+# Merge Dependabot's pull requests without anyone having to click.
+#
+# Dependabot on this repository only watches GitHub Actions versions -- see
+# .github/dependabot.yml -- so its pull requests are one-line `uses:` bumps to
+# the workflows in this directory and nothing else.  They were being opened
+# faster than they were being read, which is how four of them ended up sitting
+# open at once.
+#
+# Two ways in:
+#
+#   * automatically, when Dependabot opens or updates one;
+#   * by hand from the Actions tab (Run workflow), which sweeps every open
+#     Dependabot pull request.  That is also how to clear a backlog, and how to
+#     merge one a human cannot: an OAuth token without the `workflow` scope is
+#     refused when the pull request touches a file under .github/workflows/,
+#     which is most of them.  GITHUB_TOKEN here has no such restriction.
+#
+# A pull request that will not merge cleanly is left alone and told to rebase,
+# rather than being forced.
+#
+# `pull_request_target` runs in the context of the base repository, which is what
+# gives this the write access `pull_request` would not.  Nothing here checks out
+# or executes the pull request's contents -- it only talks to the API -- so the
+# usual danger of that trigger does not apply.
+
+name: Dependabot auto-merge
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge:
+    name: Merge
+    # On the automatic path, only ever Dependabot's own pull requests.  The manual
+    # path is gated by who can press the button, and filters by author below.
+    if: github.event_name == 'workflow_dispatch' || github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge what is ready
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            numbers="$(gh pr list --state open --app dependabot \
+                         --json number --jq '.[].number')"
+          else
+            numbers="$PR"
+          fi
+
+          if [ -z "$numbers" ]; then
+            echo "nothing open from Dependabot"
+            exit 0
+          fi
+
+          for n in $numbers; do
+            # mergeable is computed in the background, so a pull request opened a
+            # moment ago can still answer UNKNOWN.  Give it a few seconds rather
+            # than treating "not yet known" as "no".
+            for _ in 1 2 3 4 5 6; do
+              state="$(gh pr view "$n" --json mergeable --jq .mergeable)"
+              [ "$state" = "UNKNOWN" ] || break
+              sleep 5
+            done
+
+            title="$(gh pr view "$n" --json title --jq .title)"
+
+            case "$state" in
+              MERGEABLE)
+                echo "merging #$n -- $title"
+                gh pr merge "$n" --squash --delete-branch
+                ;;
+              CONFLICTING)
+                echo "#$n conflicts, asking for a rebase -- $title"
+                gh pr comment "$n" --body "@dependabot rebase"
+                ;;
+              *)
+                echo "#$n is $state, leaving it -- $title"
+                ;;
+            esac
+          done
