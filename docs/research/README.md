@@ -33,10 +33,18 @@ and the corrections are usually the most interesting part.
 | `18-igo8-serial-dongle.md` | **The 2008 dongle is a serial smart-card reader, not a parallel-port device.** Transport, both keystreams, framing, the APDU set and the record -- corrects 09 |
 | `19-hasp-passwords.md` | **The HASP passwords, per generation.** 2001 and IGO 2-7 are HASP4; three password pairs cover six generations, with the anchored method that finds them and the false trail that does not |
 | `20-dongle-dumps.md` | **Nine dongles, dumped.** Passwords, record layouts and the per-customer crypto table -- the dongle side of the cipher that blocks 2001's pictures and IGO 3's boot |
+| `21-igo2-igo6.md` | **I.G.O. 2 and I.G.O. 6 run, from fifteen untouched images.** Both generations identify themselves; and a one-line Microwire regression -- a lost `hd_ph = HD_READ` -- that had been measured and read as a wall in the library |
+| `22-igo2-pictures.md` | **Which I.G.O. 2 archives fail, and why.** The record it is served is correct in every field; funworld shipped two picture schemes side by side and only one of them is a wall |
+| `23-hasp4-transform.md` | **The picture cipher's keyed round, in software.** `batteryshark/dongle-lab`'s HASP4 core is line for line what `HANDOFF2001` § 20 reconstructed out of `FINDIT.EXE` -- four constants and both rotation schedules agree |
+| `24-copycontrol.md` | **Photo Play 2.0 is Microcosm CopyControl, not a dongle.** The key is the disk's *physical layout*, which imaging destroys; 21 files in `\EXE\`, all three checks passing on unmodified originals, and `ppfix` repairing an affected image |
+| `24-known-plaintext-corpus.md` | **72 MB of exact known plaintext against two keys.** I.G.O. 4 ships the same `FOTOPLAY.WAD` in the clear that 2 and 3 encrypt -- 1397 of 1397 entries agree on name, offset and size, so the three are byte-aligned |
+| `25-igo2-block-function.md` | **E, read out of `FINDIT.EXE` rather than guessed at.** Five call sites, HASP service 61 over 4 KB, and the rule that a buffer of eight bytes or less is left alone -- after 24 refuted the assumed block function by measurement |
+| `26-cipher-broken.md` | **The picture cipher, broken.** The two dwords the dongle contributes to a 4 KB buffer are recovered by search, and 300/300 entries then decrypt with no hardware at all |
 | `27-io-card.md` | **The funworld I/O card: an 8255 at 0x210.** Where the coin acceptor and the two door buttons live, found by answering the card-detection sweep; the C120's six accept lines and its 100 ms pulse; A0 is the setup button |
 
-(`21`--`26` are not listed above; they were added after this table was last
-touched.)
+Two documents are both numbered `24`: `24-copycontrol.md` and
+`24-known-plaintext-corpus.md`, written for different releases on different
+branches. Left as they are, because both numbers are cited elsewhere.
 
 ## Sibling investigation
 
