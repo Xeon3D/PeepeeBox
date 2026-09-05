@@ -181,7 +181,36 @@ Still open: which lines are the four coins, which are the note validator, where
 the calibration button is, and whether the inhibit line on port B has to be
 driven before the validator's outputs are believed.
 
-## 7. What this corrected
+## 7. The coins are not on this card at all
+
+Every line of ports A and C was driven, in both polarities, as single 100 ms
+holds and as trains of 2, 4 and 10 pulses, with credits at zero and free play
+off. Nothing but A0 and A1 ever answered. Ten experiments, one unreproducible
+result.
+
+The reason is that **the coin acceptor is on COM2, not on the card's DB25**
+(Marcos, 2026-09-05, correcting an earlier reading of the loom). A serial
+validator never touches the 8255, so no bit of it could ever have been the coin,
+and the whole port A/C search was aimed at the wrong device.
+
+**This immediately rules I.G.O. 8 out as the image to test that on.** I.G.O. 8 is
+the one generation whose *dongle* is serial and lives on COM2 -- the log says so
+in as many words:
+
+```
+SC: 2008 card reader attached to COM2 (2F8h), 9600 baud
+```
+
+so on an I.G.O. 8 rig COM2 is already occupied and cannot also be carrying a
+validator. Every other generation up to I.G.O. 7 has a parallel-port dongle on
+LPT1, which leaves COM2 free. The coin work belongs on one of those -- I.G.O. 6
+is the obvious candidate, since I.G.O. 7 runs a CRC check on every boot and is
+slow to test against.
+
+What the card *is* still good for stands: A0 is the operator setup button and A1
+starts the CRC check, both confirmed, both active low.
+
+## 8. What this corrected
 
 The obvious shortcut — have the toolbar buttons type the keyboard shortcuts,
 since `S` opens the operator setup from the menu and `C` adds a credit on a
