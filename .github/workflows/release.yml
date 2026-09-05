@@ -1,5 +1,5 @@
-# Build PeepeeBox for Windows, Linux and macOS and publish the three artifacts as
-# a GitHub Release, one per build.
+# Build PeepeeBox for Windows, Linux and macOS, and publish the three artifacts as
+# a GitHub Release when the commit is a named one.
 #
 # The per-OS jobs deliberately mirror the three CMake (…) CI workflows, which are
 # known to build this tree green -- same dependency lists, same configure flags.
@@ -12,13 +12,19 @@
 #   * macOS builds arm64 with NEW_DYNAREC on, because the CI matrix excludes the
 #     old dynarec on arm64.
 #
-# Releases are tagged build-<run number>, so re-running never collides -- unless the
-# commit carries a v<x.y> tag, in which case that tag names the release instead and
-# it is titled "Release <x.y>".  To cut one, push the tag along with the branch:
+# Only a commit carrying a v<x.y[.z]> tag is published.  To cut one, push the tag
+# along with the branch:
 #
 #     git tag -a v1.1 -m "…" && git push origin main v1.1
 #
-# That tag is also where the release number in the About box comes from: the `version`
+# Every other push to main still builds all three platforms -- that is the point of
+# running this on push, and a build that breaks should break here -- but it stops at
+# the uploaded artifacts on the run page.  It used to publish a `build-<run number>`
+# release as well, which meant the releases page filled with builds nobody had chosen
+# to release and "Latest" pointed at whatever was pushed last.  Fourteen of those were
+# deleted on 2026-09-05; the releases page is for named versions only.
+#
+# The tag is also where the release number in the About box comes from: the `version`
 # job below reads it once and every build job is configured with it, so the number cannot
 # drift from the tag it ships under -- it did once, and Release 1.6 called itself 1.5.
 
@@ -247,10 +253,13 @@ jobs:
   release:
     name: Publish release
     needs: [version, windows, linux, macos]
+    # Named versions only.  An untagged push has already done the useful part by
+    # building; its binaries are on the run page as artifacts.
+    if: needs.version.outputs.tag != ''
     runs-on: ubuntu-latest
     steps:
-      # Full history and tags, so the step below can see whether this commit was
-      # tagged as a named release.
+      # gh resolves the repository from the checkout, and the tag has to exist here
+      # for the release to attach to it.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -266,22 +275,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          subject="$(git log -1 --pretty=%s)"
 
-          # A commit carrying a v<x.y> tag is a named release; anything else is
-          # just the next automatic build.  Push the tag together with the branch
-          # (git push origin main v1.1) and this picks it up.  The number itself came
-          # from the version job, which is what the binaries were built with.
-          version="${{ needs.version.outputs.tag }}"
-          if [ -n "$version" ]; then
-            tag="$version"
-            title="Release ${version#v}"
-            headline="PeepeeBox $title — \`${GITHUB_SHA::7}\`"
-          else
-            tag="build-${{ github.run_number }}"
-            title="PeepeeBox $tag"
-            headline="Automatic build of \`${GITHUB_SHA::7}\` — $subject"
-          fi
+          # The job only runs for a tagged commit, so this is always a named release.
+          # The number came from the version job, which is what the binaries were
+          # built with, so the release and the About box cannot disagree.
+          tag="${{ needs.version.outputs.tag }}"
+          title="Release ${tag#v}"
+          headline="PeepeeBox $title — \`${GITHUB_SHA::7}\`"
 
           {
             echo "$headline"
