@@ -313,22 +313,35 @@ done:
 }
 
 /* "Version 2005B" -> "IGO 5".  The mapping is from images whose MAIN.SET was
-   read directly; where no image was available the year pattern is followed. */
+   read directly; where no image was available the year pattern is followed.
+
+   Longest banner first where one is a prefix of another, because the first match
+   wins -- "Version 2005B" has to be tried before "Version 2005".
+
+   `names_territory` is for a display name that already says which country this is.
+   Everything else gets the territory appended, so "IGO 7" + "IT"; a name that has
+   already said "Italy" must not come out as "Italy IT". */
 static const struct {
     const char *banner;
     const char *display;
+    int         names_territory;
 } pp_release_names[] = {
-    { "Version 99",    "Photo Play 99"   },
-    { "Version 2000",  "Photo Play 2000" },
-    { "Version 2001",  "IGO 1"           },
-    { "Version 2002",  "IGO 2"           },
-    { "Version 2003",  "IGO 3"           },
-    { "Version 2004",  "IGO 4"           },
-    { "Version 2005B", "IGO 5"           },
-    { "Version 2005",  "IGO 5"           },
-    { "Version 2006",  "IGO 6"           },
-    { "Version 2007",  "IGO 7"           },
-    { "Version 2008",  "IGO 8"           },
+    { "Version 99",    "Photo Play 99",   0 },
+    { "Version 2000",  "Photo Play 2000", 0 },
+    { "Version 2001",  "IGO 1",           0 },
+    { "Version 2002",  "IGO 2",           0 },
+    { "Version 2003",  "IGO 3",           0 },
+    { "Version 2004",  "IGO 4",           0 },
+    { "Version 2005B", "IGO 5",           0 },
+    { "Version 2005",  "IGO 5",           0 },
+    { "Version 2006",  "IGO 6",           0 },
+    { "Version 2007",  "IGO 7",           0 },
+    { "Version 2008",  "IGO 8",           0 },
+
+    /* The Italian one does not follow the year pattern: its MAIN.SET says
+       "Version 08IT (IT)", which matched nothing here and so showed up in the
+       window title as the raw banner. */
+    { "Version 08IT",  "I.G.O. 8 Italy",  1 },
 };
 
 int
@@ -374,11 +387,13 @@ photoplay_identify_ex(const char *img_path, char *out, size_t outsz,
                     }
                 }
 
-                const char *name = NULL;
+                const char *name      = NULL;
+                int         named_terr = 0;
                 for (size_t i = 0; i < (sizeof(pp_release_names) / sizeof(pp_release_names[0])); i++) {
                     if (!strncmp(version, pp_release_names[i].banner,
                                  strlen(pp_release_names[i].banner))) {
-                        name = pp_release_names[i].display;
+                        name       = pp_release_names[i].display;
+                        named_terr = pp_release_names[i].names_territory;
                         break;
                     }
                 }
@@ -392,7 +407,7 @@ photoplay_identify_ex(const char *img_path, char *out, size_t outsz,
                     snprintf(terr_out, tsz, "%s", land);
 
                 if (name != NULL) {
-                    if (land[0])
+                    if (land[0] && !named_terr)
                         snprintf(out, outsz, "%s %s", name, land);
                     else
                         snprintf(out, outsz, "%s", name);
