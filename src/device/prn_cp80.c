@@ -122,6 +122,35 @@ typedef struct cp80_port_t {
 #define CP80_ENQ      0x05
 #define CP80_ENQ_MS   100.0
 
+/* The reply the unit owes the host after a command frame.
+
+   The protocol engine is the state machine at 0x1E8FC in MENU.EXE.  Once the
+   frame is away it enters a receive state at 0x1EA4A that stores every byte
+   arriving into a buffer until it sees **LF**, and then at 0x1EA81:
+
+       mov al, [bp-0x4AF]     -- that is buffer index 15
+       mov [bp-0x39], al
+   ... 0x1EAEA:
+       cmp byte [bp-0x39], 0x43    -- must be 'C'
+       jne -> si = 8               -- the error state; nothing prints
+
+   **Byte 15 is the whole test.**  Nothing else in the reply is read anywhere in
+   that function, so the rest is ours to make readable rather than to guess at.
+   Sixteen characters with a C in the last one, then the LF that ends the line.
+
+   What the real unit sends there is unknown and probably identifies it -- the
+   binary carries "Geraete-Nr.: %ld" and "serialnumber: %ld" nearby, so a device
+   number likely lives in this line.  Nothing reads it yet, and inventing a
+   plausible serial number would only make a wrong guess harder to spot later. */
+#define CP80_REPLY    "DATAPRINT V1.0 C" "\n"
+#define CP80_REPLY_C  15           /* the index the guest checks */
+
+/* One byte per tick, because 17 bytes pushed into the receive register at once
+   is an overrun on a UART with the FIFO off, and the guest is reading them one
+   at a time in a loop.  Roughly a byte time at 9600 baud. */
+#define CP80_OUT_MS   1.5
+#define CP80_OUT_MAX  64
+
 typedef struct cp80_t {
     cp80_port_t ports[CP80_PORTS_MAX];
     int         nports;
@@ -130,6 +159,12 @@ typedef struct cp80_t {
     pc_timer_t  enq;
     int         enq_on;
     int         connected;         /* the unit is plugged in */
+
+    pc_timer_t  out;               /* paces what we send back  */
+    uint8_t     out_q[CP80_OUT_MAX];
+    int         out_head;
+    int         out_tail;
+    int         out_port;          /* which port the reply goes to */
 
     cp80_buf_t paper;
     cp80_buf_t trace;
@@ -571,6 +606,10 @@ cp80_byte(cp80_t *dev, uint8_t c)
 
 /* ---------------------------------------------------------------- the wire */
 
+/* The reply queue, defined with the rest of the port handling below. */
+static int  cp80_out_pending(const cp80_t *dev);
+static void cp80_say(cp80_t *dev, int port, const char *bytes, size_t len);
+
 static void
 cp80_write(UNUSED(serial_t *serial), void *priv, uint8_t val)
 {
@@ -607,6 +646,17 @@ cp80_write(UNUSED(serial_t *serial), void *priv, uint8_t val)
     }
 
     cp80_byte(dev, val);
+
+    /* ETX ends a command frame, and the guest then sits in a receive state
+       waiting for a line.  Answer it.  Replying on the ETX rather than on the
+       trailing LFs is deliberate: the reply is paced a byte at a time and the
+       guest's FIFO holds it until it looks, so being early is free and being
+       late is a timeout. */
+    if ((val == 0x03) && dev->connected && !cp80_out_pending(dev)) {
+        cp80_say(dev, p->port, CP80_REPLY, sizeof(CP80_REPLY) - 1);
+        cp80_tracef(dev, "-- answered with %s --\n", CP80_REPLY);
+        pclog("CP80: command frame ended; answering \"%s\"\n", CP80_REPLY);
+    }
 
     thread_release_mutex(dev->lock);
 }
@@ -790,6 +840,51 @@ cp80_setting(void)
     return device_get_config_int("port");
 }
 
+static int
+cp80_out_pending(const cp80_t *dev)
+{
+    return dev->out_head != dev->out_tail;
+}
+
+static void
+cp80_say(cp80_t *dev, int port, const char *bytes, size_t len)
+{
+    for (size_t i = 0; i < len; i++) {
+        const int next = (dev->out_tail + 1) % CP80_OUT_MAX;
+
+        if (next == dev->out_head) {
+            pclog("CP80: reply queue full; dropping the rest\n");
+            return;
+        }
+        dev->out_q[dev->out_tail] = (uint8_t) bytes[i];
+        dev->out_tail             = next;
+    }
+    dev->out_port = port;
+}
+
+static void
+cp80_out_tick(void *priv)
+{
+    cp80_t *dev = (cp80_t *) priv;
+
+    if (dev == NULL)
+        return;
+
+    if (cp80_out_pending(dev) && dev->connected) {
+        serial_t *ser = NULL;
+
+        for (int i = 0; i < dev->nports; i++)
+            if (dev->ports[i].port == dev->out_port)
+                ser = dev->ports[i].serial;
+
+        if (ser != NULL)
+            serial_write_fifo(ser, dev->out_q[dev->out_head]);
+        dev->out_head = (dev->out_head + 1) % CP80_OUT_MAX;
+    }
+
+    timer_on_auto(&dev->out, CP80_OUT_MS * 1000.0);
+}
+
 static void
 cp80_enq_tick(void *priv)
 {
@@ -798,7 +893,12 @@ cp80_enq_tick(void *priv)
     if (dev == NULL)
         return;
 
-    if (!dev->connected) {
+    /* Not while a reply is going out.  The guest's receive state stores every
+       byte it sees until LF, so an ENQ landing mid-reply shifts byte 15 and the
+       check fails on a reply that was otherwise right.  The gap is a few tens of
+       milliseconds against a watchdog measured in the hundreds, so this is not
+       the blanket hush that broke the last version. */
+    if (!dev->connected || cp80_out_pending(dev)) {
         timer_on_auto(&dev->enq, CP80_ENQ_MS * 1000.0);
         return;
     }
@@ -919,6 +1019,16 @@ cp80_init(UNUSED(const device_t *info))
         if (env != NULL)
             dev->enq_on = (atoi(env) != 0);
     }
+
+    /* The one byte of the reply that matters, checked out loud.  Editing that
+       string and quietly moving the C off index 15 would put the guest back on
+       the error path with nothing to say why. */
+    if (((sizeof(CP80_REPLY) - 1) <= CP80_REPLY_C) || (CP80_REPLY[CP80_REPLY_C] != 'C'))
+        pclog("CP80: reply byte %d is not 'C' -- the guest will reject it\n",
+              CP80_REPLY_C);
+
+    timer_add(&dev->out, cp80_out_tick, dev, 0);
+    timer_on_auto(&dev->out, CP80_OUT_MS * 1000.0);
 
     if (dev->enq_on) {
         timer_add(&dev->enq, cp80_enq_tick, dev, 0);

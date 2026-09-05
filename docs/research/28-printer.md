@@ -249,3 +249,64 @@ reset, which rebuilds the device plugged in.
 that constant is the next thing to understand. What the unit is supposed to send
 back beyond ENQ is still unknown — the frames will now get through, so whatever
 the guest does after a frame it does not abandon is the next piece of evidence.
+
+## 9. The handshake, read out of the state machine
+
+The protocol engine is the state machine at `0x1E8FC` in MENU.EXE: a state in
+`si`, a jump table at `cs:0x97BB`, one step per call. Reading its states in
+order gives the whole exchange.
+
+| At | State does |
+|---|---|
+| `0x1E92B` | drain: while LSR bit 0, read RBR — flush anything stale |
+| `0x1E9A7` | wait for **ENQ**: LSR bit 0, RBR == 5, else abandon |
+| `0x1E9FD` | LSR bit 5 (THR empty), send one byte — the `0x11` XON |
+| `0x1EA1A` | send a **6-byte buffer**, `1B 53 13 03 0A 0A`, until index == 6 |
+| `0x1EA4A` | **receive a line**: store each byte until one is `0x0A` |
+| `0x1EA81` | `mov al,[bp-0x4AF]` — take **index 15** of that line |
+| `0x1EAEA` | `cmp byte,0x43` — it must be **'C'**, else `si = 8`, the error state |
+| `0x1EA8C` | send the report body, byte at a time, counting to `[0x1355]` |
+| `0x1EACC`, `0x1EB4B` | send a 7-byte trailer |
+
+`di` accumulates a running sum of every byte sent, and at `0x1EAF0` it is
+rendered as four hex digits through the `"0123456789ABCDEF"` table copied in at
+`0x1E917` — so the trailer carries a **checksum**.
+
+That also explains the frame: the 6-byte send is exactly the first six bytes of
+the string constant at 289737, and the `1B 43` that follows it there is a
+separate 2-byte string, not an unsent tail. `ESC C` is presumably what the reply
+is built around, given 'C' is the byte the host checks.
+
+### The reply
+
+**Byte 15 is the entire test.** Nothing else in that function reads the receive
+buffer, so the rest of the line is ours to make readable rather than to guess
+at: `"DATAPRINT V1.0 C\n"`, sixteen characters with the C at index 15.
+
+What a real unit puts in the other fifteen is unknown and probably identifies
+it — `Geraete-Nr.: %ld` and `serialnumber: %ld` sit near the DATAPRINT strings,
+so a device number likely lives in that line. Inventing a plausible serial
+number would only make a wrong guess harder to spot later, so it says what it is
+instead. The index is checked at init and complains in the log if an edit moves
+the C off it.
+
+### Two things the reply forced
+
+It is **paced one byte per 1.5 ms**, roughly a byte time at 9600. Seventeen
+bytes pushed into the receive register at once is an overrun on a UART with the
+FIFO off, and the guest reads them one at a time.
+
+And the **ENQ keepalive is suppressed while a reply is going out** — the receive
+state stores *every* byte until LF, so an ENQ landing mid-reply shifts byte 15
+and the check fails on a reply that was otherwise correct. That is a few tens of
+milliseconds against a watchdog measured in hundreds, which is the difference
+between this and the blanket hush that broke §7.
+
+### On the name
+
+Marcos found a manual for a **DataCard CP80**, which is a plastic card printer.
+That does not obviously match a unit that prints book-keeping onto a 24-column
+roll, so either the cabinet's accessory is not what the name suggests or the
+name came from somewhere else. It does not change any of the above: all of it is
+read out of what this software actually does, and the manual can only refine the
+fifteen bytes of the reply that nothing checks.
