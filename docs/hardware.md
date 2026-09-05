@@ -15,6 +15,7 @@ than a preference.
 | Input | 3M MicroTouch TouchPen on **COM3** | Move it and touch input dies silently. |
 | Disk | `HardDisk.img` beside the executable, IDE primary master | Geometry derived from file size. |
 | LPT1 | Photo Play protection dongle | See below. |
+| I/O card | funworld ISA card: NEC D71055C (8255) at **0x210** | The coin acceptor and the two buttons behind the door. See [`research/27-io-card.md`](research/27-io-card.md). |
 
 Two things are optional, because service and installation media exist even though
 no cabinet shipped with a drive. Both are off by default and both are toggled

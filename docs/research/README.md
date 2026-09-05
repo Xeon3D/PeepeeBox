@@ -33,6 +33,10 @@ and the corrections are usually the most interesting part.
 | `18-igo8-serial-dongle.md` | **The 2008 dongle is a serial smart-card reader, not a parallel-port device.** Transport, both keystreams, framing, the APDU set and the record -- corrects 09 |
 | `19-hasp-passwords.md` | **The HASP passwords, per generation.** 2001 and IGO 2-7 are HASP4; three password pairs cover six generations, with the anchored method that finds them and the false trail that does not |
 | `20-dongle-dumps.md` | **Nine dongles, dumped.** Passwords, record layouts and the per-customer crypto table -- the dongle side of the cipher that blocks 2001's pictures and IGO 3's boot |
+| `27-io-card.md` | **The funworld I/O card: an 8255 at 0x210.** Where the coin acceptor and the two door buttons live, found by answering the card-detection sweep; the C120's six accept lines and its 100 ms pulse; A0 is the setup button |
+
+(`21`--`26` are not listed above; they were added after this table was last
+touched.)
 
 ## Sibling investigation
 
