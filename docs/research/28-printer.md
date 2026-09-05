@@ -148,14 +148,59 @@ Nothing is skipped in bulk on a guess about a dialect. `PEEPEEBOX_PRN_PORT=1..4`
 moves the port for a run, `PEEPEEBOX_PRN_ENQ=0` silences the keepalive, and
 `PEEPEEBOX_PRN_TEST=<file>` replays a capture through the parser without booting.
 
-## 6. Open
+## 6. The printer is a Seiko DPU-414
 
-- **What the `ESC K` tags mean.** Five values seen, built at run time.
+Identified by Marcos; the user's guide is in
+`Manuals/THERMAL-PRINTER-DPU-414-USER-S-GUIDE.pdf`. A battery-capable thermal
+serial dot printer:
+
+| | |
+|---|---|
+| Columns | **40 normal, 80 condensed** (§6.1) |
+| Speed | max 52.5 cps normal, 80 cps condensed |
+| Baud | 75 to 19200, set on SWDIP 3 switches 5-8; **9600 is a setting** |
+| Format | data bits, parity and flow control on SWDIP 3 switches 1-4 |
+| Flow control | **H/W BUSY or XON/XOFF**, SWDIP 3 switch 4 |
+| Buffer | about 28000 characters |
+
+Its ESC sequences (§4) are Epson-like. The three that appear on our wire:
+
+| Code | DPU-414 meaning |
+|---|---|
+| `ESC "S" n` | set superscript or subscript printing |
+| `ESC "K" n1 n2` | set single-density bit-image graphics mode |
+| `ESC "C" n` | set page length |
+
+### The PC is not talking to the printer directly
+
+Every one of those readings fails against the capture:
+
+- `ESC K 21 0A` would open a bit image of 0x0A21 = 2593 dots. **Text follows,
+  not image data** — the next bytes are "funworld".
+- `ESC C` in the trailer is followed by `9E67`, four hex digits of checksum, not
+  a page length.
+- `ETX` (0x03) closes the command frame and **is not a DPU-414 control code** at
+  all; its basic codes are BS, HT, LF, FF, CR, SO, SI, DC2, DC4, CAN and DEL.
+- The serial connector table (§6.2) gives pin 2 as "TxD — **XON/XOFF Output**".
+  The printer's only outbound traffic is flow control. **It never sends ENQ**,
+  and ENQ is what the software waits for and what a missing one abandons the
+  transfer over.
+
+So something sits between the PC and the DPU-414 — the Dataprint proper — and
+the framing above is its protocol, not the printer's. The 24-column records are
+narrower than the printer's 40, which fits: the box formats for its own paper
+and the printer just prints what it is handed.
+
+That also means a `ESC K <tag>` in the report is the Dataprint's, whatever it
+does with it. Our parser takes two parameter bytes after it and skips no data,
+which happens to match the DPU-414's parameter count and renders the capture
+correctly either way.
+
+## 7. Open
+
+- **What the `ESC K` tags mean** to the Dataprint. Five values seen, built at
+  run time; no literal `1B 4B` in MENU.EXE.
 - **What a real unit's reply line contains** in the fifteen bytes nothing checks.
-- **Whether the Dataprint passes escapes to a printer inside it.** If it does, a
-  printer manual decodes the tags. The 24-column format fits a Citizen CBM-910,
-  which ships in 24- and 40-column variants — the questions that would settle it
-  are whether such a manual defines `ESC K` with a one-byte parameter, defines
-  `ESC C`, and whether the printer ever sends ENQ to the host unprompted. The
-  framing above is funworld's either way; no printer speaks it.
+- **Whether the box is a DPU-414 with a funworld interface board**, or a separate
+  unit driving a stock printer.
 - **What I.G.O. 8 cabinets did**, given their dongle owns COM2.

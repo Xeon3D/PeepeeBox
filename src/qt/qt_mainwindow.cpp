@@ -105,6 +105,7 @@ extern bool fast_forward;
 #include <QFile>
 #include <QFontDatabase>
 #include <QScrollBar>
+#include <QPixmap>
 #if QT_CONFIG(vulkan)
 #    include <QVulkanInstance>
 #    include <QVulkanFunctions>
@@ -1505,10 +1506,29 @@ MainWindow::on_actionInsert_note_4_triggered()
    what the printer is, not to pretend it already knows.  See
    src/device/prn_cp80.c. */
 static QDialog        *cp80_win      = nullptr;
+static QLabel         *cp80_head     = nullptr;
 static QPlainTextEdit *cp80_paper    = nullptr;
-static QPlainTextEdit *cp80_trace    = nullptr;
 static size_t          cp80_paper_at = 0;
-static size_t          cp80_trace_at = 0;
+
+/* The roll is as tall as what is printed on it, until it runs out of window.
+   A four-line receipt is a four-line strip sticking out of the slot, which is
+   what the machine would actually hand you -- and it means the paper grows
+   upward as it prints instead of a full-height box filling in from the top. */
+static void
+cp80_fit_paper()
+{
+    if ((cp80_paper == nullptr) || (cp80_win == nullptr))
+        return;
+
+    const int lines = qMax(1, cp80_paper->document()->blockCount());
+    const int want  = (lines * cp80_paper->fontMetrics().lineSpacing()) + 14;
+    const int room  = cp80_win->height()
+                    - (cp80_head ? cp80_head->height() : 0) - 80;
+
+    cp80_paper->setFixedHeight(qBound(0, want, qMax(0, room)));
+    cp80_paper->verticalScrollBar()->setValue(
+        cp80_paper->verticalScrollBar()->maximum());
+}
 
 /* The paper comes out at the speed the paper came out.
 
@@ -1519,6 +1539,17 @@ static size_t          cp80_trace_at = 0;
    paper should not.  Text is held here and released a line at a time, which is
    also the only way to watch a report and see where it goes wrong. */
 #define CP80_LINE_MS 400
+
+/* The DPU-414 is a top-exit printer: the slot is on top of the machine and the
+   paper rises out of it.  So the picture is the printer from the tear bar down
+   and it sits at the *bottom* of the window, with the roll growing upwards out
+   of its top edge.  Getting this the wrong way round reads as paper being eaten
+   rather than printed.
+
+   The picture is 510 px across with the slot from x=122 to x=435, so the roll
+   is 313/510 of the printer's width and sits 122/510 in from its left. */
+#define CP80_HEAD_W  460
+#define CP80_PAPER_W ((460 * 313) / 510)
 
 static QString  cp80_queued;           /* printed by the guest, not yet on paper */
 static QTimer  *cp80_feed = nullptr;
@@ -1547,6 +1578,7 @@ cp80_feed_line()
 
     cp80_paper->moveCursor(QTextCursor::End);
     cp80_paper->insertPlainText(line);
+    cp80_fit_paper();
     if (follow)
         bar->setValue(bar->maximum());
 }
@@ -1592,10 +1624,11 @@ cp80_pump()
     if (cp80_win == nullptr)
         return;
 
-    /* The paper is queued and fed on its own timer; the trace is not, because
-       the trace is for reading afterwards and waiting on it helps nobody. */
+    /* Only the paper.  The control-code trace is still kept by the device and
+       still goes to the log and cp80-raw.bin; it was a second text box in this
+       window while the protocol was being worked out, and now that it is
+       understood it was two thirds of the window telling you nothing. */
     cp80_pump_one(PRN_CP80_PAPER, &cp80_paper_at, nullptr, &cp80_queued);
-    cp80_pump_one(PRN_CP80_TRACE, &cp80_trace_at, cp80_trace, nullptr);
 }
 
 static void
@@ -1605,8 +1638,18 @@ cp80_show(QWidget *parent)
         QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
 
         cp80_win = new QDialog(parent);
-        cp80_win->setWindowTitle(QObject::tr("Receipt printer"));
-        cp80_win->resize(600, 680);
+        cp80_win->setWindowTitle(QObject::tr("Seiko DPU-414"));
+        cp80_win->resize(560, 720);
+
+        /* The machine itself, cropped so the picture ends at the tear bar --
+           the paper then leaves the image exactly where it leaves the printer,
+           and the widget below it is the roll rather than a text box that
+           happens to be underneath a photograph. */
+        cp80_head = new QLabel(cp80_win);
+        QPixmap dpu(QStringLiteral(":/menuicons/qt/icons/dpu414.png"));
+
+        cp80_head->setPixmap(dpu.scaledToWidth(CP80_HEAD_W, Qt::SmoothTransformation));
+        cp80_head->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
 
         cp80_paper = new QPlainTextEdit(cp80_win);
         cp80_paper->setReadOnly(true);
@@ -1621,8 +1664,11 @@ cp80_show(QWidget *parent)
            machine. */
         cp80_paper->setStyleSheet(QStringLiteral(
             "QPlainTextEdit { background: #f7f3e6; color: #2b2721;"
-            " border: 1px solid #cabfa6; border-radius: 2px;"
+            " border: 1px solid #cabfa6; border-bottom: none;"
             " selection-background-color: #c8bda0; }"));
+
+        /* The roll is as wide as the slot it comes out of, and no wider. */
+        cp80_paper->setFixedWidth(CP80_PAPER_W);
 
         if (cp80_feed == nullptr) {
             cp80_feed = new QTimer(cp80_win);
@@ -1631,20 +1677,6 @@ cp80_show(QWidget *parent)
             });
             cp80_feed->start(CP80_LINE_MS);
         }
-
-        cp80_trace = new QPlainTextEdit(cp80_win);
-        cp80_trace->setReadOnly(true);
-        cp80_trace->setFont(mono);
-        cp80_trace->setLineWrapMode(QPlainTextEdit::NoWrap);
-        cp80_trace->setPlaceholderText(QObject::tr(
-            "Control codes. Anything this build does not recognise says so here "
-            "rather than being dropped."));
-
-        auto *split = new QSplitter(Qt::Vertical, cp80_win);
-        split->addWidget(cp80_paper);
-        split->addWidget(cp80_trace);
-        split->setStretchFactor(0, 3);
-        split->setStretchFactor(1, 2);
 
         /* Plugged in or not, and it belongs here rather than on the toolbar:
            it is the printer's own switch, and with the unit visible the
@@ -1683,10 +1715,9 @@ cp80_show(QWidget *parent)
         QObject::connect(tear, &QPushButton::clicked, cp80_win, []() {
             prn_cp80_clear();
             cp80_paper->clear();
-            cp80_trace->clear();
             cp80_queued.clear();
             cp80_paper_at = 0;
-            cp80_trace_at = 0;
+            cp80_fit_paper();
         });
 
         QObject::connect(save, &QPushButton::clicked, cp80_win, [parent]() {
@@ -1714,10 +1745,27 @@ cp80_show(QWidget *parent)
         row->addWidget(tear);
         row->addWidget(save);
 
+        /* The roll, lined up under the slot.  The picture is 510 px wide and
+           its paper slot runs from 122 to 435, so the offsets are that
+           measurement and not a guess at what looks right. */
+        auto *roll = new QHBoxLayout;
+
+        roll->setContentsMargins(0, 0, 0, 0);
+        roll->addStretch(122);
+        roll->addWidget(cp80_paper, 0, Qt::AlignBottom);
+        roll->addStretch(510 - 435);
+
         auto *box = new QVBoxLayout(cp80_win);
-        box->addWidget(split);
+
+        box->setSpacing(0);
+        box->addStretch(1);            /* empty air above the roll */
+        box->addLayout(roll);
+        box->addWidget(cp80_head);
+        box->addSpacing(8);
         box->addWidget(lbl);
         box->addLayout(row);
+
+        cp80_fit_paper();
     }
 
     cp80_win->show();
