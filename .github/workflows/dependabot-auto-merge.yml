@@ -10,13 +10,21 @@
 #
 #   * automatically, when Dependabot opens or updates one;
 #   * by hand from the Actions tab (Run workflow), which sweeps every open
-#     Dependabot pull request.  That is also how to clear a backlog, and how to
-#     merge one a human cannot: an OAuth token without the `workflow` scope is
-#     refused when the pull request touches a file under .github/workflows/,
-#     which is most of them.  GITHUB_TOKEN here has no such restriction.
+#     Dependabot pull request.  That is how to clear a backlog.
 #
 # A pull request that will not merge cleanly is left alone and told to rebase,
 # rather than being forced.
+#
+# **A pull request that edits a file in this directory cannot be merged from
+# here.**  GITHUB_TOKEN is refused on `.github/workflows/**` -- "without
+# `workflows` permission" -- and there is no permission to grant it, by design.
+# The same wall stands in front of `gh` run locally with an OAuth token that
+# lacks the `workflow` scope.  Since Dependabot on this repository watches
+# nothing *but* the actions in these workflows, that is most of what it opens.
+# Those have to be merged from the web UI by someone signed in, or the bump
+# applied to main directly and the pull request left to close itself.  This
+# workflow still earns its place for the rest, and it says which is which in
+# its log rather than failing silently.
 #
 # `pull_request_target` runs in the context of the base repository, which is what
 # gives this the write access `pull_request` would not.  Nothing here checks out
@@ -64,6 +72,7 @@ jobs:
           fi
 
           merged=0
+          blocked=0
           for n in $numbers; do
             # mergeable is computed in the background, so a pull request opened a
             # moment ago can still answer UNKNOWN.  Give it a few seconds rather
@@ -84,9 +93,17 @@ jobs:
                 # reason to abandon the rest of the sweep -- so ask for a rebase and
                 # carry on.  The rebase reopens this workflow's own trigger.
                 echo "merging #$n -- $title"
-                if gh pr merge "$n" --squash --delete-branch; then
+                if gh pr merge "$n" --squash --delete-branch 2>merge.err; then
                   merged=$((merged + 1))
+                elif grep -q 'workflows. permission' merge.err; then
+                  # Not a conflict and not something a rebase fixes: see the note
+                  # at the top.  Say so plainly instead of asking Dependabot to
+                  # rebase a pull request that is already perfectly mergeable.
+                  cat merge.err
+                  echo "#$n edits .github/workflows/ -- merge it from the web UI"
+                  blocked=$((blocked + 1))
                 else
+                  cat merge.err
                   echo "#$n would not merge after all, asking for a rebase"
                   gh pr comment "$n" --body "@dependabot rebase"
                 fi
@@ -101,4 +118,4 @@ jobs:
             esac
           done
 
-          echo "merged $merged pull request(s)"
+          echo "merged $merged pull request(s); $blocked left for the web UI"

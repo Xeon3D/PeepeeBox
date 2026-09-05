@@ -136,7 +136,7 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path dist/PeepeeBox -DestinationPath PeepeeBox-windows-x64.zip
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: PeepeeBox-windows-x64
           path: PeepeeBox-windows-x64.zip
@@ -193,7 +193,7 @@ jobs:
           cp README.md dist/PeepeeBox/
           cd dist && zip -r ../PeepeeBox-linux-x86_64.zip PeepeeBox
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: PeepeeBox-linux-x86_64
           path: PeepeeBox-linux-x86_64.zip
@@ -245,7 +245,7 @@ jobs:
           # -y so the .app bundle's symlinks survive the archive
           cd dist && zip -ry ../PeepeeBox-macos-arm64.zip PeepeeBox
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: PeepeeBox-macos-arm64
           path: PeepeeBox-macos-arm64.zip
@@ -265,7 +265,7 @@ jobs:
           fetch-depth: 0
 
       - name: Collect artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: assets
           merge-multiple: true
