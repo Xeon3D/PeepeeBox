@@ -139,6 +139,22 @@ fwio_log(const char *fmt, ...)
 
 static uint8_t fwio_idle = 0xff;
 
+/* PEEPEEBOX_IO_PHASE: only present an asserted line while port B bit 7 is 0 or 1.
+
+   B7 is not idle -- the software drives it as a roughly 3 Hz square wave for the
+   whole run, thousands of transitions, which is not what a coin counter or a
+   lamp looks like.  A card with a ULN2003 and one spare output line squaring away
+   like that is doing one of two things: kicking a watchdog, or **selecting a bank
+   of inputs**.  If it is a bank select, then port A means one set of signals when
+   B7 is low and another when it is high, and a line held across both phases is
+   contradictory rather than asserted -- which would look exactly like what has
+   been happening: the card answers, the software polls it twenty thousand times,
+   and nothing arrives.
+
+   With this set, an asserted line is presented only in the chosen phase and reads
+   idle in the other. */
+static int  fwio_phase        = -1;
+
 static uint8_t
 fwio_idle_of(uint8_t port)
 {
@@ -183,6 +199,12 @@ fwio_read(uint16_t port, void *priv)
         case FWIO_PORT_B:
         case FWIO_PORT_C:
             ret = dev->in[reg];
+            if ((fwio_phase >= 0) && (reg != FWIO_PORT_B)) {
+                const int b7 = (dev->out[FWIO_PORT_B] >> 7) & 1;
+
+                if (b7 != fwio_phase)
+                    ret = fwio_idle_of(reg);   /* the other bank: nothing here */
+            }
             break;
 
         case FWIO_CTRL:
@@ -314,6 +336,7 @@ static int  fwio_only_port    = -1;   /* PEEPEEBOX_IO_LINE=C:  walk one port onl
    One pulse is a C120 coin.  More than one, at the same 100 ms cadence, is the
    pulse-counting reading.  A run each settles which. */
 static int  fwio_pulses       = 1;
+
 static char fwio_walk_last[48] = "";
 
 static const uint8_t fwio_walk_skip[FWIO_WALK_STEPS] = {
@@ -383,6 +406,11 @@ funworld_io_pulse(int line)
 
         fwio_walk = (getenv("PEEPEEBOX_IO_WALK") != NULL) || (line != NULL);
 
+        const char *phase = getenv("PEEPEEBOX_IO_PHASE");
+
+        if (phase != NULL)
+            fwio_phase = (atoi(phase) != 0);
+
         if (pulses != NULL) {
             const int n = atoi(pulses);
 
@@ -410,7 +438,12 @@ funworld_io_pulse(int line)
         }
     }
 
-    if (fwio_walk) {
+    /* Only the coin button is hijacked.  The setup and calibration buttons keep
+       working off the map, because reaching the operator setup is how you get the
+       machine into the state where the one positive result so far happened -- and
+       until now turning the walk on took that away, since every button went to
+       the same stepper. */
+    if (fwio_walk && (line == FWIO_LINE_COIN1)) {
         uint8_t port;
         uint8_t bit;
 
