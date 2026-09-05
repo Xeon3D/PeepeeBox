@@ -196,15 +196,15 @@ fwio_write(uint16_t port, uint8_t val, void *priv)
    coin 1 to begin with, and pressing the coin button opened the operator setup
    instead (Marcos, on an I.G.O. 8 rig).  Nothing on port C did anything.
 
-   Which puts the rest in place, because port A is eight lines and the cabinet has
-   eight things to say: the two door buttons and the C120's six accept outputs.
-   So setup and calibration take A0 and A1, and the six coins follow on A2..A7.
-   The coins and the calibration line are still inference from that arithmetic,
-   not observation -- but they are the only arrangement that fits one confirmed
-   bit, an eight-line port, and a validator with exactly six outputs.
+   That arithmetic -- eight lines, two buttons and six coins -- was tried next and
+   is wrong.  **A1 starts the CRC check**, not the calibration, and **A2 does
+   nothing at all**.  So port A is not six coins in a row after the buttons, and
+   the coins are somewhere else; port C is the other input port and the obvious
+   place to look.  Marcos, on an I.G.O. 8 rig, 2026-09-05.
 
-   Port C reads as an input too, and is evidently something else: a bill acceptor,
-   the door switch, the meter returns.  Nothing here uses it yet.
+   Until the walk says otherwise the coin and calibration entries below are
+   placeholders that are known to be wrong, kept only so the buttons have
+   somewhere to point.  A0 is the only line here that is real.
 
    One table, so that correcting it stays a one-line job. */
 static const struct {
@@ -240,14 +240,27 @@ fwio_set_line(fwio_t *dev, int line, int asserted)
     fwio_set_bit(dev, fwio_line_map[line].port, fwio_line_map[line].bit, asserted);
 }
 
-/* PEEPEEBOX_IO_WALK: every pulse steps to the next input bit rather than using
-   the map above -- port A bit 0, A1 ... A7, then port C bit 0 ... C7, and round
-   again.  One button, clicked sixteen times, names every line in a single
-   sitting, which beats rebuilding once per guess.  Each step says in the log
-   which bit it just held, so counting clicks and watching the screen is the
-   whole procedure. */
-static int fwio_walk    = -1;
-static int fwio_walk_at = 0;
+/* PEEPEEBOX_IO_WALK: every pulse steps to the next line of the card rather than
+   using the map above -- A0..A7, then B0..B7, then C0..C7, and round again.  One
+   button, clicked through, names every line in a single sitting, which beats a
+   rebuild per guess.  Each step is logged and shown on screen, so there is no
+   click-counting to get wrong.
+
+   Steps the walk refuses to take.  B is an output -- control word 0x99 says so
+   and the guest never reads it -- so driving it could only waste clicks.  And A1
+   starts the CRC check, which takes the machine away for minutes and says
+   nothing new.  That leaves A0, A2..A7 and C0..C7: fifteen clicks. */
+#define FWIO_WALK_STEPS 24
+
+static int  fwio_walk         = -1;
+static int  fwio_walk_at      = 0;
+static char fwio_walk_last[48] = "";
+
+static const uint8_t fwio_walk_skip[FWIO_WALK_STEPS] = {
+    0, 1, 0, 0, 0, 0, 0, 0,   /* port A -- A1 is the CRC check */
+    1, 1, 1, 1, 1, 1, 1, 1,   /* port B -- outputs: the mechanical coin counter */
+    0, 0, 0, 0, 0, 0, 0, 0    /* port C */
+};
 
 static void
 fwio_walk_release(UNUSED(void *priv))
@@ -286,16 +299,22 @@ funworld_io_pulse(int line)
         fwio_walk = (getenv("PEEPEEBOX_IO_WALK") != NULL);
 
     if (fwio_walk) {
-        const uint8_t port = (uint8_t) ((fwio_walk_at < 8) ? FWIO_PORT_A : FWIO_PORT_C);
-        const uint8_t bit  = (uint8_t) (fwio_walk_at & 7);
+        uint8_t port;
+        uint8_t bit;
+
+        for (int guard = 0; fwio_walk_skip[fwio_walk_at] && (guard < FWIO_WALK_STEPS); guard++)
+            fwio_walk_at = (fwio_walk_at + 1) % FWIO_WALK_STEPS;
+
+        port = (uint8_t) (fwio_walk_at / 8);
+        bit  = (uint8_t) (fwio_walk_at % 8);
 
         memset(dev->in, 0xff, sizeof(dev->in));
         fwio_set_bit(dev, port, bit, 1);
-        pclog("FWIO-WALK: step %2d -- port %c bit %d held %g ms\n",
-              fwio_walk_at + 1, (port == FWIO_PORT_A) ? 'A' : 'C', bit,
-              FWIO_COIN_MS);
+        snprintf(fwio_walk_last, sizeof(fwio_walk_last), "port %c bit %d",
+                 (char) ('A' + port), bit);
+        pclog("FWIO-WALK: %s held %g ms\n", fwio_walk_last, FWIO_COIN_MS);
         timer_on_auto(&dev->release[0], FWIO_COIN_MS * 1000.0);
-        fwio_walk_at = (fwio_walk_at + 1) & 15;
+        fwio_walk_at = (fwio_walk_at + 1) % FWIO_WALK_STEPS;
         return;
     }
 
@@ -326,6 +345,8 @@ fwio_init(const device_t *info)
         return NULL;
 
     dev->base = (uint16_t) device_get_config_hex16("base");
+    if (fwio_walk < 0)
+        fwio_walk = (getenv("PEEPEEBOX_IO_WALK") != NULL);
     fwio_reset(dev);
 
     for (int i = 0; i < FWIO_IN_LINES; i++)
@@ -456,4 +477,16 @@ funworld_io_probe_init(void)
                       fwio_probe_read, NULL, NULL,
                       fwio_probe_write, NULL, NULL, NULL);
     }
+}
+
+/* For the UI: is the walk on, and which line did the last click hold?  The
+   answer belongs on screen -- counting clicks against a comment in a batch file
+   is exactly the kind of bookkeeping that produces a wrong answer. */
+int
+funworld_io_walk_state(char *out, size_t len)
+{
+    if (fwio_walk <= 0)
+        return 0;
+    snprintf(out, len, "%s", fwio_walk_last[0] ? fwio_walk_last : "not started");
+    return 1;
 }

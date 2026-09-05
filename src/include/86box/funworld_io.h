@@ -13,6 +13,8 @@
 #ifndef EMU_FUNWORLD_IO_H
 #define EMU_FUNWORLD_IO_H
 
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -41,6 +43,10 @@ extern int  funworld_io_present(void);
 /* Diagnostic: answer the card-detection sweep at every candidate address, to
    find out which one the disk expects.  Enabled by PEEPEEBOX_IO_PROBE. */
 extern void funworld_io_probe_init(void);
+
+/* Diagnostic: whether PEEPEEBOX_IO_WALK is on, and which line the last pulse
+   held.  Returns 0 when the walk is not running. */
+extern int  funworld_io_walk_state(char *out, size_t len);
 
 extern const device_t funworld_io_device;
 

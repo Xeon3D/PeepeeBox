@@ -1362,6 +1362,34 @@ void
 MainWindow::on_actionInsert_coin_triggered()
 {
     funworld_io_pulse(FWIO_LINE_COIN1);
+
+    /* Under PEEPEEBOX_IO_WALK this button is not a coin at all -- it steps
+       through the card's lines one per click.  Which line that was has to be on
+       screen: counting clicks against a comment in a batch file is exactly the
+       bookkeeping that produces a confident wrong answer, and whoever is
+       clicking is watching the guest, not the log. */
+    char what[48];
+
+    if (funworld_io_walk_state(what, sizeof(what))) {
+        static QLabel *walk = nullptr;
+
+        if (walk == nullptr) {
+            walk = new QLabel(this, Qt::Tool | Qt::WindowStaysOnTopHint);
+            walk->setWindowTitle(tr("I/O card walk"));
+            walk->setAlignment(Qt::AlignCenter);
+            walk->setMargin(18);
+
+            QFont font = walk->font();
+            font.setPointSize(font.pointSize() + 8);
+            font.setBold(true);
+            walk->setFont(font);
+        }
+
+        walk->setText(QString::fromUtf8(what));
+        walk->adjustSize();
+        walk->show();
+        walk->raise();
+    }
 }
 
 void
