@@ -17,7 +17,7 @@ photographs of a real one:
 | **74HC14** | Schmitt inverter on the inputs. This is the coin-pulse debouncer. |
 | **74LS245** | Bus transceiver. |
 | **74LS682** + 8-way DIP switch | Address comparator. **This is why the base address is a setting**: the DIP switch picks it. |
-| 2 × DB25, 100K pull-up networks, clamp diodes | The looms and their protection. |
+| **One DB25 and one DB15**, 100K pull-up networks, clamp diodes | The looms and their protection. Photographed and confirmed 2026-09-05 — an earlier reading of "2 × DB25" was wrong. See §2. |
 
 A **second version** of the card exists that also carries the ESS audio and its
 ports on the same board.
@@ -264,3 +264,437 @@ and overloaded, so a button that typed one would do the wrong thing depending on
 where the guest happened to be, and would do it silently.
 
 The buttons drive the card's lines.
+
+## 10. Every experiment so far was the same experiment
+
+`PEEPEEBOX_IO_LINE`, `_MS`, `_PULSES`, `_PHASE` and `_HOLD` were **never read**.
+
+They were parsed on the first coin-button press, inside `if (fwio_walk < 0)`.
+That guard cannot be true there: `fwio_init` assigns `fwio_walk` before it
+publishes `fwio_inst`, and a pulse with no `fwio_inst` returns before reaching
+the guard — so by the time any press could run that block, `fwio_walk` was
+already 0 or 1 and the block was skipped. It was dead from the moment the same
+variable was given a default in `init`.
+
+The consequences are worth writing down, because several conclusions above rest
+on runs that did not do what they were told:
+
+- **Pinning never took.** `PEEPEEBOX_IO_LINE=A6` did a plain full walk from A0.
+  So "the coins only credit if I walk A2..A5 first" is not an enable line and not
+  a handshake: A2..A5 are the clicks it takes to *reach* A6 when the pin is
+  ignored. Nothing in A2..A5 is being switched on.
+- **`PEEPEEBOX_IO_LINE=C` never took either**, so every port C pass still began
+  with A0 opening the operator setup — the exact defect §6 was trying to avoid.
+- **`PEEPEEBOX_IO_MS` never took**, so the five-coins-per-hold measurement in §8
+  was always made at 100 ms whatever was set.
+- **`PEEPEEBOX_IO_PULSES` and `_PHASE` never took**, so the pulse-train and
+  bank-select readings in §7 were never actually tested. They are still open
+  questions, not eliminated ones.
+- With `_LINE` set but not `_WALK`, `init` also picked `fwio_release` for the
+  release timer, which clears the *mapped* line rather than the walked one — so a
+  line asserted by such a run stayed asserted for the rest of the boot.
+
+`PEEPEEBOX_IO_IDLE` is the one variable that always worked, because it is read in
+`fwio_reset`, which `init` does call. That is why §4 is sound and §6–§8 are not.
+
+The environment is now read once, in `fwio_read_env()` from `init`, and the
+settings are logged on the way past:
+
+```
+FWIO: walk 1, pin 6, only port -1, 100 ms, x1, phase -1, hold A=00 B=00 C=00
+```
+
+A variable that is read and ignored looks exactly like one that is read and
+obeyed, which is how this survived ten experiments. The line is there so it
+cannot happen quietly again.
+
+### What to redo
+
+The §8 map (A6, A7, C0..C7; C0..C3 the notes) came from a full walk, where each
+line was still pressed once and named on screen, so it is probably right. But it
+has never been confirmed one line at a time from a clean boot, and that is now
+possible for the first time. `PEEPEEBOX_IO_LINE=A6` with the book-keeping page
+cleared: five presses should read five on one channel and nothing anywhere else.
+
+## 11. The map, measured
+
+With `PEEPEEBOX_IO_LINE` finally being read (§10), each of the ten lines was
+pinned for a whole run and pulled once from a cleared book-keeping page, on
+I.G.O. 6. The notes named themselves. The coins did something stranger, and the
+strangeness is the answer.
+
+**Every coin press booked five channels — the six coins minus one.**
+
+| Pressed | Booked | Missing |
+|---|---|---|
+| A6 | 0.10, 0.20, 0.50, 1, TOKEN 10 | **2.00** |
+| A7 | 0.10, 0.20, 0.50, 1, 2 | **TOKEN 10** |
+| C4 | 0.20, 0.50, 1, 2, TOKEN 10 | **0.10** |
+| C5 | 0.10, 0.50, 1, 2, TOKEN 10 | **0.20** |
+| C6 | 0.10, 0.20, 1, 2, TOKEN 10 | **0.50** |
+| C7 | 0.10, 0.20, 0.50, 2, TOKEN 10 | **1.00** |
+
+Six sets of five, and the six missing values are the six denominations with no
+overlap and none left over. That is not six lines misfiring — it is the software
+reading the port and booking **every coin line it finds low**, finding five of
+them low because `PEEPEEBOX_IO_IDLE=00` was resting them all there, and the
+pressed line being the only one we had lifted. So the coin a line carries is the
+one *missing* from its set.
+
+The notes read correctly throughout because they are the group we happened to be
+driving the right way up.
+
+### The two groups rest opposite ways round
+
+| Group | Idle | A coin/note |
+|---|---|---|
+| Six C120 coin lines, and A0/A1 | **high** | pulls **low** — as the C120 manual says: open-collector, active low |
+| Four bill validator lines | **low** | drives **high** |
+
+`fwio_idle[3] = { 0xff, 0xff, 0xf0 }` is now the default and no run script sets
+`PEEPEEBOX_IO_IDLE` any more. §4's single global idle level was the right shape
+of question and the wrong answer: there is no one polarity, because there are two
+devices on that loom.
+
+### The line map
+
+| Line | What |
+|---|---|
+| A0 | operator setup button |
+| A1 | starts the CRC check |
+| A2..A5 | not connected (predicted, see §15) — **not** tested |
+| **A6** | coin **2.00 EUR** |
+| **A7** | coin **TOKEN 10** |
+| **C0** | note **5 EUR** |
+| **C1** | note **10 EUR** |
+| **C2** | note **20 EUR** |
+| **C3** | note **50 EUR** |
+| **C4** | coin **0.10 EUR** |
+| **C5** | coin **0.20 EUR** |
+| **C6** | coin **0.50 EUR** |
+| **C7** | coin **1.00 EUR** |
+
+The denominations are what *this* image's operator setup is programmed to; the
+channels are the wiring. The UI numbers the channels for that reason.
+
+### What this retires
+
+- **§8's "one hold books five coins" defect does not exist.** It was one count on
+  each of five other channels, not five counts of one coin. The 100 ms hold and
+  the debounce are both fine, and `PEEPEEBOX_IO_MS` is not needed to fix
+  anything.
+- **The COM2 forward is gone.** `funworld_io_pulse()` was sending every coin to
+  `coin_c120_pulse(C120_LINE_CTS)` whenever the C120 device was present, which is
+  always. All ten money lines are on the card, so that forward could only swallow
+  coins the map would otherwise have delivered. The C120-on-COM2 device itself is
+  now dead weight and should come out.
+- **§7 is superseded**, other than its correct observation that I.G.O. 8 is the
+  wrong image to test on.
+
+Still open: where the touchscreen calibration button is. **§15 answers this from
+the wiring: it is A1.**
+
+## 12. The buttons
+
+The toolbar carries ten money buttons — six numbered gold coins, four numbered
+green notes — plus operator setup and calibrate. Ten, because the cabinet takes
+ten kinds of money on ten separate wires and there is no line that means "money"
+in general.
+
+They are numbered by **channel**, not by value. The channel is the wiring and
+does not move; what a channel is worth is whatever that image's operator setup
+has been programmed to, and the labels carry this image's values as a hint.
+
+## 13. COM2 is free again
+
+The `coin_c120` device is **gone** — file deleted, `device_add` removed, and the
+walk no longer carries on to four imaginary lines past C7. It attached a
+validator to COM2 on the reading in §7, which §11 disproved: all ten money lines
+are on the card.
+
+That matters beyond tidiness. **These cabinets could carry a receipt printer on
+COM2** instead of the I.G.O. 8 serial dongle (Marcos, 2026-09-05), and a phantom
+validator sitting on that port would have been a real conflict rather than merely
+dead code. COM2 now has nothing on it unless the image's own dongle claims it:
+
+- I.G.O. 8 attaches the 2008 card reader to COM2 (2F8h). `PEEPEEBOX_NO_SC=1`
+  stands it down; the log says `COM2 is free` when it does.
+- Every other generation up to I.G.O. 7 has a parallel dongle on LPT1, so COM2
+  is free without asking.
+
+Anything can be bound to it today through Settings → Ports (COM & LPT) → COM2,
+including 86Box's `serial_passthrough` char device. Emulating the cabinet's own
+printer needs the model first.
+
+## 14. The second door button, and what would settle it
+
+The button labelled "Calibrate touchscreen" ran the CRC check, because it pulses
+A1 and A1 is what the menu answers with a CRC check. Calling A1 the calibration
+button was never a finding — it came from the cabinet having two door buttons and
+the card having two confirmed inputs, which is arithmetic, not evidence. The
+action is now labelled **Second door button** and says so.
+
+Two readings are still open and they are not distinguishable from the menu:
+
+1. **A1 is the calibration button**, and its function is context-dependent the
+   way the keyboard shortcuts are (§9: `C` is a credit on a game's start page and
+   the CRC check on the menu). Testable: press it from inside the operator setup
+   or from a game rather than from the menu.
+2. **A1 is a CRC-check button** and the calibration is somewhere else.
+
+**§15 settles this in favour of (1) on a count of wires.** Reading (2) survives
+only if the DB25 carries an input we have not accounted for.
+
+### The wiring would settle it outright
+
+Marcos has traced both mechanical coin counters and the operator setup button to
+the card's **DB15**. Two things come out of that immediately:
+
+- The **counters are outputs**, driven through the ULN2003 from port B, and port
+  B is the one port nothing is known about — only that B7 runs a ~3 Hz square
+  wave. A counter traced to a ULN2003 input pin names a port B bit directly.
+- The **setup button is the anchor.** It is A0, confirmed on the rig. If the
+  trace from its DB15 pin through the 74HC14 lands on 8255 pin 4, the same
+  method reads off every other pin on that connector without another rig run.
+
+And the question that decides between the two readings above: **does the DB15
+carry a second input besides the setup button?** If it does, that is the
+calibration line. If it does not, the calibration is on the other connector and
+port A is not where to look.
+
+D71055C pin to port bit, for reading traces off the board (standard 8255A):
+
+| Port | Pins |
+|---|---|
+| PA0..PA3 | 4, 3, 2, 1 |
+| PA4..PA7 | 40, 39, 38, 37 |
+| PB0..PB7 | 18, 19, 20, 21, 22, 23, 24, 25 |
+| PC0..PC3 | 14, 15, 16, 17 |
+| PC4..PC7 | 13, 12, 11, 10 |
+
+Note the two reversals: PA0..PA3 descend, and PC4..PC7 descend while PC0..PC3
+ascend. Reading either backwards produces a plausible wrong map.
+
+One discrepancy to settle while the board is in hand: §1 records **2 × DB25**
+from photographs, and the trace is to a **DB15**. Either the card carries a DB15
+as well and §1 is incomplete, or the connector in §1 is misidentified.
+
+## 15. The two connectors, and what the wire count says
+
+Photographed 2026-09-05, and §1's "2 × DB25" was wrong. The card carries **one
+DB25 and one DB15**:
+
+| Connector | Carries |
+|---|---|
+| **DB25** | the acceptor loom — the ten money lines of §11 |
+| **DB15** | two mechanical coin **counters** (outputs, through the ULN2003); the **two door buttons** — operator setup and calibration; and **two pins that join a serial connector** |
+
+### That names the calibration button without another rig run
+
+Count the inputs. Ten money lines plus two buttons is **twelve**. Ports A and C
+have **sixteen** input bits between them. A0 is the operator setup button,
+confirmed. Every one of the ten money lines is placed. So:
+
+- the calibration button is **A1**, being the only other input with anything on
+  it, and
+- **A2..A5 are the four spare bits**, with nothing wired to them.
+
+Which makes A1 doing a CRC check a **context dependence, not a contradiction** —
+the same thing §9 records for the keyboard, where `C` is a credit on a game's
+start page and the CRC check on the menu. Pressed from the menu, the second door
+button starts a CRC check. Whether it calibrates from elsewhere has not been
+tried.
+
+### A correction to §11
+
+§11's table said A2..A5 "did nothing, each pulled on its own". **They were never
+pulled on their own.** Every run that touched them either rested port A low —
+which holds an active-low input asserted from power-on, so it can never make the
+transition anything is watching for — or silently ignored the pin and walked
+(§10). With the idle levels right, nobody has pressed A2..A5 yet.
+
+So "A2..A5 are unconnected" is now a **prediction from the wire count**, and
+pulling them one at a time on the current build is what would falsify it. Four
+presses. `run-line-A2.cmd` … `run-line-A5.cmd` on the rig.
+
+### Open: the two serial pins
+
+Two DB15 pins join a DB9 whose other three pins go to a serial port. Three pins
+to a UART is TxD/RxD/GND — the minimum for a serial device — so the DB9 is a
+serial peripheral and the card is contributing two wires to it. Which two decides
+whether this matters:
+
+- **Power and ground** (+12 V / +5 V from the ISA bus, out through the DB15) —
+  the card is only feeding a peripheral, and there is nothing to emulate.
+- **8255 port bits** — the card is driving or reading handshake lines on that
+  connector, which is a real signal path and would have to be emulated. With a
+  receipt printer on the other end (§13), a BUSY or paper-out line is exactly the
+  shape of thing that would be wired this way.
+
+To tell them apart: which DB15 pins, which DB9 pins, and whether they run to the
+D71055C / ULN2003 / 74HC14 or to a power rail.
+
+## 16. The DB15 loom, and an instrument for port B
+
+Traced by Marcos, 2026-09-05, and drawn **from the solder side** — so the pin
+numbering in that drawing is mirrored left-to-right against the mating face. To
+keep everyone counting the same way:
+
+| Connector | Front (mating face) | Solder side, left to right |
+|---|---|---|
+| DA-15 | top row 1..8, bottom row 9..15 | top **8..1**, bottom **15..9** |
+| DE-9 | top row 1..5, bottom row 6..9 | top **5..1**, bottom **9..6** |
+
+### What is on the loom
+
+- **Two mechanical coin counters.** Their two upper terminals are strapped
+  together to a shared common, and each has its own return. Two returns to the
+  DB15, which is two ULN2003 channels, which is **two port B bits**.
+- **The operator setup button**, two wires to the DB15. It is A0, confirmed on
+  the rig, so whichever DB15 pin carries its signal *is* PA0 — the one anchor
+  that converts DB15 pin numbers into 8255 bits for everything else on it.
+- **A link to the DB9 extension.** The DB9 has three pins going to a serial
+  port — TxD/RxD/GND, a serial peripheral — and its two remaining pins carry the
+  counters' common and a wire back to the DB15.
+
+### The serial pins are probably not signal
+
+That last point answers §14's open question, provisionally: the two non-serial
+DB9 pins are carrying the **counter common and a link to the DB15**, which is a
+supply and return being distributed through a spare connector, not the 8255
+reading or driving handshake lines. If that holds, **there is nothing there to
+emulate** and the DB9 is only borrowing the bracket. Worth confirming against a
+meter — +12 V and ground on those two pins would settle it in one measurement.
+
+### The calibration button is not in the drawing
+
+The DB15 was described as carrying two buttons; the drawing shows only the
+operator setup. So §15's prediction — the calibration button is A1 — is
+untouched by this and still rests on the wire count.
+
+### Port B: let the guest name the counter bits
+
+`fwio_log_out_b()` now reports every change on port B bits 0..6, always on:
+
+```
+FWIO-OUT: port B bit 3 -> 1
+FWIO-OUT: port B bit 3 -> 0
+```
+
+B7 is excluded — it is the ~3 Hz square wave and would bury everything. Each
+other bit is capped at 200 transitions, then says so once and goes quiet, so a
+bit that turns out to be chatty costs a line rather than a gigabyte.
+
+This makes the counters name themselves, without tracing anything: **book a coin
+and watch which bit pulses.** The two that move are the two counters, and the
+rest of port B is the inhibit line and the lamps. It works on any image, rather
+than on the one cabinet whose loom is in front of us.
+
+Baseline measured on a plain I.G.O. 6 boot: the software writes port B exactly
+once, `00`, and bits 0..6 are otherwise silent. So anything that appears in a run
+is an event, not noise.
+
+## 17. A run that could not answer, and two fixes
+
+The first port B run came back with no `FWIO-OUT` lines — and that was not a
+result, because the log had no way to say a button had been pressed. Presses went
+through `fwio_log()`, which is gated on `PEEPEEBOX_IO_TRACE`, and `run-play.cmd`
+deliberately sets no diagnostics. So "no counter moved" and "no coin was
+inserted" produced identical logs. An instrument that cannot distinguish its own
+null result from not being used is not an instrument.
+
+Three changes, all of them making a run self-describing:
+
+**Presses are logged, always.** `FWIO-IN` names the line, the port and the bit:
+
+```
+FWIO-IN: coin 1 -- port C bit 4, held 100 ms
+```
+
+Human-rate, so there is no volume argument against it. Counting these against
+what was actually pressed is now the first thing to do with any log.
+
+**B7 is no longer excluded.** It was skipped on §4's ~3 Hz square wave, which was
+recorded elsewhere — a plain I.G.O. 6 boot writes port B exactly once, `00`, so
+that wave is not a property of this image. Blanking one of eight bits while
+hunting for *two* counters was a bad trade, and the 200-change cap already solves
+the noise it was guarding against. Every bit is logged now.
+
+**The control word is logged**, decoded:
+
+```
+FWIO: control 99 -- port A in, port B out, port C upper in, lower in
+```
+
+Confirmed on the rig, and it matches the 0x99 decoded off the disk in §3. A run
+where this differs is a run whose every other reading needs re-examining.
+
+### The baseline
+
+A plain boot with nothing pressed produces exactly two FWIO lines — the settings
+line and the control line above. Everything past them is a press or the card
+answering one.
+
+## 18. B7 is a counter, and §4's square wave was never a square wave
+
+The self-describing run, on I.G.O. 6 from the menu:
+
+```
+FWIO-IN: coin 1 -- port C bit 4, held 100 ms      <- 0.10 EUR
+FWIO-IN: note 1 -- port C bit 0, held 100 ms      <- 5 EUR
+FWIO-OUT: port B bit 7 -> 1
+FWIO-OUT: port B bit 7 -> 0        x5 pulses in total
+FWIO-IN: setup button -- port A bit 0, held 100 ms
+```
+
+Three presses, three `FWIO-IN` lines, so the buttons reach the card. Then **five
+clean pulses on port B bit 7**, and nothing on any other bit. The setup button
+produced no output at all, as it should not.
+
+**B7 is a mechanical coin counter output.** It is also the bit that had been
+excluded from the log on the strength of §4 — one more run with that exclusion in
+place and this would have come back empty a second time.
+
+### What §4 actually saw
+
+§4 recorded B7 as "a ~3 Hz square wave for the whole run, thousands of
+transitions ... a watchdog kick or a bank select". It was the counter. During
+that era every coin press booked **five** channels (§11), so every press drove
+the counter five times, and a log with no timestamps and no record of what was
+pressed makes five pulses per press indistinguishable from a free-running square
+wave. Two of this card's long-standing mysteries — the square wave and the
+"five coins per hold" — are the same wrong idle level seen from two directions.
+
+The B7-is-a-bank-select theory that `PEEPEEBOX_IO_PHASE` was written for is
+therefore dead. The variable can go.
+
+### What five pulses means, and the run that decides
+
+0.10 EUR plus a 5 EUR note is **5.10 EUR**, and five pulses came out. The obvious
+reading is **one pulse per 1.00 EUR taken**, with fractions accumulating — which
+is ordinary for a mechanical cash counter, and would mean the 0.10 contributed
+nothing visible and the note contributed all five.
+
+One data point, so it is a hypothesis. Four presses separate it from everything
+else:
+
+| Press | Per-EUR model predicts |
+|---|---|
+| coin 4 (1.00) once | 1 pulse |
+| coin 5 (2.00) once | 2 pulses |
+| coin 1 (0.10) ten times | 1 pulse, on the tenth |
+| note 2 (10 EUR) once | 10 pulses |
+
+### The second counter
+
+The DB15 carries **two** counters and only B7 moved. So the other one counts
+something that did not happen in this run — plays started, or notes as against
+coins. It should appear on another port B bit the first time a game is launched.
+
+### Timestamps
+
+`FWIO-IN` and `FWIO-OUT` now carry milliseconds since the card's first log line.
+Five pulses is a number; five pulses 120 ms apart and 60 ms wide is a counter
+solenoid being driven, and five pulses seconds apart is something else. Without
+the stamp those read identically — which is how §4's square wave got written
+down in the first place.
