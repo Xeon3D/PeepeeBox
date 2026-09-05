@@ -62,6 +62,7 @@
 #include <86box/nvr.h>
 #include <86box/machine.h>
 #include <86box/photoplay.h>
+#include <86box/funworld_io.h>
 #include <86box/bugger.h>
 #include <86box/postcard.h>
 #include <86box/unittester.h>
@@ -1793,6 +1794,13 @@ pc_reset_hard_init(void)
         config_changed = 0;
     } else
         ui_sb_set_ready(1);
+
+    /* PeepeeBox: the cabinet's I/O card.  The coin acceptor and the two
+       buttons behind the door are wired to it, so it is as much a part of
+       the machine as the dongle -- not a peripheral anyone chose.  See
+       src/device/funworld_io.c. */
+    device_add(&funworld_io_device);
+    funworld_io_probe_init();
 
     /* Needs the status bar... */
     if (bugger_enabled)

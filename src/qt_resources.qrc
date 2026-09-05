@@ -91,6 +91,8 @@
         <file>qt/icons/acpi_shutdown.ico</file>
         <file>qt/icons/dongle.ico</file>
         <file>qt/icons/touch.ico</file>
+        <file>qt/icons/coin.ico</file>
+        <file>qt/icons/calibrate.ico</file>
         <file>qt/icons/floppy_35.ico</file>
         <file>qt/icons/cdrom.ico</file>
         <file>qt/icons/network.ico</file>

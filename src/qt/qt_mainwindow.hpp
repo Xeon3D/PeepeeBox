@@ -86,6 +86,9 @@ private slots:
     void on_actionFullscreen_triggered();
     void on_actionSettings_triggered();
     void on_actionTouchscreen_triggered();
+    void on_actionInsert_coin_triggered();
+    void on_actionOperator_setup_triggered();
+    void on_actionCalibrate_triggered();
     void on_actionNetwork_triggered();
     void on_actionCDROM_drive_triggered(bool checked);
     void on_actionFloppy_drive_triggered(bool checked);

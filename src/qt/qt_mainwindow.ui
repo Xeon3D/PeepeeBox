@@ -91,6 +91,10 @@
      <addaction name="separator"/>
      <addaction name="actionSound_gain"/>
     </widget>
+    <addaction name="actionInsert_coin"/>
+    <addaction name="actionOperator_setup"/>
+    <addaction name="actionCalibrate"/>
+    <addaction name="separator"/>
     <addaction name="actionSettings"/>
     <addaction name="actionTouchscreen"/>
     <addaction name="actionNetwork"/>
@@ -231,6 +235,10 @@
    <attribute name="toolBarBreak">
     <bool>false</bool>
    </attribute>
+   <addaction name="actionInsert_coin"/>
+   <addaction name="actionOperator_setup"/>
+   <addaction name="actionCalibrate"/>
+   <addaction name="separator"/>
    <addaction name="actionPause"/>
    <addaction name="actionHard_Reset"/>
    <addaction name="actionACPI_Shutdown"/>
@@ -268,6 +276,51 @@
    </property>
    <property name="menuRole">
     <enum>QAction::QuitRole</enum>
+   </property>
+  </action>
+  <action name="actionInsert_coin">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/coin.ico</normaloff>:/menuicons/qt/icons/coin.ico</iconset>
+   </property>
+   <property name="text">
+    <string>&amp;Insert coin</string>
+   </property>
+   <property name="toolTip">
+    <string>Insert a coin (the cabinet's coin acceptor)</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionOperator_setup">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/settings.ico</normaloff>:/menuicons/qt/icons/settings.ico</iconset>
+   </property>
+   <property name="text">
+    <string>&amp;Operator setup</string>
+   </property>
+   <property name="toolTip">
+    <string>Open the operator setup, as the cabinet's setup button did</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionCalibrate">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/calibrate.ico</normaloff>:/menuicons/qt/icons/calibrate.ico</iconset>
+   </property>
+   <property name="text">
+    <string>&amp;Calibrate touchscreen</string>
+   </property>
+   <property name="toolTip">
+    <string>Start the touchscreen calibration, as the cabinet's second button did</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
    </property>
   </action>
   <action name="actionTouchscreen">

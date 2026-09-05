@@ -51,6 +51,7 @@ extern "C" {
 #include <86box/renderdefs.h>
 #include <86box/lpt.h>
 #include <86box/photoplay.h>
+#include <86box/funworld_io.h>
 
 #ifdef USE_VNC
 #    include <86box/vnc.h>
@@ -1341,6 +1342,38 @@ MainWindow::on_actionSettings_triggered()
         pc_reset_hard();
     }
     plat_pause(currentPause);
+}
+
+/* PeepeeBox: the cabinet's own controls -- the coin slot and the two buttons
+   behind the door -- on the toolbar.
+
+   These do not type.  The keyboard has shortcuts that reach some of the same
+   places (S opens the operator setup from the menu), but they are not the same
+   thing: C is a credit on a game's start page and the CRC check on the menu, so
+   a button that typed one would do the wrong thing depending on where the guest
+   happened to be.  These drive the wires instead, through the funworld I/O card
+   -- an 8255 at 0x210, which is where a boot with PEEPEEBOX_IO_PROBE caught the
+   software configuring one.  See src/device/funworld_io.c.
+
+   A coin is a Coin Controls C120 accept line held for 100 ms, because that is
+   what the validator does and what the software is required to debounce.  The
+   device owns that timing; this only says which line. */
+void
+MainWindow::on_actionInsert_coin_triggered()
+{
+    funworld_io_pulse(FWIO_LINE_COIN1);
+}
+
+void
+MainWindow::on_actionOperator_setup_triggered()
+{
+    funworld_io_pulse(FWIO_LINE_SETUP);
+}
+
+void
+MainWindow::on_actionCalibrate_triggered()
+{
+    funworld_io_pulse(FWIO_LINE_CALIB);
 }
 
 /* PeepeeBox: the touchscreen the cabinet is fitted with.  Same shape as the dongle

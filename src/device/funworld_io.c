@@ -1,0 +1,408 @@
+/*
+ * PeepeeBox   A fork of 86Box that emulates the funworld Photo Play / I.G.O.
+ *             arcade kiosk hardware, including its protection token.
+ *
+ *             The funworld I/O card.
+ *
+ *             An ISA card the cabinets carried, built around an NEC D71055C --
+ *             an 8255-compatible PPI, so three 8-bit ports and a control
+ *             register at base+3.  A ULN2003 drives what leaves the card
+ *             (the coin acceptor's inhibit line, the counters, the lamps); a
+ *             74HC14 conditions what arrives; a 74LS682 compares the address
+ *             against an 8-way DIP switch, which is what makes the base
+ *             address a setting rather than a constant.
+ *
+ *             Wired to it: a Coin Controls C120 validator on a 10-way IDC, and
+ *             the two buttons behind the cabinet door -- one for the operator
+ *             setup, one for the touchscreen calibration.
+ *
+ *             The C120's contract (its manual, section 4.2) is the part that
+ *             constrains this: six *separate* accept lines, one per coin, each
+ *             an open-collector NPN pulled **low** for 100 ms +/- 20% on a good
+ *             coin.  The manual is emphatic that the host must see the line
+ *             held, not merely edge-detect it -- "NOT LESS THAN 50 mS" -- so a
+ *             coin here is a timer, not a flag poked and cleared.  Anything
+ *             shorter is a coin the software will not count, and it would fail
+ *             silently, which is the failure mode this cabinet specialises in.
+ *
+ *             Where it lives was not documented anywhere; the disk was asked
+ *             instead.  Booting I.G.O. 7 with PEEPEEBOX_IO_PROBE=00 caught a
+ *             resident program at segment 06FC writing control word **0x99** to
+ *             **0x213** and then reading 0210 and 0212 and writing 0211 --
+ *             which is an 8255 at base 0x210 with, decoded out of 0x99:
+ *
+ *                 mode 0 throughout, port A input, port B output,
+ *                 port C input in both halves.
+ *
+ *             So the coins and the buttons arrive on A and C, and B is what
+ *             drives the ULN2003 -- the acceptor's inhibit line, the counters
+ *             and the lamps.  Which *bit* is which is still open, and the map
+ *             below is a guess kept in one place until it is not.
+ *
+ * Authors:    The HUEG PP team.
+ *
+ *             Released under the GNU General Public License version 2 or
+ *             later.  See COPYING for more information.
+ */
+#include <stdarg.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <wchar.h>
+#define HAVE_STDARG_H
+#include <86box/86box.h>
+#include <86box/device.h>
+#include <86box/io.h>
+#include <86box/timer.h>
+#include <86box/plat.h>
+#include <86box/funworld_io.h>
+
+/* The 8255's four registers. */
+#define FWIO_PORT_A   0
+#define FWIO_PORT_B   1
+#define FWIO_PORT_C   2
+#define FWIO_CTRL     3
+#define FWIO_LEN      4
+
+/* The addresses the software sweeps looking for the card, from a boot traced
+   with PEEPEEBOX_IO_TRACE: 0203, 0207, 0233 ... 02F7, every base+3 in the
+   range.  The sweep is over 4-byte blocks, so these are the bases. */
+#define FWIO_PROBE_FIRST 0x200
+#define FWIO_PROBE_LAST  0x2fc
+
+/* How long a coin holds its line.  The C120 says 100 ms +/- 20%, and the host
+   is required to want at least 50 ms of it. */
+#define FWIO_COIN_MS  100.0
+
+typedef struct fwio_t {
+    uint16_t   base;
+
+    uint8_t    ctrl;               /* last control word written           */
+    uint8_t    out[3];             /* what the guest last drove outward   */
+    uint8_t    in[3];              /* what the card presents to the guest */
+
+    pc_timer_t release[FWIO_IN_LINES];
+    uint8_t    held;               /* bitmap of lines currently asserted  */
+} fwio_t;
+
+static fwio_t *fwio_inst = NULL;
+
+#ifdef ENABLE_FUNWORLD_IO_LOG
+int funworld_io_do_log = ENABLE_FUNWORLD_IO_LOG;
+#else
+int funworld_io_do_log = -1;   /* -1: ask the environment on first use */
+#endif
+
+/* Also on with PEEPEEBOX_IO_TRACE, which is what is set when someone is looking
+   at this card at all -- having to rebuild to see it answer is a poor trade. */
+static void
+fwio_log(const char *fmt, ...)
+{
+    va_list ap;
+
+    if (funworld_io_do_log < 0)
+        funworld_io_do_log = (getenv("PEEPEEBOX_IO_TRACE") != NULL);
+    if (!funworld_io_do_log)
+        return;
+    va_start(ap, fmt);
+    pclog_ex(fmt, ap);
+    va_end(ap);
+}
+
+/* ---------------------------------------------------------------- the card */
+
+/* An 8255 out of reset has all three ports as inputs.  Until the bit map is
+   known, every input line idles in the state a C120 leaves it: not asserted.
+   The 74HC14 inverts, so "not asserted" at the connector is a 1 here; that is a
+   guess about polarity and it is written down as one. */
+static void
+fwio_reset(fwio_t *dev)
+{
+    dev->ctrl = 0x9b;              /* all ports input, mode 0 */
+    memset(dev->out, 0x00, sizeof(dev->out));
+    memset(dev->in, 0xff, sizeof(dev->in));
+    dev->held = 0;
+}
+
+static uint8_t
+fwio_read(uint16_t port, void *priv)
+{
+    fwio_t       *dev = (fwio_t *) priv;
+    const uint8_t reg = (uint8_t) (port - dev->base);
+    uint8_t       ret = 0xff;
+
+    switch (reg) {
+        case FWIO_PORT_A:
+        case FWIO_PORT_B:
+        case FWIO_PORT_C:
+            ret = dev->in[reg];
+            break;
+
+        case FWIO_CTRL:
+            /* An 8255's control register is write-only; a real one leaves the
+               bus floating and the host reads 0xFF.  Kept explicit because the
+               software's card-detection reads exactly this address. */
+            ret = 0xff;
+            break;
+
+        default:
+            break;
+    }
+
+    fwio_log("FWIO: read  %04X (reg %d) = %02X\n", port, reg, ret);
+    return ret;
+}
+
+static void
+fwio_write(uint16_t port, uint8_t val, void *priv)
+{
+    fwio_t       *dev = (fwio_t *) priv;
+    const uint8_t reg = (uint8_t) (port - dev->base);
+
+    switch (reg) {
+        case FWIO_PORT_A:
+        case FWIO_PORT_B:
+        case FWIO_PORT_C:
+            dev->out[reg] = val;
+            break;
+
+        case FWIO_CTRL:
+            if (val & 0x80) {
+                /* Mode set: the 8255 clears its output latches. */
+                dev->ctrl = val;
+                memset(dev->out, 0x00, sizeof(dev->out));
+            } else {
+                /* Bit set/reset on port C. */
+                const uint8_t bit = (val >> 1) & 7;
+
+                if (val & 1)
+                    dev->out[FWIO_PORT_C] |= (uint8_t) (1 << bit);
+                else
+                    dev->out[FWIO_PORT_C] &= (uint8_t) ~(1 << bit);
+            }
+            break;
+
+        default:
+            break;
+    }
+
+    fwio_log("FWIO: write %04X (reg %d) = %02X\n", port, reg, val);
+}
+
+/* ------------------------------------------------------------- input lines */
+
+/* Which port and bit each line sits on is still open.  What is settled is which
+   ports can carry them at all: control word 0x99 makes A and C inputs and B an
+   output, so nothing that arrives can be on B.  Six coins on A leaves C for the
+   two buttons, which is the arrangement that fits -- the C120's six accept lines
+   are one loom, the door buttons are another.
+
+   Everything routes through this table so that when the bits are known there is
+   one thing to correct rather than constants scattered about. */
+static const struct {
+    uint8_t port;
+    uint8_t bit;
+} fwio_line_map[FWIO_IN_LINES] = {
+    { FWIO_PORT_A, 0 }, /* coin 1 */
+    { FWIO_PORT_A, 1 }, /* coin 2 */
+    { FWIO_PORT_A, 2 }, /* coin 3 */
+    { FWIO_PORT_A, 3 }, /* coin 4 */
+    { FWIO_PORT_A, 4 }, /* coin 5 */
+    { FWIO_PORT_A, 5 }, /* coin 6 */
+    { FWIO_PORT_C, 0 }, /* operator setup button */
+    { FWIO_PORT_C, 1 }, /* calibration button    */
+};
+
+static void
+fwio_set_line(fwio_t *dev, int line, int asserted)
+{
+    const uint8_t port = fwio_line_map[line].port;
+    const uint8_t mask = (uint8_t) (1 << fwio_line_map[line].bit);
+
+    /* Asserted is low at the connector; the 74HC14 in between is why this is a
+       guess rather than a fact.  One place to flip it when it is known. */
+    if (asserted)
+        dev->in[port] &= (uint8_t) ~mask;
+    else
+        dev->in[port] |= mask;
+}
+
+static void
+fwio_release(void *priv)
+{
+    fwio_t *dev = fwio_inst;
+    const int line = (int) (intptr_t) priv;
+
+    if (dev == NULL)
+        return;
+
+    fwio_set_line(dev, line, 0);
+    dev->held &= (uint8_t) ~(1 << line);
+    fwio_log("FWIO: line %d released\n", line);
+}
+
+void
+funworld_io_pulse(int line)
+{
+    fwio_t *dev = fwio_inst;
+
+    if ((dev == NULL) || (line < 0) || (line >= FWIO_IN_LINES))
+        return;
+
+    /* A second coin while the first is still on the wire is not a thing the
+       validator can do -- it holds the line for 100 ms and will not start
+       another until it lets go.  Restarting the timer instead of stacking
+       keeps that true. */
+    fwio_set_line(dev, line, 1);
+    dev->held |= (uint8_t) (1 << line);
+    timer_on_auto(&dev->release[line], FWIO_COIN_MS * 1000.0);
+    fwio_log("FWIO: line %d asserted for %g ms\n", line, FWIO_COIN_MS);
+}
+
+int
+funworld_io_present(void)
+{
+    return fwio_inst != NULL;
+}
+
+/* -------------------------------------------------------------- the device */
+
+static void *
+fwio_init(const device_t *info)
+{
+    fwio_t *dev = (fwio_t *) calloc(1, sizeof(fwio_t));
+
+    if (dev == NULL)
+        return NULL;
+
+    dev->base = (uint16_t) device_get_config_hex16("base");
+    fwio_reset(dev);
+
+    for (int i = 0; i < FWIO_IN_LINES; i++)
+        timer_add(&dev->release[i], fwio_release, (void *) (intptr_t) i, 0);
+
+    io_sethandler(dev->base, FWIO_LEN, fwio_read, NULL, NULL,
+                  fwio_write, NULL, NULL, dev);
+
+    fwio_inst = dev;
+    fwio_log("FWIO: %s at %04X-%04X\n", info->name, dev->base,
+             dev->base + FWIO_LEN - 1);
+    return dev;
+}
+
+static void
+fwio_close(void *priv)
+{
+    fwio_t *dev = (fwio_t *) priv;
+
+    if (dev == NULL)
+        return;
+
+    io_removehandler(dev->base, FWIO_LEN, fwio_read, NULL, NULL,
+                     fwio_write, NULL, NULL, dev);
+    free(dev);
+    fwio_inst = NULL;
+}
+
+static const device_config_t fwio_config[] = {
+  // clang-format off
+    {
+        /* The card's own DIP switch, which is the only reason this is a
+           setting.  The default is a guess until a disk says otherwise. */
+        .name           = "base",
+        .description    = "Address",
+        .type           = CONFIG_HEX16,
+        .default_string = NULL,
+        .default_int    = 0x210,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "0x200", .value = 0x200 },
+            { .description = "0x210 (what the disks use)", .value = 0x210 },
+            { .description = "0x230", .value = 0x230 },
+            { .description = "0x240", .value = 0x240 },
+            { .description = "0x250", .value = 0x250 },
+            { .description = "0x260", .value = 0x260 },
+            { .description = "0x270", .value = 0x270 },
+            { .description = "0x280", .value = 0x280 },
+            { .description = "0x290", .value = 0x290 },
+            { .description = "0x2A0", .value = 0x2a0 },
+            { .description = "0x2B0", .value = 0x2b0 },
+            { .description = "0x2C0", .value = 0x2c0 },
+            { .description = "0x2D0", .value = 0x2d0 },
+            { .description = "0x2E0", .value = 0x2e0 },
+            { .description = "0x2F0", .value = 0x2f0 },
+            { .description = ""                      }
+        },
+        .bios           = { { 0 } }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+  // clang-format on
+};
+
+const device_t funworld_io_device = {
+    .name          = "funworld I/O card (8255)",
+    .internal_name = "funworld_io",
+    .flags         = DEVICE_ISA,
+    .local         = 0,
+    .init          = fwio_init,
+    .close         = fwio_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = fwio_config
+};
+
+/* --------------------------------------------------------------- the probe */
+
+/* Where does the card belong?  The DIP switch decided on a real cabinet, and
+   the disk was set up to match, so the answer is in the image rather than in
+   any document -- and the software will say it out loud if asked.  It sweeps
+   the control register of every 4-byte block hunting for the card; this claims
+   all of them at once and reports what it is asked and what it answered.
+   Whichever block the software goes on to talk to after the sweep -- the one it
+   reads base+0..2 from -- is the base address.
+
+   PEEPEEBOX_IO_PROBE is the byte the sweep is answered with, in hex, because
+   what the software will accept as "card here" is exactly the unknown.  One run
+   per candidate answer, watching where the sweep stops.  This is a diagnostic,
+   not part of a cabinet: it exists to be deleted once the base is known. */
+static uint8_t fwio_probe_answer = 0x00;
+
+static uint8_t
+fwio_probe_read(uint16_t port, UNUSED(void *priv))
+{
+    pclog("FWIO-PROBE: %04X read -> %02X\n", port, fwio_probe_answer);
+    return fwio_probe_answer;
+}
+
+static void
+fwio_probe_write(uint16_t port, uint8_t val, UNUSED(void *priv))
+{
+    pclog("FWIO-PROBE: %04X written %02X\n", port, val);
+}
+
+void
+funworld_io_probe_init(void)
+{
+    const char *env = getenv("PEEPEEBOX_IO_PROBE");
+
+    if (env == NULL)
+        return;
+
+    fwio_probe_answer = (uint8_t) strtoul(env, NULL, 16);
+    pclog("FWIO-PROBE: answering every control register %04X..%04X with %02X\n",
+          FWIO_PROBE_FIRST + FWIO_CTRL, FWIO_PROBE_LAST + FWIO_CTRL,
+          fwio_probe_answer);
+
+    for (uint16_t base = FWIO_PROBE_FIRST; base <= FWIO_PROBE_LAST; base += 4) {
+        /* Only the control register.  Claiming whole blocks would sit on the
+           sound card and the game port and break the boot before the sweep
+           ever runs. */
+        io_sethandler((uint16_t) (base + FWIO_CTRL), 1,
+                      fwio_probe_read, NULL, NULL,
+                      fwio_probe_write, NULL, NULL, NULL);
+    }
+}
