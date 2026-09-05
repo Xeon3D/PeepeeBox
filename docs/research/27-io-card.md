@@ -92,7 +92,51 @@ counter and the acceptor's inhibit line. Identical on I.G.O. 7 and I.G.O. 8.
 With the card fitted at 0x210 the guest configures it and polls it about
 **twenty thousand times per boot**. Without it, never once.
 
-## 4. The line map — what is known and what is not
+## 4. Polarity, which was the whole problem
+
+The first pass idled every input **high** and pulsed low. Only two of sixteen
+lines answered. That is not a bit map in the wrong order — it is what a wrong
+idle level looks like: a line resting at its asserted level since power-on never
+makes a transition, so it stays silent whichever bit it is.
+
+The two families are wired opposite ways:
+
+| Lines | Idle | Asserted |
+|---|---|---|
+| A0 (setup), A1 (CRC) | **high** | low — a falling edge |
+| The coin lines | **low** | high — a rising edge |
+
+With `PEEPEEBOX_IO_IDLE=00` resting everything low, credits moved for the first
+time. A0 and A1 keep their own idle regardless of that variable, because resting
+*them* low holds them down from power-on — the first attempt at idling low walked
+straight into the CRC check before the machine had finished booting.
+
+At rest the guest now reads port A = `03` and port C = `00`, and each 100 ms hold
+is seen by about nine polls, so the debounce the C120 manual demands is satisfied
+with room to spare.
+
+Port B is not idle either: it toggles `00`/`80` at roughly 3 Hz for the whole
+run. B7 is something the software drives continuously — a watchdog kick or a
+lamp — not a coin counter pulse.
+
+## 5. What the coins are worth
+
+From the operator setup, on an I.G.O. 8 ES image. **Five channels are
+programmed**, not six:
+
+| Insert (EUR) | Credits |
+|---|---|
+| 0.10 | 0.20 |
+| 0.50 | 1 |
+| 1 | 3 |
+| 2 | 6 |
+| 5 | 15 |
+
+Which matters for reading results: a 0.10 coin moves the display by 0.20 credits
+and is easy to miss, and the sixth C120 line is not programmed at all, so a line
+that does nothing is not necessarily a line that is not a coin.
+
+## 6. The line map — what is known and what is not
 
 Established by pressing buttons on an I.G.O. 8 rig and watching the screen:
 
@@ -116,7 +160,7 @@ and A1 (a CRC check per click is no way to spend an afternoon), leaving fifteen:
 Still open: the coin lines, the calibration button, and whether the inhibit line
 on port B has to be driven before the validator's outputs are believed.
 
-## 5. What this corrected
+## 7. What this corrected
 
 The obvious shortcut — have the toolbar buttons type the keyboard shortcuts,
 since `S` opens the operator setup from the menu and `C` adds a credit on a

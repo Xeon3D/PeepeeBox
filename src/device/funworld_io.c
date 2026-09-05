@@ -123,8 +123,34 @@ fwio_log(const char *fmt, ...)
    not has been sitting asserted since boot and so never makes a transition.
 
    PEEPEEBOX_IO_IDLE=00 rests them low instead, and a pulse then drives high.  An
-   environment variable rather than a rebuild, because it is one run either way. */
+   environment variable rather than a rebuild, because it is one run either way.
+
+   It does not apply to the two lines already known, and it must not: A0 and A1
+   answer a falling edge, so resting them low holds them asserted from power-on.
+   The first attempt at idling low went straight into the CRC check before the
+   machine had finished booting, because A1 was held down the whole time.  They
+   keep the idle they are known to want whatever the experiment is doing. */
+#define FWIO_A_KNOWN 0x03          /* A0 the setup button, A1 the CRC check */
+
 static uint8_t fwio_idle = 0xff;
+
+static uint8_t
+fwio_idle_of(uint8_t port)
+{
+    uint8_t idle = fwio_idle;
+
+    if (port == FWIO_PORT_A)
+        idle |= FWIO_A_KNOWN;
+
+    return idle;
+}
+
+static void
+fwio_idle_all(fwio_t *dev)
+{
+    for (uint8_t port = 0; port < 3; port++)
+        dev->in[port] = fwio_idle_of(port);
+}
 
 static void
 fwio_reset(fwio_t *dev)
@@ -136,7 +162,7 @@ fwio_reset(fwio_t *dev)
 
     dev->ctrl = 0x9b;              /* all ports input, mode 0 */
     memset(dev->out, 0x00, sizeof(dev->out));
-    memset(dev->in, fwio_idle, sizeof(dev->in));
+    fwio_idle_all(dev);
     dev->held = 0;
 }
 
@@ -240,7 +266,7 @@ static void
 fwio_set_bit(fwio_t *dev, uint8_t port, uint8_t bit, int asserted)
 {
     const uint8_t mask = (uint8_t) (1 << bit);
-    const int     high = !(fwio_idle & mask);   /* asserted is away from idle */
+    const int     high = !(fwio_idle_of(port) & mask); /* asserted is away from idle */
 
     if (asserted == high)
         dev->in[port] |= mask;
@@ -268,10 +294,11 @@ fwio_set_line(fwio_t *dev, int line, int asserted)
 
 static int  fwio_walk         = -1;
 static int  fwio_walk_at      = 0;
+static int  fwio_pin          = -1;   /* PEEPEEBOX_IO_LINE: stay on one line */
 static char fwio_walk_last[48] = "";
 
 static const uint8_t fwio_walk_skip[FWIO_WALK_STEPS] = {
-    0, 1, 0, 0, 0, 0, 0, 0,   /* port A -- A1 is the CRC check */
+    0, 1, 0, 0, 0, 0, 0, 0,   /* port A -- A1 is the CRC check, never walked */
     1, 1, 1, 1, 1, 1, 1, 1,   /* port B -- outputs: the mechanical coin counter */
     0, 0, 0, 0, 0, 0, 0, 0    /* port C */
 };
@@ -282,7 +309,7 @@ fwio_walk_release(UNUSED(void *priv))
     fwio_t *dev = fwio_inst;
 
     if (dev != NULL) {
-        memset(dev->in, fwio_idle, sizeof(dev->in));
+        fwio_idle_all(dev);
         pclog("FWIO-WALK: released\n");
     }
 }
@@ -309,12 +336,31 @@ funworld_io_pulse(int line)
     if ((dev == NULL) || (line < 0) || (line >= FWIO_IN_LINES))
         return;
 
-    if (fwio_walk < 0)
-        fwio_walk = (getenv("PEEPEEBOX_IO_WALK") != NULL);
+    if (fwio_walk < 0) {
+        const char *line = getenv("PEEPEEBOX_IO_LINE");
+
+        fwio_walk = (getenv("PEEPEEBOX_IO_WALK") != NULL) || (line != NULL);
+
+        /* "A6", "C3" -- a port letter and a bit. */
+        if ((line != NULL) && (line[0] != ' ') && (line[1] != ' ')) {
+            const int port = (line[0] & ~0x20) - 'A';
+            const int bit  = line[1] - '0';
+
+            if ((port >= 0) && (port < 3) && (bit >= 0) && (bit < 8))
+                fwio_pin = (port * 8) + bit;
+        }
+    }
 
     if (fwio_walk) {
         uint8_t port;
         uint8_t bit;
+
+        /* PEEPEEBOX_IO_LINE=A6 pins the walk to one line, so the button pulses
+           the same thing every click.  "It credited once and never again" is a
+           different fault from "it credited once because I only pressed it once",
+           and stepping past the line is no way to tell them apart. */
+        if (fwio_pin >= 0)
+            fwio_walk_at = fwio_pin;
 
         for (int guard = 0; fwio_walk_skip[fwio_walk_at] && (guard < FWIO_WALK_STEPS); guard++)
             fwio_walk_at = (fwio_walk_at + 1) % FWIO_WALK_STEPS;
@@ -322,7 +368,7 @@ funworld_io_pulse(int line)
         port = (uint8_t) (fwio_walk_at / 8);
         bit  = (uint8_t) (fwio_walk_at % 8);
 
-        memset(dev->in, fwio_idle, sizeof(dev->in));
+        fwio_idle_all(dev);
         fwio_set_bit(dev, port, bit, 1);
         snprintf(fwio_walk_last, sizeof(fwio_walk_last), "port %c bit %d  (idle %02X)",
                  (char) ('A' + port), bit, fwio_idle);
