@@ -63,6 +63,7 @@ jobs:
             exit 0
           fi
 
+          merged=0
           for n in $numbers; do
             # mergeable is computed in the background, so a pull request opened a
             # moment ago can still answer UNKNOWN.  Give it a few seconds rather
@@ -77,8 +78,18 @@ jobs:
 
             case "$state" in
               MERGEABLE)
+                # Merging one of these invalidates the next: they all edit files in
+                # this directory, so the second of two touching the same lines goes
+                # stale the moment the first lands.  A failure here is that, not a
+                # reason to abandon the rest of the sweep -- so ask for a rebase and
+                # carry on.  The rebase reopens this workflow's own trigger.
                 echo "merging #$n -- $title"
-                gh pr merge "$n" --squash --delete-branch
+                if gh pr merge "$n" --squash --delete-branch; then
+                  merged=$((merged + 1))
+                else
+                  echo "#$n would not merge after all, asking for a rebase"
+                  gh pr comment "$n" --body "@dependabot rebase"
+                fi
                 ;;
               CONFLICTING)
                 echo "#$n conflicts, asking for a rebase -- $title"
@@ -89,3 +100,5 @@ jobs:
                 ;;
             esac
           done
+
+          echo "merged $merged pull request(s)"
