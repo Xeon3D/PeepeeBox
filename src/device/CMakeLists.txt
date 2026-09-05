@@ -27,6 +27,7 @@ add_library(dev OBJECT
     dongle_photoplay.c
     dongle_igo8.c
     funworld_io.c
+    coin_c120.c
     hwm.c
     hwm_gl518sm.c
     hwm_lm75.c

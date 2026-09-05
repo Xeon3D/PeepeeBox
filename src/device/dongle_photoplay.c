@@ -2288,10 +2288,19 @@ pp_init(const device_t *info)
         ib_start();
 
     /* The 2008 generation moved its dongle off the parallel port entirely: a serial
-       smart-card reader on COM2, in dongle_igo8.c.  Bring it up unconditionally --
-       nothing else in the cabinet wants COM2, and a guest from any other generation
-       never says a word to it.  Docs/18. */
-    device_add(&igo8_reader_device);
+       smart-card reader on COM2, in dongle_igo8.c.  Brought up unconditionally --
+       a guest from any other generation never says a word to it.  Docs/18.
+
+       "Nothing else in the cabinet wants COM2" turns out to be untrue: the coin
+       validator is on COM2 on the generations whose dongle is on LPT1, so on
+       those the reader is sitting on the validator's port.  Making this
+       conditional is a change to the protection path and not one to make in
+       passing, so for now PEEPEEBOX_NO_SC=1 stands it down for a run.  Default
+       unchanged. */
+    if (getenv("PEEPEEBOX_NO_SC") == NULL)
+        device_add(&igo8_reader_device);
+    else
+        pp_log("PP: PEEPEEBOX_NO_SC set -- the 2008 reader is not attached, COM2 is free\n");
 
     /* NG-DONGLE sweep: take this run's candidate from the file and leave the next one
        behind, so an unattended reboot loop walks the whole space. */

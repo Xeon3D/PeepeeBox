@@ -317,7 +317,11 @@ fwio_set_line(fwio_t *dev, int line, int asserted)
    and the guest never reads it -- so driving it could only waste clicks.  And A1
    starts the CRC check, which takes the machine away for minutes and says
    nothing new.  That leaves A0, A2..A7 and C0..C7: fifteen clicks. */
-#define FWIO_WALK_STEPS 24
+/* Twenty-four lines on the card, then the C120's four on COM2 -- the same
+   button covers both, because "which of these twenty-eight things is the coin"
+   is one question and splitting it across two tools invites losing count. */
+#define FWIO_CARD_STEPS 24
+#define FWIO_WALK_STEPS (FWIO_CARD_STEPS + C120_LINES)
 
 static int  fwio_walk         = -1;
 static int  fwio_walk_at      = 0;
@@ -342,7 +346,8 @@ static char fwio_walk_last[48] = "";
 static const uint8_t fwio_walk_skip[FWIO_WALK_STEPS] = {
     0, 1, 0, 0, 0, 0, 0, 0,   /* port A -- A1 is the CRC check, never walked */
     1, 1, 1, 1, 1, 1, 1, 1,   /* port B -- outputs: the mechanical coin counter */
-    0, 0, 0, 0, 0, 0, 0, 0    /* port C */
+    0, 0, 0, 0, 0, 0, 0, 0,   /* port C */
+    0, 0, 0, 0                /* COM2: CTS, DSR, DCD, RI */
 };
 
 static void
@@ -461,6 +466,21 @@ funworld_io_pulse(int line)
         for (int guard = 0; fwio_walk_skip[fwio_walk_at] && (guard < FWIO_WALK_STEPS); guard++)
             fwio_walk_at = (fwio_walk_at + 1) % FWIO_WALK_STEPS;
 
+        /* Past the card's own lines, the walk is on the validator instead. */
+        if (fwio_walk_at >= FWIO_CARD_STEPS) {
+            const int sline = fwio_walk_at - FWIO_CARD_STEPS;
+
+            snprintf(fwio_walk_last, sizeof(fwio_walk_last), "COM2 %s  (C120)",
+                     coin_c120_line_name(sline));
+            pclog("FWIO-WALK: %s\n", fwio_walk_last);
+            coin_c120_pulse(sline);
+
+            fwio_walk_at = (fwio_walk_at + 1) % FWIO_WALK_STEPS;
+            if ((fwio_only_port >= 0) && ((fwio_walk_at / 8) != fwio_only_port))
+                fwio_walk_at = fwio_only_port * 8;
+            return;
+        }
+
         port = (uint8_t) (fwio_walk_at / 8);
         bit  = (uint8_t) (fwio_walk_at % 8);
 
@@ -494,6 +514,12 @@ funworld_io_pulse(int line)
        validator can do -- it holds the line for 100 ms and will not start
        another until it lets go.  Restarting the timer instead of stacking
        keeps that true. */
+    /* A coin is the validator's business, not the card's. */
+    if ((line <= FWIO_LINE_COIN6) && coin_c120_present()) {
+        coin_c120_pulse(C120_LINE_CTS);
+        return;
+    }
+
     fwio_set_line(dev, line, 1);
     dev->held |= (uint8_t) (1 << line);
     timer_on_auto(&dev->release[line], FWIO_COIN_MS * 1000.0);

@@ -48,6 +48,21 @@ extern void funworld_io_probe_init(void);
    held.  Returns 0 when the walk is not running. */
 extern int  funworld_io_walk_state(char *out, size_t len);
 
+/* The Coin Controls C120 on COM2.  It is a parallel part -- six accept outputs,
+   no protocol -- so on a serial port it is wired to the only inputs a UART has:
+   CTS, DSR, DCD and RI, four lines for the four coins this cabinet takes.  See
+   coin_c120.c. */
+#define C120_LINE_CTS 0
+#define C120_LINE_DSR 1
+#define C120_LINE_DCD 2
+#define C120_LINE_RI  3
+#define C120_LINES    4
+
+extern void        coin_c120_pulse(int line);
+extern const char *coin_c120_line_name(int line);
+extern int         coin_c120_present(void);
+
+extern const device_t coin_c120_device;
 extern const device_t funworld_io_device;
 
 #ifdef __cplusplus

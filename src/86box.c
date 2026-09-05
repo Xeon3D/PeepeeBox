@@ -1802,6 +1802,10 @@ pc_reset_hard_init(void)
     device_add(&funworld_io_device);
     funworld_io_probe_init();
 
+    /* PeepeeBox: and the coin validator, which is not on that card at all --
+       it is a C120 on COM2.  See src/device/coin_c120.c. */
+    device_add(&coin_c120_device);
+
     /* Needs the status bar... */
     if (bugger_enabled)
         device_add(&bugger_device);
