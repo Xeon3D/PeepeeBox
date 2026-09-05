@@ -1511,25 +1511,34 @@ static QLabel         *cp80_head     = nullptr;
 static QPlainTextEdit *cp80_paper    = nullptr;
 static size_t          cp80_paper_at = 0;
 
-/* The roll is as tall as what is printed on it, until it runs out of window.
-   A four-line receipt is a four-line strip sticking out of the slot, which is
-   what the machine would actually hand you -- and it means the paper grows
-   upward as it prints instead of a full-height box filling in from the top. */
+/* How much paper is out of the machine at once.  A real roll would keep coming
+   and hang over the front; twenty lines is the length that still looks like a
+   receipt on screen.  Past that the strip stops growing and the earliest lines
+   ride up out of view, which is what a roll does. */
+#define CP80_MAX_LINES 20
+
+/* The roll is as tall as what is printed on it, up to CP80_MAX_LINES.  A
+   four-line receipt is a four-line strip sticking out of the slot, which is what
+   the machine would hand you; a long one stops growing and scrolls, so the first
+   lines printed ride up out of sight.
+
+   The scrolling is left to the caller -- doing it here would yank the paper back
+   to the bottom every time a line arrived, even when somebody had scrolled up to
+   read something. */
 static void
 cp80_fit_paper()
 {
     if ((cp80_paper == nullptr) || (cp80_win == nullptr))
         return;
 
-    const int lines = qMax(1, cp80_paper->document()->blockCount());
+    const int lines = qBound(1, cp80_paper->document()->blockCount(),
+                             CP80_MAX_LINES);
     const int want  = (lines * cp80_paper->fontMetrics().lineSpacing()) + 14;
     /* It may cover the whole machine and carry on above it; what stops it is
        the window. */
     const int room  = cp80_win->height() - 90;
 
     cp80_paper->setFixedHeight(qBound(0, want, qMax(0, room)));
-    cp80_paper->verticalScrollBar()->setValue(
-        cp80_paper->verticalScrollBar()->maximum());
 }
 
 /* The paper comes out at the speed the paper came out.
