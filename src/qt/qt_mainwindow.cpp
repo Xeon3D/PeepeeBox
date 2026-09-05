@@ -106,6 +106,7 @@ extern bool fast_forward;
 #include <QFontDatabase>
 #include <QScrollBar>
 #include <QPixmap>
+#include <QGridLayout>
 #if QT_CONFIG(vulkan)
 #    include <QVulkanInstance>
 #    include <QVulkanFunctions>
@@ -1522,8 +1523,9 @@ cp80_fit_paper()
 
     const int lines = qMax(1, cp80_paper->document()->blockCount());
     const int want  = (lines * cp80_paper->fontMetrics().lineSpacing()) + 14;
-    const int room  = cp80_win->height()
-                    - (cp80_head ? cp80_head->height() : 0) - 80;
+    /* It may cover the whole machine and carry on above it; what stops it is
+       the window. */
+    const int room  = cp80_win->height() - 90;
 
     cp80_paper->setFixedHeight(qBound(0, want, qMax(0, room)));
     cp80_paper->verticalScrollBar()->setValue(
@@ -1541,15 +1543,27 @@ cp80_fit_paper()
 #define CP80_LINE_MS 400
 
 /* The DPU-414 is a top-exit printer: the slot is on top of the machine and the
-   paper rises out of it.  So the picture is the printer from the tear bar down
-   and it sits at the *bottom* of the window, with the roll growing upwards out
-   of its top edge.  Getting this the wrong way round reads as paper being eaten
-   rather than printed.
+   paper rises out of it, over the lid.  So the whole machine is drawn at the
+   bottom of the window and the roll is laid *over* it, growing upward from the
+   slot and out past the top of the picture once there is more of it than the
+   printer is tall.  Feeding it downward instead reads as paper being eaten.
 
-   The picture is 510 px across with the slot from x=122 to x=435, so the roll
-   is 313/510 of the printer's width and sits 122/510 in from its left. */
+   These are measured off the image rather than guessed: it is 510 x 435 with
+   the slot at y=176 and running from x=122 to x=435. */
+#define CP80_IMG_W   510
+#define CP80_IMG_H   435
+#define CP80_SLOT_Y  176
+#define CP80_SLOT_L  122
+#define CP80_SLOT_R  435
+
 #define CP80_HEAD_W  460
-#define CP80_PAPER_W ((460 * 313) / 510)
+#define CP80_SCALE(v) (((v) * CP80_HEAD_W) / CP80_IMG_W)
+#define CP80_HEAD_H  CP80_SCALE(CP80_IMG_H)
+#define CP80_PAPER_W CP80_SCALE(CP80_SLOT_R - CP80_SLOT_L)
+#define CP80_PAPER_L CP80_SCALE(CP80_SLOT_L)
+
+/* How far the roll's bottom edge sits above the bottom of the picture. */
+#define CP80_PAPER_B (CP80_HEAD_H - CP80_SCALE(CP80_SLOT_Y))
 
 static QString  cp80_queued;           /* printed by the guest, not yet on paper */
 static QTimer  *cp80_feed = nullptr;
@@ -1649,7 +1663,7 @@ cp80_show(QWidget *parent)
         QPixmap dpu(QStringLiteral(":/menuicons/qt/icons/dpu414.png"));
 
         cp80_head->setPixmap(dpu.scaledToWidth(CP80_HEAD_W, Qt::SmoothTransformation));
-        cp80_head->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
+        cp80_head->setFixedSize(CP80_HEAD_W, CP80_HEAD_H);
 
         cp80_paper = new QPlainTextEdit(cp80_win);
         cp80_paper->setReadOnly(true);
@@ -1748,19 +1762,33 @@ cp80_show(QWidget *parent)
         /* The roll, lined up under the slot.  The picture is 510 px wide and
            its paper slot runs from 122 to 435, so the offsets are that
            measurement and not a guess at what looks right. */
-        auto *roll = new QHBoxLayout;
+        /* The roll, over the machine.  Both go in the same grid cell, which is
+           how two widgets are made to overlap without a container that has to
+           reposition its children on every resize.  The overlay's bottom margin
+           puts the paper's edge at the slot rather than at the foot of the
+           picture, and both are bottom-aligned so the machine stays put while
+           the paper grows past the top of it. */
+        auto *overlay = new QWidget(cp80_win);
+        auto *roll    = new QHBoxLayout(overlay);
 
-        roll->setContentsMargins(0, 0, 0, 0);
-        roll->addStretch(122);
-        roll->addWidget(cp80_paper, 0, Qt::AlignBottom);
-        roll->addStretch(510 - 435);
+        overlay->setAttribute(Qt::WA_TransparentForMouseEvents, false);
+        overlay->setFixedWidth(CP80_HEAD_W);
+        roll->setContentsMargins(CP80_PAPER_L, 0, 0, CP80_PAPER_B);
+        roll->addWidget(cp80_paper, 0, Qt::AlignBottom | Qt::AlignLeft);
+        roll->addStretch(1);
+
+        auto *stage = new QGridLayout;
+
+        stage->setContentsMargins(0, 0, 0, 0);
+        stage->addWidget(cp80_head, 0, 0, Qt::AlignBottom | Qt::AlignHCenter);
+        stage->addWidget(overlay,   0, 0, Qt::AlignBottom | Qt::AlignHCenter);
+        overlay->raise();
 
         auto *box = new QVBoxLayout(cp80_win);
 
         box->setSpacing(0);
         box->addStretch(1);            /* empty air above the roll */
-        box->addLayout(roll);
-        box->addWidget(cp80_head);
+        box->addLayout(stage);
         box->addSpacing(8);
         box->addWidget(lbl);
         box->addLayout(row);

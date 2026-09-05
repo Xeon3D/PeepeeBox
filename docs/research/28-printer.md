@@ -141,8 +141,12 @@ way back to the rest of it.
 - Unplugging drops CTS, DSR and DCD as well as stopping the keepalive, so the
   guest sees no cable rather than a device that has gone quiet.
 - **Stands down on I.G.O. 8**, whose dongle is a serial card reader on COM2.
-- Renders the paper, names every control code in a trace beside it, and writes
-  every byte to `cp80-raw.bin`.
+- Draws the paper rising out of a photograph of the machine, a line at a time at
+  about 2.5 lines a second — the link is forty times faster than the printer, so
+  without that the report appears in one blink.
+- Keeps a trace naming every control code, and writes every byte to
+  `cp80-raw.bin`. Neither is on screen any more; the trace goes to the log with
+  `PEEPEEBOX_PRN_TEST`.
 
 Nothing is skipped in bulk on a guess about a dialect. `PEEPEEBOX_PRN_PORT=1..4`
 moves the port for a run, `PEEPEEBOX_PRN_ENQ=0` silences the keepalive, and
