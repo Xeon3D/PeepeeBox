@@ -1590,11 +1590,11 @@ cp80_show(QWidget *parent)
 
         auto *port = new QComboBox(cp80_win);
 
-        port->addItem(QObject::tr("COM1 and COM2"), PRN_CP80_PORT_BOTH);
+        port->addItem(QObject::tr("COM2 (what the software uses)"), 1);
         port->addItem(QStringLiteral("COM1"), 0);
-        port->addItem(QStringLiteral("COM2"), 1);
         port->addItem(QStringLiteral("COM3"), 2);
         port->addItem(QStringLiteral("COM4"), 3);
+        port->addItem(QObject::tr("COM1 and COM2"), PRN_CP80_PORT_BOTH);
         port->setCurrentIndex(port->findData(prn_cp80_port_setting()));
         port->setToolTip(QObject::tr("Applies on the next hard reset"));
 

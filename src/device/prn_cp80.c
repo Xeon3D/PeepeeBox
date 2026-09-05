@@ -80,13 +80,44 @@ typedef struct cp80_port_t {
     struct cp80_t *dev;
     serial_t      *serial;
     int            port;
-    int            seen;           /* a byte has arrived here */
+    int            seen;           /* a byte has arrived here          */
+    int            hush;           /* ticks to stay quiet after one    */
+    int            announced;      /* the first ENQ has been logged    */
 } cp80_port_t;
+
+/* The Dataprint announces itself, and until it does the software will not
+   believe it is there.
+
+   From MENU.EXE on the I.G.O. 6 image, disassembled at file offset 0x1D0E5 and
+   after.  It programs COM2 directly -- LCR 0x2FB gets 0x80 for DLAB, divisor
+   12 into 0x2F8/0x2F9, then LCR 0x03 -- which is 115200/12 = **9600 baud, 8N1
+   on 0x2F8**.  Then the whole of its detection is:
+
+       call read_LSR (in al, 0x2FD) ; test al, 1   -- a byte waiting?
+       call read_RBR (in al, 0x2F8) ; cmp  al, 5   -- is it 05?
+       jne  -> return, leaving "Connect the interfaces of the Dataprint"
+
+   So the device sends **ENQ (0x05)** to the host unprompted, and the host looks
+   for one already sitting in the receive register.  A printer that only ever
+   listens is never found, which is exactly what was happening.
+
+   It is sent on a heartbeat rather than once, because the check reads whatever
+   happens to be waiting at the moment the operator opens that menu.  It hushes
+   for a couple of seconds after the guest sends anything, so a print job in
+   progress is not interleaved with announcements -- what the real unit does
+   there is unknown, and corrupting a capture we are trying to read would be a
+   poor trade.  PEEPEEBOX_PRN_ENQ=0 turns it off. */
+#define CP80_ENQ      0x05
+#define CP80_ENQ_MS   250.0
+#define CP80_ENQ_HUSH 8            /* ticks of quiet owed after a received byte */
 
 typedef struct cp80_t {
     cp80_port_t ports[CP80_PORTS_MAX];
     int         nports;
     int         setting;
+
+    pc_timer_t  enq;
+    int         enq_on;
 
     cp80_buf_t paper;
     cp80_buf_t trace;
@@ -547,6 +578,9 @@ cp80_write(UNUSED(serial_t *serial), void *priv, uint8_t val)
         cp80_tracef(dev, "-- printing to COM%d --\n", p->port + 1);
     }
 
+    /* Stop announcing while it is talking to us. */
+    p->hush = CP80_ENQ_HUSH;
+
     if (!dev->dirty)
         dev->dirty = 1;
 
@@ -725,6 +759,35 @@ cp80_setting(void)
     return device_get_config_int("port");
 }
 
+static void
+cp80_enq_tick(void *priv)
+{
+    cp80_t *dev = (cp80_t *) priv;
+
+    if (dev == NULL)
+        return;
+
+    for (int i = 0; i < dev->nports; i++) {
+        cp80_port_t *p = &dev->ports[i];
+
+        if (p->serial == NULL)
+            continue;
+        if (p->hush > 0) {
+            p->hush--;
+            continue;
+        }
+
+        serial_write_fifo(p->serial, CP80_ENQ);
+        if (!p->announced) {
+            p->announced = 1;
+            pclog("CP80: announcing on COM%d with ENQ (05) every %g ms\n",
+                  p->port + 1, CP80_ENQ_MS);
+        }
+    }
+
+    timer_on_auto(&dev->enq, CP80_ENQ_MS * 1000.0);
+}
+
 /* The guest raising DTR is it opening the port.  That matters more than it
    sounds: a run where DTR goes up on COM2 and not one byte follows says the
    software found the port and is waiting for something from us, which is a
@@ -800,6 +863,21 @@ cp80_init(UNUSED(const device_t *info))
         return NULL;
     }
 
+    dev->enq_on = (device_get_config_int_ex("enq", 1) != 0);
+    {
+        const char *env = getenv("PEEPEEBOX_PRN_ENQ");
+
+        if (env != NULL)
+            dev->enq_on = (atoi(env) != 0);
+    }
+
+    if (dev->enq_on) {
+        timer_add(&dev->enq, cp80_enq_tick, dev, 0);
+        timer_on_auto(&dev->enq, CP80_ENQ_MS * 1000.0);
+    } else
+        pclog("CP80: ENQ announcements are off; the software will not find "
+              "the printer\n");
+
     cp80_inst = dev;
 
     {
@@ -836,17 +914,30 @@ static const device_config_t cp80_config[] = {
         .description    = "Serial Port",
         .type           = CONFIG_SELECTION,
         .default_string = NULL,
-        .default_int    = CP80_PORT_BOTH,
+        /* COM2, because MENU.EXE programs 0x2F8 by hand and nothing else.
+           The other choices stay for images that turn out to differ. */
+        .default_int    = 1,
         .file_filter    = NULL,
         .spinner        = { 0 },
         .selection      = {
-            { .description = "COM1 and COM2", .value = CP80_PORT_BOTH },
+            { .description = "COM2 (what the software uses)", .value = 1 },
             { .description = "COM1",          .value = 0 },
-            { .description = "COM2",          .value = 1 },
             { .description = "COM3",          .value = 2 },
             { .description = "COM4",          .value = 3 },
+            { .description = "COM1 and COM2", .value = CP80_PORT_BOTH },
             { .description = ""                          }
         },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "enq",
+        .description    = "Announce itself (ENQ)",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
         .bios           = { { 0 } }
     },
     { .name = "", .description = "", .type = CONFIG_END }

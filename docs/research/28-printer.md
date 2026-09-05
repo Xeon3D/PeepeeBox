@@ -122,3 +122,66 @@ captures. That is the same trap as the port B run in [27](27-io-card.md#17),
 where "no counter moved" and "no coin was pressed" logged the same way -- an
 instrument that cannot tell its own null result from not being used is not an
 instrument.
+
+## 7. It is a DATAPRINT, and it has to announce itself
+
+The dialog is `DATA-PRINT — Connect the interfaces of the Dataprint to the Photo
+Play`, reached from a DATAPRINT menu whose entries are bookkeeping, statistics
+and hiscores. So this is not a printer the software drives blind; it is a
+funworld accessory it expects to find on a port.
+
+`/MENU/MENU.EXE` on the I.G.O. 6 image (307,374 bytes, plain 16-bit MZ, not
+packed) settles the rest. Nearby strings: `DATAPRN.INI`, `can't open
+DATAPRN.INI`, `Geraete-Nr.: %ld`, `serialnumber: %ld`, `PR %02u.%02u.%02u`, and
+a 24-dash rule — so the printout is **24 columns**, a narrow till roll rather
+than the 80 a CP80 suggests. There is **no `DATAPRN.INI` on the disk**, so the
+built-in defaults are what run.
+
+There are no `COM`, `LPT` or baud strings anywhere in the binary. The port is
+hard-coded, and `mov dx, imm` finds **0x2F8 three times and nothing else**.
+
+### The UART setup, at file offset 0x1D0E5
+
+```
+mov al,0x80 ; mov dx,0x2FB ; out   -- LCR, DLAB on
+mov al,0x0C ; mov dx,0x2F8 ; out   -- divisor low  = 12
+mov al,0x00 ; mov dx,0x2F9 ; out   -- divisor high = 0
+mov al,0x03 ; mov dx,0x2FB ; out   -- 8 data bits, 1 stop, no parity
+```
+
+115200 / 12 = **9600 baud, 8N1, on COM2 (0x2F8)**, programmed directly — one
+`int 14h` exists in the whole file and it is not here.
+
+### The detection, at 0x1D12E
+
+```
+call 0x1D102        ; in al, 0x2FD   -- LSR
+test al, 1          ; a byte waiting?
+jne  ...            ; no  -> return, dialog stays up
+call 0x1D112        ; in al, 0x2F8   -- RBR
+cmp  al, 5          ; is it 05?
+jne  ...            ; no  -> return, dialog stays up
+```
+
+That is the whole test. **The Dataprint sends ENQ (0x05) to the host
+unprompted**, and the host looks for one already sitting in the receive
+register when the operator opens that menu. A device that only ever listens is
+never found — which is exactly what the first version did, and why the dialog
+never went away no matter which port it was on.
+
+### What the emulation does now
+
+Defaults to **COM2**, and sends `0x05` every 250 ms. It hushes for two seconds
+after the guest sends anything, so a print job is not interleaved with
+announcements; what the real unit does there is unknown, and corrupting the
+capture we are trying to read would be a poor trade. `PEEPEEBOX_PRN_ENQ=0`
+turns it off, which is also the way to check that the detection really is what
+is being satisfied.
+
+### Still to find
+
+What the guest sends **after** detection passes. That is the print protocol
+proper, and it will land in `cp80-raw.bin` and the trace pane the moment the
+menu gets past the dialog. Whether it is ESC/P, ESC/POS or something funworld
+invented is still open — but at 24 columns and with an ENQ handshake, a plain
+dot matrix dialect is looking less likely than a small framed protocol.
