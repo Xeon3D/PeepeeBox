@@ -84,6 +84,11 @@ typedef struct fwio_t {
 
     pc_timer_t release[FWIO_IN_LINES];
     uint8_t    held;               /* bitmap of lines currently asserted  */
+
+    pc_timer_t train;              /* a burst of pulses on one line       */
+    int        train_left;
+    uint8_t    train_port;
+    uint8_t    train_bit;
 } fwio_t;
 
 static fwio_t *fwio_inst = NULL;
@@ -294,7 +299,21 @@ fwio_set_line(fwio_t *dev, int line, int asserted)
 
 static int  fwio_walk         = -1;
 static int  fwio_walk_at      = 0;
-static int  fwio_pin          = -1;   /* PEEPEEBOX_IO_LINE: stay on one line */
+static int  fwio_pin          = -1;   /* PEEPEEBOX_IO_LINE=A6: stay on one line  */
+static int  fwio_only_port    = -1;   /* PEEPEEBOX_IO_LINE=C:  walk one port only */
+
+/* PEEPEEBOX_IO_PULSES: how many pulses one click sends.
+
+   The six-separate-lines reading comes from the C120's own manual, and it is
+   certainly how a C120 behaves.  But the machine takes a 5 EUR *note* as well as
+   coins, so there is a second validator on the loom, and nothing says funworld
+   wired either of them one-line-per-denomination rather than counting pulses on
+   a single credit line -- which is the other common arrangement and would
+   explain totals that decompose into no single denomination.
+
+   One pulse is a C120 coin.  More than one, at the same 100 ms cadence, is the
+   pulse-counting reading.  A run each settles which. */
+static int  fwio_pulses       = 1;
 static char fwio_walk_last[48] = "";
 
 static const uint8_t fwio_walk_skip[FWIO_WALK_STEPS] = {
@@ -302,6 +321,27 @@ static const uint8_t fwio_walk_skip[FWIO_WALK_STEPS] = {
     1, 1, 1, 1, 1, 1, 1, 1,   /* port B -- outputs: the mechanical coin counter */
     0, 0, 0, 0, 0, 0, 0, 0    /* port C */
 };
+
+static void
+fwio_train_tick(UNUSED(void *priv))
+{
+    fwio_t *dev = fwio_inst;
+
+    if (dev == NULL)
+        return;
+
+    dev->train_left--;
+    if (dev->train_left <= 0) {
+        fwio_set_bit(dev, dev->train_port, dev->train_bit, 0);
+        pclog("FWIO-WALK: burst finished\n");
+        return;
+    }
+
+    /* Odd counts are the gaps, even the holds -- an even number of transitions
+       per pulse, so the line always finishes released. */
+    fwio_set_bit(dev, dev->train_port, dev->train_bit, dev->train_left & 1);
+    timer_on_auto(&dev->train, FWIO_COIN_MS * 1000.0);
+}
 
 static void
 fwio_walk_release(UNUSED(void *priv))
@@ -339,15 +379,34 @@ funworld_io_pulse(int line)
     if (fwio_walk < 0) {
         const char *line = getenv("PEEPEEBOX_IO_LINE");
 
+        const char *pulses = getenv("PEEPEEBOX_IO_PULSES");
+
         fwio_walk = (getenv("PEEPEEBOX_IO_WALK") != NULL) || (line != NULL);
 
-        /* "A6", "C3" -- a port letter and a bit. */
-        if ((line != NULL) && (line[0] != ' ') && (line[1] != ' ')) {
-            const int port = (line[0] & ~0x20) - 'A';
-            const int bit  = line[1] - '0';
+        if (pulses != NULL) {
+            const int n = atoi(pulses);
 
-            if ((port >= 0) && (port < 3) && (bit >= 0) && (bit < 8))
-                fwio_pin = (port * 8) + bit;
+            if ((n >= 1) && (n <= 64))
+                fwio_pulses = n;
+        }
+
+        /* "A6" pins one line.  "C" on its own walks that port and nothing else,
+           which is how to reach port C without click one being A0 -- A0 opens
+           the operator setup, and everything after it then happens in the wrong
+           machine state.  That is what spoiled the first port C pass. */
+        if ((line != NULL) && (line[0] != '\0')) {
+            const int port = (line[0] & ~0x20) - 'A';
+
+            if ((port >= 0) && (port < 3)) {
+                if (line[1] == '\0') {
+                    fwio_only_port = port;
+                } else {
+                    const int bit = line[1] - '0';
+
+                    if ((bit >= 0) && (bit < 8))
+                        fwio_pin = (port * 8) + bit;
+                }
+            }
         }
     }
 
@@ -361,6 +420,10 @@ funworld_io_pulse(int line)
            and stepping past the line is no way to tell them apart. */
         if (fwio_pin >= 0)
             fwio_walk_at = fwio_pin;
+        else if (fwio_only_port >= 0) {
+            if ((fwio_walk_at / 8) != fwio_only_port)
+                fwio_walk_at = fwio_only_port * 8;
+        }
 
         for (int guard = 0; fwio_walk_skip[fwio_walk_at] && (guard < FWIO_WALK_STEPS); guard++)
             fwio_walk_at = (fwio_walk_at + 1) % FWIO_WALK_STEPS;
@@ -370,11 +433,27 @@ funworld_io_pulse(int line)
 
         fwio_idle_all(dev);
         fwio_set_bit(dev, port, bit, 1);
-        snprintf(fwio_walk_last, sizeof(fwio_walk_last), "port %c bit %d  (idle %02X)",
-                 (char) ('A' + port), bit, fwio_idle);
+
+        dev->train_left = 0;
+        if (fwio_pulses > 1) {
+            /* One transition already made; the tick alternates for the rest and
+               always lands released. */
+            dev->train_port = port;
+            dev->train_bit  = bit;
+            dev->train_left = (fwio_pulses * 2) - 1;
+            timer_on_auto(&dev->train, FWIO_COIN_MS * 1000.0);
+        }
+        if (fwio_pulses > 1)
+            snprintf(fwio_walk_last, sizeof(fwio_walk_last), "port %c bit %d  x%d",
+                     (char) ('A' + port), bit, fwio_pulses);
+        else
+            snprintf(fwio_walk_last, sizeof(fwio_walk_last), "port %c bit %d  (idle %02X)",
+                     (char) ('A' + port), bit, fwio_idle);
         pclog("FWIO-WALK: %s held %g ms\n", fwio_walk_last, FWIO_COIN_MS);
         timer_on_auto(&dev->release[0], FWIO_COIN_MS * 1000.0);
         fwio_walk_at = (fwio_walk_at + 1) % FWIO_WALK_STEPS;
+        if ((fwio_only_port >= 0) && ((fwio_walk_at / 8) != fwio_only_port))
+            fwio_walk_at = fwio_only_port * 8;
         return;
     }
 
@@ -408,6 +487,8 @@ fwio_init(const device_t *info)
     if (fwio_walk < 0)
         fwio_walk = (getenv("PEEPEEBOX_IO_WALK") != NULL);
     fwio_reset(dev);
+
+    timer_add(&dev->train, fwio_train_tick, NULL, 0);
 
     for (int i = 0; i < FWIO_IN_LINES; i++)
         timer_add(&dev->release[i],
