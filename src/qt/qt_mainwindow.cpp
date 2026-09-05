@@ -1556,12 +1556,15 @@ static size_t   cp80_paper_at = 0;
 #define CP80_BTN_Y     317
 #define CP80_BTN_H      40
 
-#define CP80_LED_OFF_X  45
-#define CP80_LED_OFF_Y 317
-#define CP80_LED_ON_X   44
-#define CP80_LED_ON_Y  341
-#define CP80_LED_W      16
-#define CP80_LED_H      10
+/* The lamps light *inside* their housings.  Those measure x 46..61 by y 318..325
+   and x 45..60 by y 344..351 in the photograph; these are inset by a pixel so the
+   dark rim survives and the lamp does not sit on top of it. */
+#define CP80_LED_OFF_X  47
+#define CP80_LED_OFF_Y 319
+#define CP80_LED_ON_X   46
+#define CP80_LED_ON_Y  345
+#define CP80_LED_W      14
+#define CP80_LED_H       6
 
 #define CP80_HEAD_W   460
 #define CP80_SCALE(v) (((v) * CP80_HEAD_W) / CP80_IMG_W)
@@ -1575,7 +1578,7 @@ static size_t   cp80_paper_at = 0;
 
 static QPushButton *cp80_btn_on = nullptr;   /* ON LINE */
 static QPushButton *cp80_btn_fd = nullptr;   /* FEED    */
-static QCheckBox   *cp80_plug   = nullptr;
+static QScrollBar  *cp80_scroll = nullptr;   /* on the paper, past 20 lines */
 
 static void
 cp80_render()
@@ -1590,14 +1593,34 @@ cp80_render()
     const QFontMetrics fm(mono);
     const int          lh = fm.lineSpacing();
 
-    QStringList lines = cp80_printed.split(QLatin1Char('\n'));
+    QStringList all = cp80_printed.split(QLatin1Char('\n'));
 
     /* split() leaves an empty tail after the final newline; that is the blank
        the next line will be printed on, not a line of paper. */
-    if (!lines.isEmpty() && lines.last().isEmpty())
-        lines.removeLast();
-    while (lines.size() > CP80_MAX_LINES)
-        lines.removeFirst();
+    if (!all.isEmpty() && all.last().isEmpty())
+        all.removeLast();
+
+    /* Past twenty lines the roll stops growing and the earlier ones ride up out
+       of sight.  The scrollbar is how they are got back; it follows the bottom
+       unless somebody has scrolled away from it. */
+    const int over = qMax(0, all.size() - CP80_MAX_LINES);
+
+    if (cp80_scroll != nullptr) {
+        const bool at_end = (cp80_scroll->value() >= cp80_scroll->maximum());
+
+        cp80_scroll->blockSignals(true);
+        cp80_scroll->setRange(0, over);
+        cp80_scroll->setPageStep(CP80_MAX_LINES);
+        cp80_scroll->setSingleStep(1);
+        if (at_end)
+            cp80_scroll->setValue(over);
+        cp80_scroll->blockSignals(false);
+        cp80_scroll->setVisible(over > 0);
+    }
+
+    const int first = (cp80_scroll != nullptr)
+                    ? qBound(0, cp80_scroll->value(), over) : over;
+    const QStringList lines = all.mid(first, CP80_MAX_LINES);
 
     const int paperH = lines.isEmpty() ? 0 : ((lines.size() * lh) + 12);
     /* Negative when the roll is longer than the machine is tall, which is the
@@ -1629,6 +1652,11 @@ cp80_render()
             g.drawText(r.left() + 8, y, line);
             y += lh;
         }
+
+        /* Inside the paper, against its right edge -- it belongs to the roll
+           rather than to the window. */
+        if ((cp80_scroll != nullptr) && (over > 0))
+            cp80_scroll->setGeometry(r.right() - 12, r.top() + 4, 9, paperH - 8);
     }
 
     /* The lamp that is lit says which one it is.  Green for ON LINE, amber for
@@ -1641,8 +1669,8 @@ cp80_render()
 
         g.setRenderHint(QPainter::Antialiasing, true);
         g.setPen(Qt::NoPen);
-        g.setBrush(on ? QColor(0x35, 0xd0, 0x4a) : QColor(0xe0, 0x6a, 0x20));
-        g.drawRoundedRect(led, 2, 2);
+        g.setBrush(on ? QColor(0x35, 0xd0, 0x4a) : QColor(0xe0, 0x22, 0x18));
+        g.drawRoundedRect(led, 1, 1);
     }
 
     g.end();
@@ -1739,6 +1767,24 @@ cp80_show(QWidget *parent)
         cp80_btn_on->setToolTip(QObject::tr("ON LINE — connect or disconnect the "
                                             "Dataprint"));
 
+        /* The roll's own scrollbar, a child of the picture so it can sit inside
+           the paper.  A real one rather than a painted indicator, because the
+           lines that have ridden off the top are worth being able to get back,
+           and a widget brings the dragging with it. */
+        cp80_scroll = new QScrollBar(Qt::Vertical, cp80_view);
+        cp80_scroll->setStyleSheet(QStringLiteral(
+            "QScrollBar:vertical { background: transparent; width: 9px; margin: 0; }"
+            "QScrollBar::handle:vertical { background: rgba(122,118,104,150);"
+            " border-radius: 4px; min-height: 20px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical"
+            " { background: transparent; }"));
+        cp80_scroll->hide();
+
+        QObject::connect(cp80_scroll, &QScrollBar::valueChanged, cp80_win, []() {
+            cp80_render();
+        });
+
         cp80_btn_fd = new QPushButton(cp80_view);
         cp80_btn_fd->setStyleSheet(bare);
         cp80_btn_fd->setCursor(Qt::PointingHandCursor);
@@ -1751,9 +1797,7 @@ cp80_show(QWidget *parent)
             const bool on = (prn_cp80_connected() == 0);
 
             prn_cp80_set_connected(on ? 1 : 0);
-            if (cp80_plug != nullptr)
-                cp80_plug->setChecked(on);   /* the checkbox is the same switch */
-            cp80_render();
+            cp80_render();                   /* the lamp follows */
         });
 
         QObject::connect(cp80_btn_fd, &QPushButton::clicked, cp80_win, []() {
@@ -1772,40 +1816,23 @@ cp80_show(QWidget *parent)
             cp80_feed->start(CP80_LINE_MS);
         }
 
-        /* Plugged in or not, and it belongs here rather than on the toolbar:
-           it is the printer's own switch, and with the unit visible the
-           DATAPRINT menu drops straight into the print dialog with no way back
-           to the rest of it. */
-        auto *plug = new QCheckBox(QObject::tr("Dataprint connected"), cp80_win);
-
-        cp80_plug = plug;
-        plug->setChecked(prn_cp80_connected() != 0);
-        plug->setToolTip(QObject::tr(
-            "Unplug to stop the keepalive and drop CTS, DSR and DCD, so the "
-            "guest sees no cable rather than a device that has gone quiet"));
-
-        /* No printer on this machine means no switch.  A checkbox that can be
-           clicked and does nothing is the same symptom as a broken one. */
-        plug->setEnabled(prn_cp80_present() != 0);
-
-        QObject::connect(plug, &QCheckBox::toggled, cp80_win, [](bool on) {
-            prn_cp80_set_connected(on ? 1 : 0);
-            cp80_render();                   /* the ON LINE lamp follows */
-        });
-
+        /* There was a "Dataprint connected" checkbox and a line saying which
+           port it listened on.  Both are gone: the ON LINE button on the
+           machine is that switch, and the port is not a choice any more, so the
+           line only ever said the same thing. */
         char where[96] = "";
 
         prn_cp80_where(where, sizeof(where));
 
         auto *lbl = new QLabel(cp80_win);
 
-        /* When there is a printer, say where it listens; when there is not, the
-           device knows why and that is the more useful sentence. */
-        lbl->setText(prn_cp80_present()
-                     ? QObject::tr("Listening on %1.").arg(QString::fromUtf8(where))
-                     : QString::fromUtf8(where));
+        /* Only when there is no printer, and then only to say why -- a machine
+           that cannot be switched on needs to explain itself.  With one present
+           the picture says everything the sentence did. */
+        lbl->setText(QString::fromUtf8(where));
         lbl->setEnabled(false);
         lbl->setWordWrap(true);
+        lbl->setVisible(prn_cp80_present() == 0);
 
         auto *tear = new QPushButton(QObject::tr("Tear off"), cp80_win);
         auto *save = new QPushButton(QObject::tr("Save paper…"), cp80_win);
@@ -1840,7 +1867,6 @@ cp80_show(QWidget *parent)
 
         auto *row = new QHBoxLayout;
 
-        row->addWidget(plug);
         row->addStretch(1);
         row->addWidget(tear);
         row->addWidget(save);
