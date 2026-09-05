@@ -119,22 +119,31 @@ Port B is not idle either: it toggles `00`/`80` at roughly 3 Hz for the whole
 run. B7 is something the software drives continuously — a watchdog kick or a
 lamp — not a coin counter pulse.
 
-## 5. What the coins are worth
+## 5. What money the machine takes — and it is not all coins
 
-From the operator setup, on an I.G.O. 8 ES image. **Five channels are
-programmed**, not six:
+From the operator setup, on an I.G.O. 8 ES image:
 
-| Insert (EUR) | Credits |
-|---|---|
-| 0.10 | 0.20 |
-| 0.50 | 1 |
-| 1 | 3 |
-| 2 | 6 |
-| 5 | 15 |
+| Insert (EUR) | Credits | What it is |
+|---|---|---|
+| 0.10 | 0.20 | coin |
+| 0.50 | 1 | coin |
+| 1 | 3 | coin |
+| 2 | 6 | coin |
+| 5 | 15 | **a banknote — there is no 5 EUR coin** |
 
-Which matters for reading results: a 0.10 coin moves the display by 0.20 credits
-and is easy to miss, and the sixth C120 line is not programmed at all, so a line
-that does nothing is not necessarily a line that is not a coin.
+That last row is the one that matters, and it was nearly missed. **Four** of these
+are coins and the fifth is a note, so the machine has a **bill validator** as
+well as the C120, and the note channel cannot be on a C120 accept line. The
+validator is a second device with its own loom — which is what the card's second
+DB25 is for, and the obvious reason port C exists as an input at all.
+
+So the earlier count of "five coin channels" was wrong, and any arithmetic built
+on treating all five rows as C120 lines is wrong with it.
+
+Also worth keeping in mind when reading results: a 0.10 coin moves the display by
+0.20 credits, which is small enough to miss, and the C120's sixth line need not
+be programmed at all — so a line that appears to do nothing is not necessarily a
+line that is not a coin.
 
 ## 6. The line map — what is known and what is not
 
@@ -157,8 +166,20 @@ small always-on-top window. It skips port B (an output; nothing arrives there)
 and A1 (a CRC check per click is no way to spend an afternoon), leaving fifteen:
 **A0, A2..A7, C0..C7**.
 
-Still open: the coin lines, the calibration button, and whether the inhibit line
-on port B has to be driven before the validator's outputs are believed.
+Idling low, A6 and A7 both moved the credit display and A2..A5 appeared not to,
+though the totals seen (5.10, then 16.70) do not decompose cleanly into the table
+above and were taken during a walk whose first click had already opened the
+operator setup — so the machine was not in the state a player's coin arrives in.
+They are not evidence of a mapping yet, and are recorded here as unexplained
+rather than fitted to a theory.
+
+`PEEPEEBOX_IO_LINE=A6` pins the button to one line so it can be pressed
+repeatedly from a clean boot, which is what will settle each line: five presses
+of the 0.10 channel should read 1.00, and nothing else looks like that.
+
+Still open: which lines are the four coins, which are the note validator, where
+the calibration button is, and whether the inhibit line on port B has to be
+driven before the validator's outputs are believed.
 
 ## 7. What this corrected
 
