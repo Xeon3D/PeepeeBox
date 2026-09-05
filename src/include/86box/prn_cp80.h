@@ -58,9 +58,11 @@ extern size_t prn_cp80_take(int which, size_t *pos, int *reset,
 /* Tear the paper off. */
 extern void prn_cp80_clear(void);
 
-/* The file the raw byte stream is going to, or NULL if nothing has been
-   printed yet.  This is the ground truth for identifying the command set. */
-extern const char *prn_cp80_raw_path(void);
+/* There was a prn_cp80_raw_path() here, for a cp80-raw.bin that every byte was
+   written to.  It was the ground truth while the protocol was unknown and it
+   earned its keep; the protocol is known now, so it was a file the emulator
+   dropped in the user's rig on every run for nothing.  PEEPEEBOX_PRN_TEST still
+   reads a capture back if one is ever needed again. */
 
 extern const device_t prn_cp80_device;
 

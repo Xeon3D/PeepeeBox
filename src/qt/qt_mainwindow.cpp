@@ -106,6 +106,7 @@ extern bool fast_forward;
 #include <QFontDatabase>
 #include <QScrollBar>
 #include <QPixmap>
+#include <QPainter>
 #include <QGridLayout>
 #if QT_CONFIG(vulkan)
 #    include <QVulkanInstance>
@@ -1506,192 +1507,262 @@ MainWindow::on_actionInsert_note_4_triggered()
    visible rather than quietly dropped -- the whole device is built to find out
    what the printer is, not to pretend it already knows.  See
    src/device/prn_cp80.c. */
-static QDialog        *cp80_win      = nullptr;
-static QLabel         *cp80_head     = nullptr;
-static QPlainTextEdit *cp80_paper    = nullptr;
-static size_t          cp80_paper_at = 0;
+static QDialog *cp80_win    = nullptr;
+static QLabel  *cp80_view   = nullptr;   /* the machine, with the roll drawn on */
+static QPixmap *cp80_body   = nullptr;   /* the photograph, scaled once         */
+static QString  cp80_queued;             /* printed by the guest, not yet fed   */
+static QString  cp80_printed;            /* what is on the paper                */
+static QTimer  *cp80_feed   = nullptr;
+static size_t   cp80_paper_at = 0;
 
-/* How much paper is out of the machine at once.  A real roll would keep coming
-   and hang over the front; twenty lines is the length that still looks like a
-   receipt on screen.  Past that the strip stops growing and the earliest lines
-   ride up out of view, which is what a roll does. */
+/* How much paper is out of the machine at once.  A real roll keeps coming and
+   hangs over the front; twenty lines is the length that still reads as a receipt
+   on screen.  Past that the earliest lines ride up out of sight. */
 #define CP80_MAX_LINES 20
 
-/* The roll is as tall as what is printed on it, up to CP80_MAX_LINES.  A
-   four-line receipt is a four-line strip sticking out of the slot, which is what
-   the machine would hand you; a long one stops growing and scrolls, so the first
-   lines printed ride up out of sight.
-
-   The scrolling is left to the caller -- doing it here would yank the paper back
-   to the bottom every time a line arrived, even when somebody had scrolled up to
-   read something. */
-static void
-cp80_fit_paper()
-{
-    if ((cp80_paper == nullptr) || (cp80_win == nullptr))
-        return;
-
-    const int lines = qBound(1, cp80_paper->document()->blockCount(),
-                             CP80_MAX_LINES);
-    const int want  = (lines * cp80_paper->fontMetrics().lineSpacing()) + 14;
-    /* It may cover the whole machine and carry on above it; what stops it is
-       the window. */
-    const int room  = cp80_win->height() - 90;
-
-    cp80_paper->setFixedHeight(qBound(0, want, qMax(0, room)));
-}
-
-/* The paper comes out at the speed the paper came out.
-
-   A 24-column impact printer of this vintage manages something like two and a
-   half lines a second -- the head has to physically cross the paper and the
-   platen has to advance -- while the link feeding it runs at 9600 baud, which is
-   forty times faster than that.  So the report arrives in one burst and the
-   paper should not.  Text is held here and released a line at a time, which is
-   also the only way to watch a report and see where it goes wrong. */
+/* A 24-column impact printer of this vintage manages something like two and a
+   half lines a second, while the link feeding it runs at 9600 -- forty times
+   faster.  So the report arrives in one burst and the paper must not. */
 #define CP80_LINE_MS 400
 
-/* The DPU-414 is a top-exit printer: the slot is on top of the machine and the
-   paper rises out of it, over the lid.  So the whole machine is drawn at the
-   bottom of the window and the roll is laid *over* it, growing upward from the
-   slot and out past the top of the picture once there is more of it than the
-   printer is tall.  Feeding it downward instead reads as paper being eaten.
+/* The DPU-414 is a top-exit printer: the paper rises out of the slot on top of
+   the machine and lies over the lid.
 
-   These are measured off the image rather than guessed: it is 510 x 435 with
-   the slot at y=176 and running from x=122 to x=435. */
-#define CP80_IMG_W   510
-#define CP80_IMG_H   435
-#define CP80_SLOT_Y  176
-#define CP80_SLOT_L  122
-#define CP80_SLOT_R  435
+   This is painted rather than laid out.  Two attempts at overlapping a picture
+   and a text widget both came out with the machine clipped and the paper in the
+   wrong place -- a layout that is asked to put one child on top of another at a
+   fixed offset is a layout being used as a canvas.  Drawing it means the paper
+   is exactly where the slot is, the roll can extend past the top of the
+   photograph, and clipping the oldest lines is a subtraction rather than a
+   scrollbar.
 
-#define CP80_HEAD_W  460
+   Everything here is measured off the image rather than judged by eye: it is
+   510 x 435, the paper in the slot runs x=122..436 at y=176, the two panel
+   buttons and the two LEDs are where the scan below says they are.  The drawn
+   roll takes the same width and the same colour as the paper already in the
+   photograph, so the two are one piece of paper. */
+#define CP80_IMG_W    510
+#define CP80_IMG_H    435
+#define CP80_SLOT_Y   176
+#define CP80_SLOT_L   122
+#define CP80_SLOT_R   436
+
+/* The panel, in image coordinates: the square ON LINE button, the wide FEED
+   button, and the two LEDs left of them -- OFF LINE above, ON LINE below. */
+#define CP80_BTN_ON_X   69
+#define CP80_BTN_ON_W   45
+#define CP80_BTN_FD_X  135
+#define CP80_BTN_FD_W   73
+#define CP80_BTN_Y     317
+#define CP80_BTN_H      40
+
+#define CP80_LED_OFF_X  45
+#define CP80_LED_OFF_Y 317
+#define CP80_LED_ON_X   44
+#define CP80_LED_ON_Y  341
+#define CP80_LED_W      16
+#define CP80_LED_H      10
+
+#define CP80_HEAD_W   460
 #define CP80_SCALE(v) (((v) * CP80_HEAD_W) / CP80_IMG_W)
-#define CP80_HEAD_H  CP80_SCALE(CP80_IMG_H)
-#define CP80_PAPER_W CP80_SCALE(CP80_SLOT_R - CP80_SLOT_L)
-#define CP80_PAPER_L CP80_SCALE(CP80_SLOT_L)
+#define CP80_HEAD_H   CP80_SCALE(CP80_IMG_H)
+#define CP80_PAPER_W  CP80_SCALE(CP80_SLOT_R - CP80_SLOT_L)
+#define CP80_PAPER_L  CP80_SCALE(CP80_SLOT_L)
+#define CP80_SLOT_YS  CP80_SCALE(CP80_SLOT_Y)
 
-/* How far the roll's bottom edge sits above the bottom of the picture. */
-#define CP80_PAPER_B (CP80_HEAD_H - CP80_SCALE(CP80_SLOT_Y))
+/* Sampled out of the photograph, so the drawn roll and the real one match. */
+#define CP80_PAPER_RGB 227, 228, 236
 
-static QString  cp80_queued;           /* printed by the guest, not yet on paper */
-static QTimer  *cp80_feed = nullptr;
+static QPushButton *cp80_btn_on = nullptr;   /* ON LINE */
+static QPushButton *cp80_btn_fd = nullptr;   /* FEED    */
+static QCheckBox   *cp80_plug   = nullptr;
+
+static void
+cp80_render()
+{
+    if ((cp80_view == nullptr) || (cp80_body == nullptr))
+        return;
+
+    QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+
+    mono.setPointSize(9);
+
+    const QFontMetrics fm(mono);
+    const int          lh = fm.lineSpacing();
+
+    QStringList lines = cp80_printed.split(QLatin1Char('\n'));
+
+    /* split() leaves an empty tail after the final newline; that is the blank
+       the next line will be printed on, not a line of paper. */
+    if (!lines.isEmpty() && lines.last().isEmpty())
+        lines.removeLast();
+    while (lines.size() > CP80_MAX_LINES)
+        lines.removeFirst();
+
+    const int paperH = lines.isEmpty() ? 0 : ((lines.size() * lh) + 12);
+    /* Negative when the roll is longer than the machine is tall, which is the
+       whole point of measuring it this way. */
+    const int top    = qMin(0, CP80_SLOT_YS - paperH);
+    const int H      = CP80_HEAD_H - top;
+
+    QPixmap out(CP80_HEAD_W, H);
+
+    out.fill(Qt::transparent);
+
+    QPainter g(&out);
+
+    g.setRenderHint(QPainter::Antialiasing, false);
+    g.drawPixmap(0, -top, *cp80_body);
+
+    if (paperH > 0) {
+        /* No border: it is the same strip as the one in the photograph, and a
+           line around it turns paper back into a widget. */
+        const QRect r(CP80_PAPER_L, (-top + CP80_SLOT_YS) - paperH,
+                      CP80_PAPER_W, paperH);
+
+        g.fillRect(r, QColor(CP80_PAPER_RGB));
+        g.setFont(mono);
+        g.setPen(QColor(0x22, 0x22, 0x28));
+
+        int y = r.top() + 6 + fm.ascent();
+        for (const QString &line : qAsConst(lines)) {
+            g.drawText(r.left() + 8, y, line);
+            y += lh;
+        }
+    }
+
+    /* The lamp that is lit says which one it is.  Green for ON LINE, amber for
+       OFF LINE / PAPER END, exactly as the panel is labelled. */
+    {
+        const bool  on  = (prn_cp80_connected() != 0);
+        const int   ly  = -top + CP80_SCALE(on ? CP80_LED_ON_Y : CP80_LED_OFF_Y);
+        const QRect led(CP80_SCALE(on ? CP80_LED_ON_X : CP80_LED_OFF_X), ly,
+                        CP80_SCALE(CP80_LED_W), CP80_SCALE(CP80_LED_H));
+
+        g.setRenderHint(QPainter::Antialiasing, true);
+        g.setPen(Qt::NoPen);
+        g.setBrush(on ? QColor(0x35, 0xd0, 0x4a) : QColor(0xe0, 0x6a, 0x20));
+        g.drawRoundedRect(led, 2, 2);
+    }
+
+    g.end();
+    cp80_view->setPixmap(out);
+    cp80_view->setFixedSize(out.size());
+
+    /* The panel buttons ride with the picture.  The machine is always flush
+       with the bottom of the pixmap, so their offset from the bottom never
+       changes however long the roll gets. */
+    const int base = out.height() - CP80_HEAD_H;
+
+    if (cp80_btn_on != nullptr)
+        cp80_btn_on->setGeometry(CP80_SCALE(CP80_BTN_ON_X), base + CP80_SCALE(CP80_BTN_Y),
+                                 CP80_SCALE(CP80_BTN_ON_W), CP80_SCALE(CP80_BTN_H));
+    if (cp80_btn_fd != nullptr)
+        cp80_btn_fd->setGeometry(CP80_SCALE(CP80_BTN_FD_X), base + CP80_SCALE(CP80_BTN_Y),
+                                 CP80_SCALE(CP80_BTN_FD_W), CP80_SCALE(CP80_BTN_H));
+}
 
 static void
 cp80_feed_line()
 {
-    if ((cp80_paper == nullptr) || cp80_queued.isEmpty())
+    if (cp80_queued.isEmpty())
         return;
 
     const int at = cp80_queued.indexOf(QLatin1Char('\n'));
 
-    /* Nothing but a partial line yet -- wait for the rest rather than tear a
-       line in half.  The report always ends its records with LF. */
+    /* Nothing but a partial line yet -- wait for the rest rather than tear one
+       in half.  The report ends every record with LF. */
     if (at < 0)
         return;
 
-    const QString line = cp80_queued.left(at + 1);
-
+    cp80_printed += cp80_queued.left(at + 1);
     cp80_queued.remove(0, at + 1);
-
-    /* Follow the paper only while the viewer is already at the bottom; scrolling
-       back to read something should not be yanked away by the next line. */
-    QScrollBar *bar    = cp80_paper->verticalScrollBar();
-    const bool  follow = (bar->value() >= (bar->maximum() - 4));
-
-    cp80_paper->moveCursor(QTextCursor::End);
-    cp80_paper->insertPlainText(line);
-    cp80_fit_paper();
-    if (follow)
-        bar->setValue(bar->maximum());
-}
-
-static void
-cp80_pump_one(int which, size_t *at, QPlainTextEdit *view, QString *queue)
-{
-    char buf[4097];
-
-    for (;;) {
-        int          reset = 0;
-        const size_t n     = prn_cp80_take(which, at, &reset, buf, sizeof(buf) - 1);
-
-        if (reset) {
-            if (view != nullptr)
-                view->clear();
-            if (queue != nullptr)
-                queue->clear();
-        }
-        if (n == 0)
-            break;
-
-        buf[n] = 0;
-
-        if (queue != nullptr) {
-            *queue += QString::fromUtf8(buf);
-            continue;
-        }
-
-        QScrollBar *bar    = view->verticalScrollBar();
-        const bool  follow = (bar->value() >= (bar->maximum() - 4));
-
-        view->moveCursor(QTextCursor::End);
-        view->insertPlainText(QString::fromUtf8(buf));
-        if (follow)
-            bar->setValue(bar->maximum());
-    }
+    cp80_render();
 }
 
 static void
 cp80_pump()
 {
+    char buf[4097];
+
     if (cp80_win == nullptr)
         return;
 
     /* Only the paper.  The control-code trace is still kept by the device and
-       still goes to the log and cp80-raw.bin; it was a second text box in this
-       window while the protocol was being worked out, and now that it is
-       understood it was two thirds of the window telling you nothing. */
-    cp80_pump_one(PRN_CP80_PAPER, &cp80_paper_at, nullptr, &cp80_queued);
+       still goes to the log and cp80-raw.bin; it was a second text box here
+       while the protocol was being worked out, and now that it is understood it
+       was two thirds of the window telling you nothing. */
+    for (;;) {
+        int          reset = 0;
+        const size_t n     = prn_cp80_take(PRN_CP80_PAPER, &cp80_paper_at,
+                                           &reset, buf, sizeof(buf) - 1);
+
+        if (reset) {
+            cp80_queued.clear();
+            cp80_printed.clear();
+            cp80_render();
+        }
+        if (n == 0)
+            break;
+        buf[n] = 0;
+        cp80_queued += QString::fromUtf8(buf);
+    }
 }
 
 static void
 cp80_show(QWidget *parent)
 {
     if (cp80_win == nullptr) {
-        QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-
         cp80_win = new QDialog(parent);
         cp80_win->setWindowTitle(QObject::tr("Seiko DPU-414"));
-        cp80_win->resize(560, 720);
 
-        /* The machine itself, cropped so the picture ends at the tear bar --
-           the paper then leaves the image exactly where it leaves the printer,
-           and the widget below it is the roll rather than a text box that
-           happens to be underneath a photograph. */
-        cp80_head = new QLabel(cp80_win);
         QPixmap dpu(QStringLiteral(":/menuicons/qt/icons/dpu414.png"));
 
-        cp80_head->setPixmap(dpu.scaledToWidth(CP80_HEAD_W, Qt::SmoothTransformation));
-        cp80_head->setFixedSize(CP80_HEAD_W, CP80_HEAD_H);
+        cp80_body = new QPixmap(dpu.scaled(CP80_HEAD_W, CP80_HEAD_H,
+                                           Qt::IgnoreAspectRatio,
+                                           Qt::SmoothTransformation));
 
-        cp80_paper = new QPlainTextEdit(cp80_win);
-        cp80_paper->setReadOnly(true);
-        cp80_paper->setFont(mono);
-        cp80_paper->setLineWrapMode(QPlainTextEdit::NoWrap);
-        cp80_paper->setPlaceholderText(
-            QObject::tr("The paper. Nothing has been printed yet."));
+        cp80_view = new QLabel(cp80_win);
+        cp80_view->setAlignment(Qt::AlignHCenter | Qt::AlignBottom);
 
-        /* Paper, not a text box.  Fixed colours rather than theme ones on
-           purpose: a till roll is off-white under any desktop theme, and the
-           point of this pane is that it looks like the thing coming out of the
-           machine. */
-        cp80_paper->setStyleSheet(QStringLiteral(
-            "QPlainTextEdit { background: #f7f3e6; color: #2b2721;"
-            " border: 1px solid #cabfa6; border-bottom: none;"
-            " selection-background-color: #c8bda0; }"));
+        /* The panel's own controls, over the buttons in the photograph.  They
+           are children of the picture rather than items in a layout, so they
+           travel with it and land on the buttons they are drawn on; cp80_render
+           puts them where the machine currently is.  Invisible, because the
+           button they operate is already in the picture. */
+        const QString bare = QStringLiteral(
+            "QPushButton { background: transparent; border: none; }");
 
-        /* The roll is as wide as the slot it comes out of, and no wider. */
-        cp80_paper->setFixedWidth(CP80_PAPER_W);
+        cp80_btn_on = new QPushButton(cp80_view);
+        cp80_btn_on->setStyleSheet(bare);
+        cp80_btn_on->setCursor(Qt::PointingHandCursor);
+        cp80_btn_on->setToolTip(QObject::tr("ON LINE — connect or disconnect the "
+                                            "Dataprint"));
+
+        cp80_btn_fd = new QPushButton(cp80_view);
+        cp80_btn_fd->setStyleSheet(bare);
+        cp80_btn_fd->setCursor(Qt::PointingHandCursor);
+        cp80_btn_fd->setToolTip(QObject::tr("FEED — one blank line per press"));
+
+        QObject::connect(cp80_btn_on, &QPushButton::clicked, cp80_win, []() {
+            if (!prn_cp80_present())
+                return;
+
+            const bool on = (prn_cp80_connected() == 0);
+
+            prn_cp80_set_connected(on ? 1 : 0);
+            if (cp80_plug != nullptr)
+                cp80_plug->setChecked(on);   /* the checkbox is the same switch */
+            cp80_render();
+        });
+
+        QObject::connect(cp80_btn_fd, &QPushButton::clicked, cp80_win, []() {
+            /* What the button does on the machine: advance the paper by a line.
+               It is the printer's own feed, so it goes on the roll and not down
+               the wire. */
+            cp80_printed += QLatin1Char('\n');
+            cp80_render();
+        });
 
         if (cp80_feed == nullptr) {
             cp80_feed = new QTimer(cp80_win);
@@ -1707,28 +1778,32 @@ cp80_show(QWidget *parent)
            to the rest of it. */
         auto *plug = new QCheckBox(QObject::tr("Dataprint connected"), cp80_win);
 
+        cp80_plug = plug;
         plug->setChecked(prn_cp80_connected() != 0);
         plug->setToolTip(QObject::tr(
             "Unplug to stop the keepalive and drop CTS, DSR and DCD, so the "
             "guest sees no cable rather than a device that has gone quiet"));
 
+        /* No printer on this machine means no switch.  A checkbox that can be
+           clicked and does nothing is the same symptom as a broken one. */
+        plug->setEnabled(prn_cp80_present() != 0);
+
         QObject::connect(plug, &QCheckBox::toggled, cp80_win, [](bool on) {
             prn_cp80_set_connected(on ? 1 : 0);
+            cp80_render();                   /* the ON LINE lamp follows */
         });
 
-        char where[64] = "";
+        char where[96] = "";
 
         prn_cp80_where(where, sizeof(where));
 
-        const char *raw = prn_cp80_raw_path();
-        auto       *lbl = new QLabel(cp80_win);
+        auto *lbl = new QLabel(cp80_win);
 
-        lbl->setText(QObject::tr("Listening on %1. %2")
-                         .arg(QString::fromUtf8(where))
-                         .arg(raw ? QObject::tr("Every byte is also going to %1.")
-                                        .arg(QString::fromUtf8(raw))
-                                  : QObject::tr("Every byte will also be captured "
-                                                "to a file.")));
+        /* When there is a printer, say where it listens; when there is not, the
+           device knows why and that is the more useful sentence. */
+        lbl->setText(prn_cp80_present()
+                     ? QObject::tr("Listening on %1.").arg(QString::fromUtf8(where))
+                     : QString::fromUtf8(where));
         lbl->setEnabled(false);
         lbl->setWordWrap(true);
 
@@ -1737,10 +1812,10 @@ cp80_show(QWidget *parent)
 
         QObject::connect(tear, &QPushButton::clicked, cp80_win, []() {
             prn_cp80_clear();
-            cp80_paper->clear();
             cp80_queued.clear();
+            cp80_printed.clear();
             cp80_paper_at = 0;
-            cp80_fit_paper();
+            cp80_render();
         });
 
         QObject::connect(save, &QPushButton::clicked, cp80_win, [parent]() {
@@ -1753,56 +1828,34 @@ cp80_show(QWidget *parent)
 
             QFile out(to);
 
-            /* Whatever is still feeding counts as printed for this purpose --
-               nobody wants to wait for the roll to catch up before saving. */
+            /* Everything printed, not the twenty lines still showing, and
+               whatever is still feeding -- nobody wants to wait for the roll to
+               catch up before saving. */
             if (out.open(QIODevice::WriteOnly | QIODevice::Text))
-                out.write((cp80_paper->toPlainText() + cp80_queued).toUtf8());
+                out.write((cp80_printed + cp80_queued).toUtf8());
             else
                 QMessageBox::warning(parent, QObject::tr("Save paper"),
                                      QObject::tr("Could not write %1").arg(to));
         });
 
         auto *row = new QHBoxLayout;
+
         row->addWidget(plug);
         row->addStretch(1);
         row->addWidget(tear);
         row->addWidget(save);
 
-        /* The roll, lined up under the slot.  The picture is 510 px wide and
-           its paper slot runs from 122 to 435, so the offsets are that
-           measurement and not a guess at what looks right. */
-        /* The roll, over the machine.  Both go in the same grid cell, which is
-           how two widgets are made to overlap without a container that has to
-           reposition its children on every resize.  The overlay's bottom margin
-           puts the paper's edge at the slot rather than at the foot of the
-           picture, and both are bottom-aligned so the machine stays put while
-           the paper grows past the top of it. */
-        auto *overlay = new QWidget(cp80_win);
-        auto *roll    = new QHBoxLayout(overlay);
-
-        overlay->setAttribute(Qt::WA_TransparentForMouseEvents, false);
-        overlay->setFixedWidth(CP80_HEAD_W);
-        roll->setContentsMargins(CP80_PAPER_L, 0, 0, CP80_PAPER_B);
-        roll->addWidget(cp80_paper, 0, Qt::AlignBottom | Qt::AlignLeft);
-        roll->addStretch(1);
-
-        auto *stage = new QGridLayout;
-
-        stage->setContentsMargins(0, 0, 0, 0);
-        stage->addWidget(cp80_head, 0, 0, Qt::AlignBottom | Qt::AlignHCenter);
-        stage->addWidget(overlay,   0, 0, Qt::AlignBottom | Qt::AlignHCenter);
-        overlay->raise();
-
         auto *box = new QVBoxLayout(cp80_win);
 
         box->setSpacing(0);
-        box->addStretch(1);            /* empty air above the roll */
-        box->addLayout(stage);
+        box->addStretch(1);                /* empty air above the roll */
+        box->addWidget(cp80_view, 0, Qt::AlignHCenter | Qt::AlignBottom);
         box->addSpacing(8);
         box->addWidget(lbl);
         box->addLayout(row);
 
-        cp80_fit_paper();
+        cp80_render();
+        cp80_win->resize(CP80_HEAD_W + 60, CP80_HEAD_H + 320);
     }
 
     cp80_win->show();

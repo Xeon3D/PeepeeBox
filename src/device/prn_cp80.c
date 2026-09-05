@@ -61,8 +61,6 @@
 #include <86box/photoplay.h>
 #include <86box/prn_cp80.h>
 
-#define CP80_RAW_FILE  "cp80-raw.bin"
-
 /* Enough for a very long session; past it the buffer stops growing and says so
    once, because a printer that has run away should cost a line rather than the
    host's memory. */
@@ -179,9 +177,6 @@ typedef struct cp80_t {
     cp80_buf_t trace;
     mutex_t   *lock;
 
-    FILE      *raw;
-    int        raw_tried;
-
     int        dirty;              /* the guest has sent at least one byte */
     int        col;                /* for tab stops */
     int        pending_cr;         /* CR seen, waiting to see whether LF follows */
@@ -198,6 +193,12 @@ typedef struct cp80_t {
 } cp80_t;
 
 static cp80_t *cp80_inst = NULL;
+
+/* Why there is no printer, when there is no printer.  Set before init gives up,
+   because by then there is no instance to hang it on and the window otherwise
+   shows an empty state with a switch that does nothing -- which reads as broken
+   rather than as "not on this machine". */
+static char cp80_why[96] = "";
 
 /* ------------------------------------------------------------- the buffers */
 
@@ -681,19 +682,6 @@ cp80_write(UNUSED(serial_t *serial), void *priv, uint8_t val)
     if (!dev->dirty)
         dev->dirty = 1;
 
-    if (!dev->raw_tried) {
-        dev->raw_tried = 1;
-        dev->raw       = fopen(CP80_RAW_FILE, "wb");
-        if (dev->raw == NULL)
-            pclog("CP80: cannot open %s; no raw capture\n", CP80_RAW_FILE);
-        else
-            pclog("CP80: raw byte stream going to %s\n", CP80_RAW_FILE);
-    }
-    if (dev->raw != NULL) {
-        fputc(val, dev->raw);
-        fflush(dev->raw);        /* the interesting runs are the ones that hang */
-    }
-
     cp80_byte(dev, val);
 
     /* ETX ends a command frame, and the guest then sits in a receive state
@@ -749,7 +737,7 @@ prn_cp80_where(char *out, size_t len)
     if ((out == NULL) || (len == 0))
         return;
     if ((dev == NULL) || (dev->nports == 0)) {
-        snprintf(out, len, "not attached to any port");
+        snprintf(out, len, "%s", cp80_why[0] ? cp80_why : "No printer attached");
         return;
     }
     if (dev->nports == 1)
@@ -818,12 +806,6 @@ prn_cp80_clear(void)
         dev->trace.s[0] = '\0';
     dev->col = 0;
     thread_release_mutex(dev->lock);
-}
-
-const char *
-prn_cp80_raw_path(void)
-{
-    return ((cp80_inst != NULL) && (cp80_inst->raw != NULL)) ? CP80_RAW_FILE : NULL;
 }
 
 /* -------------------------------------------------------------- the device */
@@ -1033,6 +1015,8 @@ cp80_init(UNUSED(const device_t *info))
 
         if (photoplay_image_ident(banner, sizeof(banner), NULL, 0) &&
             (strstr(banner, "2008") != NULL)) {
+            snprintf(cp80_why, sizeof(cp80_why),
+                     "No printer: %s keeps its dongle on COM2", banner);
             pclog("CP80: %s is an I.G.O. 8 image and its dongle owns COM2; "
                   "no printer attached\n", banner);
             free(dev);
@@ -1050,6 +1034,8 @@ cp80_init(UNUSED(const device_t *info))
     cp80_attach(dev, dev->setting);
 
     if (dev->nports == 0) {
+        snprintf(cp80_why, sizeof(cp80_why),
+                 "No printer: COM%d is already taken", dev->setting + 1);
         pclog("CP80: no free port; no printer attached\n");
         thread_close_mutex(dev->lock);
         free(dev);
@@ -1106,8 +1092,6 @@ cp80_close(void *priv)
     if (dev == NULL)
         return;
 
-    if (dev->raw != NULL)
-        fclose(dev->raw);
     if (dev->lock != NULL)
         thread_close_mutex(dev->lock);
     free(dev->paper.s);

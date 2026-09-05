@@ -2288,19 +2288,34 @@ pp_init(const device_t *info)
         ib_start();
 
     /* The 2008 generation moved its dongle off the parallel port entirely: a serial
-       smart-card reader on COM2, in dongle_igo8.c.  Brought up unconditionally --
-       a guest from any other generation never says a word to it.  Docs/18.
+       smart-card reader on COM2, in dongle_igo8.c.  Docs/18.
 
-       "Nothing else in the cabinet wants COM2" turns out to be untrue: the coin
-       validator is on COM2 on the generations whose dongle is on LPT1, so on
-       those the reader is sitting on the validator's port.  Making this
-       conditional is a change to the protection path and not one to make in
-       passing, so for now PEEPEEBOX_NO_SC=1 stands it down for a run.  Default
-       unchanged. */
-    if (getenv("PEEPEEBOX_NO_SC") == NULL)
-        device_add(&igo8_reader_device);
-    else
+       It used to be brought up unconditionally, on the grounds that a guest from
+       any other generation never says a word to it.  That is true and it was
+       still wrong: the reader *claims* COM2 whether or not anyone talks to it,
+       and COM2 is where these cabinets put the Dataprint -- so on every
+       generation but 2008 the printer found the port taken and could not
+       attach.  The window said "not attached to any port" and its connect
+       switch did nothing, because there was no device behind it.
+
+       So it is attached when the image is a 2008 one, and when the image cannot
+       be identified at all.  That second case is deliberate: an unreadable image
+       keeps the old behaviour, because losing the dongle is a worse failure than
+       losing the printer.  PEEPEEBOX_NO_SC=1 still forces it off. */
+    if (getenv("PEEPEEBOX_NO_SC") != NULL)
         pp_log("PP: PEEPEEBOX_NO_SC set -- the 2008 reader is not attached, COM2 is free\n");
+    else {
+        char banner[64] = "";
+        const int known = photoplay_image_ident(banner, sizeof(banner), NULL, 0);
+
+        if (!known || (strstr(banner, "2008") != NULL)) {
+            device_add(&igo8_reader_device);
+            if (!known)
+                pp_log("PP: image not identified -- attaching the 2008 reader anyway\n");
+        } else
+            pp_log("PP: %s is not a 2008 image -- the 2008 reader is not attached, "
+                   "COM2 is free\n", banner);
+    }
 
     /* NG-DONGLE sweep: take this run's candidate from the file and leave the next one
        behind, so an unattended reboot loop walks the whole space. */
