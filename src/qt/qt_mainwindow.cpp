@@ -52,6 +52,7 @@ extern "C" {
 #include <86box/lpt.h>
 #include <86box/photoplay.h>
 #include <86box/funworld_io.h>
+#include <86box/prn_cp80.h>
 
 #ifdef USE_VNC
 #    include <86box/vnc.h>
@@ -97,6 +98,13 @@ extern bool fast_forward;
 #include <QDir>
 #include <QSysInfo>
 #include <QEventLoop>
+#include <QPlainTextEdit>
+#include <QSplitter>
+#include <QFileDialog>
+#include <QHBoxLayout>
+#include <QFile>
+#include <QFontDatabase>
+#include <QScrollBar>
 #if QT_CONFIG(vulkan)
 #    include <QVulkanInstance>
 #    include <QVulkanFunctions>
@@ -203,6 +211,11 @@ processEventsOnlyWhenPausedOrModal()
 }
 #endif
 
+/* PeepeeBox: the receipt printer's window, defined further down with the rest
+   of the cabinet's controls. */
+static void cp80_show(QWidget *parent);
+static void cp80_pump();
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
@@ -222,6 +235,28 @@ MainWindow::MainWindow(QWidget *parent)
     status->setSoundMenu(ui->menuSound);
     ui->actionMute_Unmute->setText(sound_muted ? tr("&Unmute") : tr("&Mute"));
     ui->stackedWidget->setMouseTracking(true);
+
+    /* PeepeeBox: watch for the guest starting to print.  The cabinet's printer
+       is not a thing anyone thinks to go looking for, and a receipt that
+       arrived while nobody had the window open is a run wasted -- so the paper
+       puts itself on screen the first time a byte reaches it, and keeps itself
+       up to date after that. */
+    {
+        auto *paper_watch = new QTimer(this);
+
+        connect(paper_watch, &QTimer::timeout, this, [this]() {
+            static bool shown = false;
+
+            if (!shown) {
+                if (!prn_cp80_dirty())
+                    return;
+                shown = true;
+                cp80_show(this);
+            }
+            cp80_pump();
+        });
+        paper_watch->start(400);
+    }
     statusBar()->setVisible(!hide_status_bar);
 
     auto    hertz_label    = new QLabel;
@@ -1458,6 +1493,149 @@ void
 MainWindow::on_actionInsert_note_4_triggered()
 {
     insert_money(this, FWIO_LINE_NOTE4);
+}
+
+
+/* PeepeeBox: what the cabinet's printer would be printing.
+
+   Two panes, and the lower one is the point.  Until the command set is known
+   the interesting half of a receipt is not its text but the control sequences
+   that produced it, and a sequence this build does not recognise has to be
+   visible rather than quietly dropped -- the whole device is built to find out
+   what the printer is, not to pretend it already knows.  See
+   src/device/prn_cp80.c. */
+static QDialog        *cp80_win      = nullptr;
+static QPlainTextEdit *cp80_paper    = nullptr;
+static QPlainTextEdit *cp80_trace    = nullptr;
+static size_t          cp80_paper_at = 0;
+static size_t          cp80_trace_at = 0;
+
+static void
+cp80_pump_one(int which, size_t *at, QPlainTextEdit *view)
+{
+    char buf[4097];
+
+    for (;;) {
+        int          reset = 0;
+        const size_t n     = prn_cp80_take(which, at, &reset, buf, sizeof(buf) - 1);
+
+        if (reset)
+            view->clear();
+        if (n == 0)
+            break;
+
+        buf[n] = 0;
+
+        /* Keep following the paper only if the viewer is already at the end;
+           scrolling back to read something should not be yanked away by the
+           next line arriving. */
+        QScrollBar *bar    = view->verticalScrollBar();
+        const bool  follow = (bar->value() >= (bar->maximum() - 4));
+
+        view->moveCursor(QTextCursor::End);
+        view->insertPlainText(QString::fromUtf8(buf));
+        if (follow)
+            view->verticalScrollBar()->setValue(view->verticalScrollBar()->maximum());
+    }
+}
+
+static void
+cp80_pump()
+{
+    if (cp80_win == nullptr)
+        return;
+
+    cp80_pump_one(PRN_CP80_PAPER, &cp80_paper_at, cp80_paper);
+    cp80_pump_one(PRN_CP80_TRACE, &cp80_trace_at, cp80_trace);
+}
+
+static void
+cp80_show(QWidget *parent)
+{
+    if (cp80_win == nullptr) {
+        QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+
+        cp80_win = new QDialog(parent);
+        cp80_win->setWindowTitle(QObject::tr("Receipt printer"));
+        cp80_win->resize(600, 680);
+
+        cp80_paper = new QPlainTextEdit(cp80_win);
+        cp80_paper->setReadOnly(true);
+        cp80_paper->setFont(mono);
+        cp80_paper->setLineWrapMode(QPlainTextEdit::NoWrap);
+        cp80_paper->setPlaceholderText(
+            QObject::tr("The paper. Nothing has been printed yet."));
+
+        cp80_trace = new QPlainTextEdit(cp80_win);
+        cp80_trace->setReadOnly(true);
+        cp80_trace->setFont(mono);
+        cp80_trace->setLineWrapMode(QPlainTextEdit::NoWrap);
+        cp80_trace->setPlaceholderText(QObject::tr(
+            "Control codes. Anything this build does not recognise says so here "
+            "rather than being dropped."));
+
+        auto *split = new QSplitter(Qt::Vertical, cp80_win);
+        split->addWidget(cp80_paper);
+        split->addWidget(cp80_trace);
+        split->setStretchFactor(0, 3);
+        split->setStretchFactor(1, 2);
+
+        const char *raw = prn_cp80_raw_path();
+        auto       *lbl = new QLabel(cp80_win);
+
+        lbl->setText(raw ? QObject::tr("Every byte is also going to %1")
+                               .arg(QString::fromUtf8(raw))
+                         : QObject::tr("Every byte will also be captured to a file"));
+        lbl->setEnabled(false);
+
+        auto *tear = new QPushButton(QObject::tr("Tear off"), cp80_win);
+        auto *save = new QPushButton(QObject::tr("Save paper…"), cp80_win);
+
+        QObject::connect(tear, &QPushButton::clicked, cp80_win, []() {
+            prn_cp80_clear();
+            cp80_paper->clear();
+            cp80_trace->clear();
+            cp80_paper_at = 0;
+            cp80_trace_at = 0;
+        });
+
+        QObject::connect(save, &QPushButton::clicked, cp80_win, [parent]() {
+            const QString to = QFileDialog::getSaveFileName(
+                parent, QObject::tr("Save paper"), QStringLiteral("receipt.txt"),
+                QObject::tr("Text files (*.txt);;All files (*)"));
+
+            if (to.isEmpty())
+                return;
+
+            QFile out(to);
+
+            if (out.open(QIODevice::WriteOnly | QIODevice::Text))
+                out.write(cp80_paper->toPlainText().toUtf8());
+            else
+                QMessageBox::warning(parent, QObject::tr("Save paper"),
+                                     QObject::tr("Could not write %1").arg(to));
+        });
+
+        auto *row = new QHBoxLayout;
+        row->addWidget(lbl);
+        row->addStretch(1);
+        row->addWidget(tear);
+        row->addWidget(save);
+
+        auto *box = new QVBoxLayout(cp80_win);
+        box->addWidget(split);
+        box->addLayout(row);
+    }
+
+    cp80_win->show();
+    cp80_win->raise();
+}
+
+void
+MainWindow::on_actionPrinter_paper_triggered()
+{
+    cp80_show(this);
+    cp80_pump();
 }
 
 void

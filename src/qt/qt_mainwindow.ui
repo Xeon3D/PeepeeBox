@@ -103,6 +103,7 @@
     <addaction name="actionInsert_note_4"/>
     <addaction name="actionOperator_setup"/>
     <addaction name="actionCalibrate"/>
+    <addaction name="actionPrinter_paper"/>
     <addaction name="separator"/>
     <addaction name="actionSettings"/>
     <addaction name="actionTouchscreen"/>
@@ -266,6 +267,7 @@
    <addaction name="actionInsert_note_4"/>
    <addaction name="actionOperator_setup"/>
    <addaction name="actionCalibrate"/>
+   <addaction name="actionPrinter_paper"/>
   </widget>
   <action name="actionHard_Reset">
    <property name="icon">
@@ -471,6 +473,21 @@
    </property>
    <property name="toolTip">
     <string>The other button behind the cabinet door, on A1. From the menu the software answers it with a CRC check, which takes minutes. Whether it is also the touchscreen calibration somewhere else is not known.</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionPrinter_paper">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/printer.ico</normaloff>:/menuicons/qt/icons/printer.ico</iconset>
+   </property>
+   <property name="text">
+    <string>&amp;Receipt printer…</string>
+   </property>
+   <property name="toolTip">
+    <string>What the cabinet's serial printer would be printing, and the control codes that produced it</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>

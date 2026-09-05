@@ -63,6 +63,7 @@
 #include <86box/machine.h>
 #include <86box/photoplay.h>
 #include <86box/funworld_io.h>
+#include <86box/prn_cp80.h>
 #include <86box/bugger.h>
 #include <86box/postcard.h>
 #include <86box/unittester.h>
@@ -1801,6 +1802,12 @@ pc_reset_hard_init(void)
        src/device/funworld_io.c. */
     device_add(&funworld_io_device);
     funworld_io_probe_init();
+
+    /* PeepeeBox: and the receipt printer, which is an ordinary serial
+       peripheral -- the I/O card only feeds it 12 V through the DB15.  It
+       attaches to COM1 and stands down if something else got there first.
+       See src/device/prn_cp80.c. */
+    device_add(&prn_cp80_device);
 
     /* Needs the status bar... */
     if (bugger_enabled)

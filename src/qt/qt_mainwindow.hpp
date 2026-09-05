@@ -98,6 +98,7 @@ private slots:
     void on_actionInsert_note_4_triggered();
     void on_actionOperator_setup_triggered();
     void on_actionCalibrate_triggered();
+    void on_actionPrinter_paper_triggered();
     void on_actionNetwork_triggered();
     void on_actionCDROM_drive_triggered(bool checked);
     void on_actionFloppy_drive_triggered(bool checked);

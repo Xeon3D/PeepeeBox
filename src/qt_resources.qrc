@@ -103,6 +103,7 @@
         <file>qt/icons/note_3.ico</file>
         <file>qt/icons/note_4.ico</file>
         <file>qt/icons/calibrate.ico</file>
+        <file>qt/icons/printer.ico</file>
         <file>qt/icons/floppy_35.ico</file>
         <file>qt/icons/cdrom.ico</file>
         <file>qt/icons/network.ico</file>
