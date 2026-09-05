@@ -58,7 +58,7 @@ jobs:
       tag: ${{ steps.pick.outputs.tag }}
       release: ${{ steps.pick.outputs.release }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -112,7 +112,7 @@ jobs:
             llvm-openmp:p
             zstd:p
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Configure
         run: >-
@@ -171,7 +171,7 @@ jobs:
           libevdev-dev
           libxkbcommon-x11-dev
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Configure
         run: >-
@@ -217,7 +217,7 @@ jobs:
           zstd
           qt@5
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Configure
         run: >-
@@ -260,7 +260,7 @@ jobs:
     steps:
       # gh resolves the repository from the checkout, and the tag has to exist here
       # for the release to attach to it.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
