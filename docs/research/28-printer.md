@@ -185,3 +185,67 @@ proper, and it will land in `cp80-raw.bin` and the trace pane the moment the
 menu gets past the dialog. Whether it is ESC/P, ESC/POS or something funworld
 invented is still open — but at 24 columns and with an ENQ handshake, a plain
 dot matrix dialect is looking less likely than a small framed protocol.
+
+## 8. The first frame, and why it was sent three times
+
+Past the dialog, the guest asked what to print and sent 21 bytes — which is one
+seven-byte frame, three times:
+
+```
+11 1B 53 13 03 0A 0A      XON  ESC 'S'  XOFF  ETX  LF LF
+```
+
+Not ESC/P and not ESC/POS. `DC1 … DC3` bracketing an `ESC <letter>` with `ETX`
+after it is a small framed protocol of funworld's own. The body is a string
+constant in MENU.EXE at file offset 289737, stored NUL-terminated as
+`1B 53 13 03 0A 0A 1B 43` — so there is an `ESC C` on the end of it that was
+never transmitted, which is itself the clue.
+
+### Three identical frames is a retry, not a print job
+
+The send loop at `0x1D47D`:
+
+```
+call read_LSR ; test al, 1 ; je skip
+call read_RBR ; cmp  al, 5 ; jne skip
+mov  dword [timeout], 0        -- an ENQ resets the watchdog
+skip:
+cmp  dword [timeout], 0x5DC    -- 1500 without one and it gives up
+```
+
+**ENQ is a keepalive for the whole exchange, not a hello.** The unit is expected
+to keep announcing while the host talks to it, and the host abandons the frame
+if 1500 ticks pass without one.
+
+§7's implementation hushed for two seconds whenever the guest sent us anything,
+on the reasonable-sounding theory that a device would not chatter over an
+incoming print job. That stopped the announcements at exactly the moment the
+watchdog started counting: frame, silence, timeout, retry, three times, give up.
+The capture was the sound of our own hush.
+
+ENQ is now continuous at 100 ms and never hushes. `PEEPEEBOX_PRN_ENQ=0` still
+turns it off, which is how to confirm this is the mechanism rather than
+something that merely correlates with it.
+
+### The port is settled
+
+COM2, fixed. MENU.EXE programs `0x2F8` by hand and holds no other port as an
+immediate. "COM1 and COM2" survives as a setting for an image that turns out to
+differ, but it is the wrong thing to run now — the keepalive would be pushed at
+a port the cabinet never had a Dataprint on.
+
+### Unplugging
+
+Once the software can see the unit, the DATAPRINT menu drops straight into the
+print dialog, and there is no way back to the rest of it. So the toolbar has a
+**Dataprint connected** toggle. Unplugging stops the keepalive *and* drops CTS,
+DSR and DCD, so the guest sees what it would see with no cable rather than a
+device that has merely gone quiet. The toolbar is authoritative across a hard
+reset, which rebuilds the device plugged in.
+
+### Next
+
+`ESC S` is presumably select or status, and the unanswered `ESC C` on the end of
+that constant is the next thing to understand. What the unit is supposed to send
+back beyond ENQ is still unknown — the frames will now get through, so whatever
+the guest does after a frame it does not abandon is the next piece of evidence.

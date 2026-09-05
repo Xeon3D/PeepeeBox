@@ -65,14 +65,14 @@ typedef struct cp80_buf_t {
     int    full;                   /* hit the cap and said so */
 } cp80_buf_t;
 
-/* The port setting.  0..3 are COM1..COM4; CP80_PORT_BOTH listens on COM1 and
-   COM2 at once.
+/* The port setting.  0..3 are COM1..COM4; CP80_PORT_BOTH listens on both of the
+   first two at once.
 
-   Both is the default, and it is not a hedge.  Which port the cabinet's printer
-   hangs off is unknown -- the DB9 is an extension of an onboard header and
-   nothing says which one -- and a guest that sits on "waiting for printer"
-   tells you nothing about where it was looking.  Listening on both answers that
-   in one run, and the trace names the port the first byte arrives on. */
+   COM2 is the default and it is settled rather than assumed: MENU.EXE programs
+   0x2F8 by hand and contains no other port as an immediate.  "Both" was the
+   default while that was still open and is kept only for an image that turns
+   out to differ -- it is the wrong thing to run now, because the ENQ keepalive
+   would then be pushed at a port the cabinet never had a Dataprint on. */
 #define CP80_PORT_BOTH 4
 #define CP80_PORTS_MAX 2
 
@@ -81,7 +81,6 @@ typedef struct cp80_port_t {
     serial_t      *serial;
     int            port;
     int            seen;           /* a byte has arrived here          */
-    int            hush;           /* ticks to stay quiet after one    */
     int            announced;      /* the first ENQ has been logged    */
 } cp80_port_t;
 
@@ -101,15 +100,27 @@ typedef struct cp80_port_t {
    for one already sitting in the receive register.  A printer that only ever
    listens is never found, which is exactly what was happening.
 
-   It is sent on a heartbeat rather than once, because the check reads whatever
-   happens to be waiting at the moment the operator opens that menu.  It hushes
-   for a couple of seconds after the guest sends anything, so a print job in
-   progress is not interleaved with announcements -- what the real unit does
-   there is unknown, and corrupting a capture we are trying to read would be a
-   poor trade.  PEEPEEBOX_PRN_ENQ=0 turns it off. */
+   It is sent continuously, and that is not a guess either.  The send loop at
+   0x1D47D does this after every frame it writes:
+
+       call read_LSR ; test al, 1 ; je skip
+       call read_RBR ; cmp  al, 5 ; jne skip
+       mov  dword [timeout], 0        -- an ENQ resets the watchdog
+   skip:
+       cmp  dword [timeout], 0x5DC    -- 1500 without one and it gives up
+
+   So ENQ is a keepalive for the whole exchange, not a hello.  The first version
+   of this hushed for two seconds whenever the guest sent us something, on the
+   reasonable-sounding theory that a device would not chatter over an incoming
+   print job -- which stopped the announcements at precisely the moment the
+   watchdog started counting.  The guest timed out, retried, timed out, retried,
+   and gave up after three attempts.  That is what the first capture was: the
+   same seven-byte frame three times and no print at all.
+
+   PEEPEEBOX_PRN_ENQ=0 turns it off, which is how to check that this is really
+   the mechanism rather than something that merely correlates with it. */
 #define CP80_ENQ      0x05
-#define CP80_ENQ_MS   250.0
-#define CP80_ENQ_HUSH 8            /* ticks of quiet owed after a received byte */
+#define CP80_ENQ_MS   100.0
 
 typedef struct cp80_t {
     cp80_port_t ports[CP80_PORTS_MAX];
@@ -118,6 +129,7 @@ typedef struct cp80_t {
 
     pc_timer_t  enq;
     int         enq_on;
+    int         connected;         /* the unit is plugged in */
 
     cp80_buf_t paper;
     cp80_buf_t trace;
@@ -578,9 +590,6 @@ cp80_write(UNUSED(serial_t *serial), void *priv, uint8_t val)
         cp80_tracef(dev, "-- printing to COM%d --\n", p->port + 1);
     }
 
-    /* Stop announcing while it is talking to us. */
-    p->hush = CP80_ENQ_HUSH;
-
     if (!dev->dirty)
         dev->dirty = 1;
 
@@ -608,6 +617,28 @@ int
 prn_cp80_present(void)
 {
     return (cp80_inst != NULL) && (cp80_inst->nports > 0);
+}
+
+/* Defined with the rest of the port handling, below. */
+static void cp80_wire(cp80_t *dev, int up);
+
+int
+prn_cp80_connected(void)
+{
+    return (cp80_inst != NULL) && cp80_inst->connected;
+}
+
+void
+prn_cp80_set_connected(int on)
+{
+    cp80_t *dev = cp80_inst;
+
+    if ((dev == NULL) || (dev->connected == !!on))
+        return;
+
+    dev->connected = !!on;
+    cp80_wire(dev, dev->connected);
+    pclog("CP80: Dataprint %s\n", dev->connected ? "plugged in" : "unplugged");
 }
 
 int
@@ -767,15 +798,16 @@ cp80_enq_tick(void *priv)
     if (dev == NULL)
         return;
 
+    if (!dev->connected) {
+        timer_on_auto(&dev->enq, CP80_ENQ_MS * 1000.0);
+        return;
+    }
+
     for (int i = 0; i < dev->nports; i++) {
         cp80_port_t *p = &dev->ports[i];
 
         if (p->serial == NULL)
             continue;
-        if (p->hush > 0) {
-            p->hush--;
-            continue;
-        }
 
         serial_write_fifo(p->serial, CP80_ENQ);
         if (!p->announced) {
@@ -803,6 +835,22 @@ cp80_dtr(UNUSED(serial_t *serial), int status, void *priv)
 
     pclog("CP80: COM%d DTR %s by the guest\n", p->port + 1,
           status ? "raised" : "dropped");
+}
+
+/* Plugged in or not.  Modem lines follow, because "no printer" should look to
+   the guest the way an unplugged one does and not merely go quiet. */
+static void
+cp80_wire(cp80_t *dev, int up)
+{
+    for (int i = 0; i < dev->nports; i++) {
+        serial_t *ser = dev->ports[i].serial;
+
+        if (ser == NULL)
+            continue;
+        serial_set_cts(ser, up);
+        serial_set_dsr(ser, up);
+        serial_set_dcd(ser, up);
+    }
 }
 
 static void
@@ -863,7 +911,8 @@ cp80_init(UNUSED(const device_t *info))
         return NULL;
     }
 
-    dev->enq_on = (device_get_config_int_ex("enq", 1) != 0);
+    dev->connected = 1;
+    dev->enq_on    = (device_get_config_int_ex("enq", 1) != 0);
     {
         const char *env = getenv("PEEPEEBOX_PRN_ENQ");
 

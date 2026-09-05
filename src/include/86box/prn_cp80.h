@@ -35,6 +35,13 @@ extern int prn_cp80_present(void);
    was looking. */
 #define PRN_CP80_PORT_BOTH 4
 
+/* Plugged in or not.  Unplugging stops the ENQ keepalive and drops CTS, DSR and
+   DCD, so the software goes back to offering "Connect the interfaces of the
+   Dataprint" instead of dropping straight into the print dialog -- which is the
+   only way to reach the rest of that menu once it can see a printer. */
+extern int  prn_cp80_connected(void);
+extern void prn_cp80_set_connected(int on);
+
 extern int  prn_cp80_port_setting(void);
 
 /* Takes effect on the next hard reset -- a serial attachment is made once, at

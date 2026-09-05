@@ -247,6 +247,15 @@ MainWindow::MainWindow(QWidget *parent)
         connect(paper_watch, &QTimer::timeout, this, [this]() {
             static bool shown = false;
 
+            /* A hard reset builds a new printer, which comes up plugged in.
+               The toolbar is what the user set, so it wins. */
+            if (prn_cp80_present()) {
+                const bool want = ui->actionPrinter_connected->isChecked();
+
+                if (want != (prn_cp80_connected() != 0))
+                    prn_cp80_set_connected(want ? 1 : 0);
+            }
+
             if (!shown) {
                 if (!prn_cp80_dirty())
                     return;
@@ -1658,6 +1667,16 @@ cp80_show(QWidget *parent)
 
     cp80_win->show();
     cp80_win->raise();
+}
+
+/* Unplugging is not cosmetic: it stops the ENQ keepalive and drops CTS, DSR and
+   DCD, so the guest sees what it would see with no cable.  That is the only way
+   back to the rest of the DATAPRINT menu, which drops straight into the print
+   dialog whenever it can find the unit. */
+void
+MainWindow::on_actionPrinter_connected_toggled(bool checked)
+{
+    prn_cp80_set_connected(checked ? 1 : 0);
 }
 
 void

@@ -103,6 +103,7 @@
     <addaction name="actionInsert_note_4"/>
     <addaction name="actionOperator_setup"/>
     <addaction name="actionCalibrate"/>
+    <addaction name="actionPrinter_connected"/>
     <addaction name="actionPrinter_paper"/>
     <addaction name="separator"/>
     <addaction name="actionSettings"/>
@@ -267,6 +268,7 @@
    <addaction name="actionInsert_note_4"/>
    <addaction name="actionOperator_setup"/>
    <addaction name="actionCalibrate"/>
+   <addaction name="actionPrinter_connected"/>
    <addaction name="actionPrinter_paper"/>
   </widget>
   <action name="actionHard_Reset">
@@ -473,6 +475,27 @@
    </property>
    <property name="toolTip">
     <string>The other button behind the cabinet door, on A1. From the menu the software answers it with a CRC check, which takes minutes. Whether it is also the touchscreen calibration somewhere else is not known.</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionPrinter_connected">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="checked">
+    <bool>true</bool>
+   </property>
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/plug.ico</normaloff>:/menuicons/qt/icons/plug.ico</iconset>
+   </property>
+   <property name="text">
+    <string>&amp;Dataprint connected</string>
+   </property>
+   <property name="toolTip">
+    <string>Unplug the Dataprint. With it connected the DATAPRINT menu goes straight to the print dialog, so this is how to reach the rest of that menu</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
