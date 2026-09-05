@@ -37,6 +37,12 @@ extern int prn_cp80_present(void);
    sees no cable rather than a device that has merely gone quiet, and the
    software goes back to offering "Connect the interfaces of the Dataprint". */
 extern int  prn_cp80_connected(void);
+
+/* Has the printer brought itself online since this was last asked?  It does that
+   when the guest programs the port, which MENU.EXE only does on the way into the
+   Dataprint -- so it means the operator has gone looking for the printer, and
+   the window should be on screen.  Reading it clears it. */
+extern int  prn_cp80_attention(void);
 extern void prn_cp80_set_connected(int on);
 
 /* Where it is listening, as text.  Always COM2 -- MENU.EXE programs 0x2F8 by

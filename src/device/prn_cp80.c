@@ -36,9 +36,8 @@
  *             not the framing above, which is funworld's own.
  *
  *             So nothing here skips data on a guess about which dialect those
- *             sequences belong to.  Every byte goes to cp80-raw.bin, every
- *             sequence is named in the trace beside the paper, and an
- *             unrecognised one costs a line rather than the payload.
+ *             sequences belong to.  Every control sequence is named in a trace,
+ *             and an unrecognised one costs a line rather than the payload.
  *
  * Authors:    The HUEG PP team.
  *
@@ -199,6 +198,13 @@ static cp80_t *cp80_inst = NULL;
    shows an empty state with a switch that does nothing -- which reads as broken
    rather than as "not on this machine". */
 static char cp80_why[96] = "";
+
+/* Set when the printer has brought itself online, so the UI can put the window
+   on screen.  Read-and-clear. */
+static int cp80_attention = 0;
+
+static int cp80_polls     = 0;   /* line status reads since the last tick */
+static int cp80_poll_show = 0;
 
 /* ------------------------------------------------------------- the buffers */
 
@@ -710,6 +716,15 @@ prn_cp80_present(void)
 static void cp80_wire(cp80_t *dev, int up);
 
 int
+prn_cp80_attention(void)
+{
+    const int a = cp80_attention;
+
+    cp80_attention = 0;
+    return a;
+}
+
+int
 prn_cp80_connected(void)
 {
     return (cp80_inst != NULL) && cp80_inst->connected;
@@ -908,6 +923,24 @@ cp80_enq_tick(void *priv)
     if (dev == NULL)
         return;
 
+    /* Reported before anything else returns.  Offline is exactly when the
+       interesting polling happens -- the guest is looking for a printer it
+       cannot find -- so a report that only runs when connected would measure
+       the one case nobody needs measured. */
+    if (cp80_poll_show) {
+        static int ticks = 0;
+
+        if (++ticks >= (int) (1000.0 / CP80_ENQ_MS)) {
+            ticks = 0;
+            if (cp80_polls > 0)
+                pclog("CP80-POLL: COM%d line status read %d times in the last "
+                      "second (printer %s)\n",
+                      dev->ports[0].port + 1, cp80_polls,
+                      dev->connected ? "online" : "offline");
+            cp80_polls = 0;
+        }
+    }
+
     /* Not while a reply is going out.  The guest's receive state stores every
        byte it sees until LF, so an ENQ landing mid-reply shifts byte 15 and the
        check fails on a reply that was otherwise right.  The gap is a few tens of
@@ -935,21 +968,38 @@ cp80_enq_tick(void *priv)
     timer_on_auto(&dev->enq, CP80_ENQ_MS * 1000.0);
 }
 
-/* The guest raising DTR is it opening the port.  That matters more than it
-   sounds: a run where DTR goes up on COM2 and not one byte follows says the
-   software found the port and is waiting for something from us, which is a
-   completely different problem from it looking at a port we are not on.  With
-   only the byte stream to go on, those two produce the same empty capture. */
+/* Coming online by itself, and how it knows when to.
+
+   The first attempt used the line control register: MENU.EXE programs the port
+   at 0x1D0E5 on its way to the Dataprint, so an LCR write looked like the
+   operator going looking for the printer.  It fires during a plain boot, so it
+   is not that signal, and this is being measured rather than guessed at a
+   second time.
+
+   What the Dataprint screen actually does is poll: read the line status, test
+   bit 0, and give up if nothing is waiting -- over and over for as long as the
+   dialog is open.  A spare UART with nothing on it has no other reason to be
+   read at all, so the *rate* of those reads should separate "the operator is on
+   that screen" from everything else.  pp_serial_lsr_read counts them and the
+   tick below reports the count, so the thresholds can come from a real run.
+
+   PEEPEEBOX_PRN_POLL=1 turns the reporting on; nothing acts on it yet. */
 static void
-cp80_dtr(UNUSED(serial_t *serial), int status, void *priv)
+cp80_lsr_read(int port)
 {
-    cp80_port_t *p = (cp80_port_t *) priv;
+    const cp80_t *dev = cp80_inst;
 
-    if (p == NULL)
-        return;
+    if ((dev != NULL) && (dev->nports > 0) && (port == dev->ports[0].port))
+        cp80_polls++;
+}
 
-    pclog("CP80: COM%d DTR %s by the guest\n", p->port + 1,
-          status ? "raised" : "dropped");
+static void
+cp80_lcr(UNUSED(serial_t *serial), void *priv, UNUSED(uint8_t data_bits))
+{
+    const cp80_port_t *p = (const cp80_port_t *) priv;
+
+    if ((p != NULL) && cp80_poll_show)
+        pclog("CP80-POLL: the guest programmed COM%d\n", p->port + 1);
 }
 
 /* Plugged in or not.  Modem lines follow, because "no printer" should look to
@@ -980,7 +1030,9 @@ cp80_attach(cp80_t *dev, int port)
     p->dev    = dev;
     p->port   = port;
     p->seen   = 0;
-    p->serial = serial_attach_ex_2(port, NULL, cp80_write, cp80_dtr, p);
+    /* lcr rather than dtr: attach_ex carries one or the other, and knowing
+       when the link is opened is worth more than knowing when DTR moved. */
+    p->serial = serial_attach_ex(port, NULL, cp80_write, NULL, cp80_lcr, p);
 
     if (p->serial == NULL) {
         pclog("CP80: COM%d is already taken; not listening there\n", port + 1);
@@ -1046,7 +1098,9 @@ cp80_init(UNUSED(const device_t *info))
        straight into the print dialog and there is no way back to the rest of
        it, so a cabinet that boots with the printer already connected is a
        cabinet whose operator menu you cannot use. */
-    dev->connected = 0;
+    dev->connected     = 0;
+    cp80_poll_show     = (getenv("PEEPEEBOX_PRN_POLL") != NULL);
+    pp_serial_lsr_read = cp80_lsr_read;
     cp80_wire(dev, 0);
     dev->enq_on    = (device_get_config_int_ex("enq", 1) != 0);
     {
@@ -1091,6 +1145,9 @@ cp80_close(void *priv)
 
     if (dev == NULL)
         return;
+
+    /* The UART keeps calling it otherwise, into a device that has gone. */
+    pp_serial_lsr_read = NULL;
 
     if (dev->lock != NULL)
         thread_close_mutex(dev->lock);

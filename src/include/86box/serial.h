@@ -125,6 +125,11 @@ typedef struct serial_port_s {
 
 extern serial_port_t com_ports[SERIAL_MAX];
 
+/* PeepeeBox: called on every read of a UART's line status register, with the
+   port index.  Set it to watch a guest poll a port that has nothing to say;
+   see src/device/prn_cp80.c.  NULL by default and free when unused. */
+extern void (*pp_serial_lsr_read)(int port);
+
 extern serial_t *serial_attach_ex(int port,
                                   void (*rcr_callback)(struct serial_s *serial, void *priv),
                                   void (*dev_write)(struct serial_s *serial, void *priv, uint8_t data),

@@ -52,6 +52,9 @@ enum {
 void    serial_update_ints(serial_t *dev);
 
 static int             next_inst = 0;
+
+/* PeepeeBox: see the line status register read. */
+void (*pp_serial_lsr_read)(int port) = NULL;
 static serial_device_t serial_devices[SERIAL_MAX];
 
 static void            serial_xmit_d_empty_evt(void *priv);
@@ -809,6 +812,15 @@ serial_read(uint16_t addr, void *priv)
             ret = dev->mctrl;
             break;
         case 5:
+            /* PeepeeBox: a guest reading the line status over and over is a
+               guest waiting for something to arrive.  The Dataprint's operator
+               screen does exactly that and nothing else on these images polls a
+               spare UART, so this is how the printer knows it has been asked
+               for.  A plain function pointer rather than another entry in
+               serial_device_s, because nothing else wants it and that struct is
+               shared with everything that has ever spoken serial. */
+            if (pp_serial_lsr_read != NULL)
+                pp_serial_lsr_read(dev->inst);
             ret = dev->lsr;
             if (dev->lsr & 0x1f)
                 dev->lsr &= ~0x1e;

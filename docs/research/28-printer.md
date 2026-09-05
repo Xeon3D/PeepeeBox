@@ -134,23 +134,58 @@ way back to the rest of it.
 - Sends `0x05` every 100 ms while connected, suppressed only while a reply is
   going out — the guest's receive state stores every byte until LF, so a stray
   ENQ mid-reply shifts byte 15.
-- Answers a frame's ETX with `"DATAPRINT V1.0 C\n"`, paced one byte per 1.5 ms
+- Answers a frame's ETX with `"DATAPRINT V1.0 C
+"`, paced one byte per 1.5 ms
   (about a byte time at 9600; the whole line at once overruns a UART with the
   FIFO off). The index of the `C` is checked at init and complains in the log if
   an edit moves it.
 - Unplugging drops CTS, DSR and DCD as well as stopping the keepalive, so the
   guest sees no cable rather than a device that has gone quiet.
 - **Stands down on I.G.O. 8**, whose dongle is a serial card reader on COM2.
-- Draws the paper rising out of a photograph of the machine, a line at a time at
-  about 2.5 lines a second — the link is forty times faster than the printer, so
-  without that the report appears in one blink.
-- Keeps a trace naming every control code, and writes every byte to
-  `cp80-raw.bin`. Neither is on screen any more; the trace goes to the log with
-  `PEEPEEBOX_PRN_TEST`.
 
 Nothing is skipped in bulk on a guess about a dialect. `PEEPEEBOX_PRN_PORT=1..4`
 moves the port for a run, `PEEPEEBOX_PRN_ENQ=0` silences the keepalive, and
 `PEEPEEBOX_PRN_TEST=<file>` replays a capture through the parser without booting.
+
+### The window
+
+The machine, photographed and painted, with the roll drawn on it rising out of
+the slot — twenty lines of paper and then the earliest ride out of sight, with a
+scrollbar inside the paper to get them back. It feeds a line every 400 ms, about
+what a 24-column impact printer of the period managed against a link forty times
+faster.
+
+The panel works: **ON LINE** connects and disconnects and lights the green lamp,
+**OFF LINE** lights red, and **FEED** advances the roll by a line — the printer's
+own paper feed, so it goes on the paper and not down the wire.
+
+### The 2008 reader had to move
+
+`igo8_reader_device` was attached on every image, on the grounds that no other
+generation talks to it. True, and beside the point: it *claimed* COM2 regardless,
+so on every generation but 2008 the printer found the port taken. It is now
+attached for 2008 images and for images that cannot be identified — an unreadable
+image keeps the old behaviour, because losing the dongle is worse than losing the
+printer.
+
+### Coming online by itself: not yet
+
+The intent is that opening the Dataprint in the operator menu brings the printer
+online and puts the paper on screen, so nobody has to find a switch. Two
+candidate signals have been measured and **both are wrong**:
+
+- **The LCR write.** MENU.EXE programs the port at `0x1D0E5` on its way to the
+  Dataprint, so an LCR write looked like the operator going looking. It fires
+  during a plain boot.
+- **Polling the line status.** The Dataprint screen reads the LSR in a tight
+  loop waiting for ENQ — but so does the menu. Sitting on the attract screen with
+  nothing touched, COM2's line status is read **22,757 times a second**, and the
+  rate is flat to within one count.
+
+So the software watches that port continuously, which is why the printer is
+found the instant it starts announcing. `PEEPEEBOX_PRN_POLL=1` reports the rate
+once a second; what is needed is a run that says whether the rate *changes* on
+the Dataprint screen, or another signal entirely.
 
 ## 6. The printer is a Seiko DPU-414
 

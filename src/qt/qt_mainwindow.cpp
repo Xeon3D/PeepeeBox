@@ -250,8 +250,14 @@ MainWindow::MainWindow(QWidget *parent)
         connect(paper_watch, &QTimer::timeout, this, [this]() {
             static bool shown = false;
 
-            if (!shown) {
-                if (!prn_cp80_dirty())
+            /* The printer brings itself online when the operator opens the
+               Dataprint; put the paper on screen when it does, and again on the
+               first byte, because a receipt that printed while nobody had the
+               window open is a run wasted. */
+            const bool wants = (prn_cp80_attention() != 0);
+
+            if (wants || !shown) {
+                if (!wants && !prn_cp80_dirty())
                     return;
                 shown = true;
                 cp80_show(this);
