@@ -1218,11 +1218,11 @@ prn_cp80_where(char *out, size_t len)
         snprintf(out, len, "%s", cp80_why[0] ? cp80_why : "No printer attached");
         return;
     }
-    if (dev->nports == 1)
-        snprintf(out, len, "COM%d", dev->ports[0].port + 1);
-    else
-        snprintf(out, len, "COM%d and COM%d",
-                 dev->ports[0].port + 1, dev->ports[1].port + 1);
+    /* One port, since the port stopped being a choice.  There was a branch here
+       naming two, left over from listening on COM1 and COM2 at once while it was
+       still open which one the software used -- unreachable with CP80_PORTS_MAX
+       at 1, and the compiler was right to say the index was out of bounds. */
+    snprintf(out, len, "COM%d", dev->ports[0].port + 1);
 }
 
 int
