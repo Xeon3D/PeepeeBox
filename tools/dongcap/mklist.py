@@ -13,7 +13,13 @@ on the hardware instead of guessing it.  Those come from buffers whose plaintext
 I.G.O. 2 and 3 from the harvested pairs, Photo Play 2001 from its PCX header, which is the
 same for every entry.
 
-    python mklist.py 2001|igo2|igo3 <HardDisk.img> [out.lst]
+Buffers are de-duplicated: the keyed round is deterministic and the tool restarts it
+per round, so an input that appears twice would cost hardware time for an answer we
+already have.  Several images may be listed at once and the union is emitted, which
+is how one capture covers a whole generation -- all eight I.G.O. 2 territories carry
+byte-identical photo archives, so any one of them stands in for the rest.
+
+    python mklist.py 2001|igo2|igo3 <HardDisk.img> [HardDisk.img ...] [-o out.lst]
 """
 import os
 import struct
@@ -133,36 +139,52 @@ def main():
     if len(sys.argv) < 3:
         raise SystemExit(__doc__)
     gen = sys.argv[1].lower()
-    img = sys.argv[2]
-    outp = sys.argv[3] if len(sys.argv) > 3 else 'DONGCAP.LST'
+    args = sys.argv[2:]
+    outp = 'DONGCAP.LST'
+    if '-o' in args:
+        i = args.index('-o')
+        outp = args[i + 1]
+        del args[i:i + 2]
+    elif len(args) > 1 and args[-1].lower().endswith('.lst'):
+        outp = args.pop()
+    imgs = args
+    if not imgs:
+        raise SystemExit(__doc__)
 
-    work = []
-    for path in ARCHIVES:
-        try:
-            d = wad.read(img, path)
-        except Exception:
-            d = None
-        if not d:
-            print('  %-28s absent' % path)
-            continue
-        es = wad.entries(d)
-        if not es:
-            print('  %-28s not a GWAD' % path)
-            continue
-        heads = {bytes(d[o:o + 8]) for _, o, _s in es[:40]}
-        if len(heads) > 1:
-            print('  %-28s %d entries, first blocks differ -- not this cipher, skipped'
-                  % (path, len(es)))
-            continue
-        n = 0
-        for _, off, size in es:
-            for b in range(0, size, BUF):
-                if size - b < 64:
-                    continue
-                c0, c1 = struct.unpack_from('<II', d, off + b)
-                work.append(a_rounds(c0, c1))
-                n += 1
-        print('  %-28s %d entries, %d buffers' % (path, len(es), n))
+    seen = {}                                  # insertion-ordered, so it is the list
+    for img in imgs:
+        if len(imgs) > 1:
+            print('%s' % img)
+        for path in ARCHIVES:
+            try:
+                d = wad.read(img, path)
+            except Exception:
+                d = None
+            if not d:
+                print('  %-28s absent' % path)
+                continue
+            es = wad.entries(d)
+            if not es:
+                print('  %-28s not a GWAD' % path)
+                continue
+            heads = {bytes(d[o:o + 8]) for _, o, _s in es[:40]}
+            if len(heads) > 1:
+                print('  %-28s %d entries, first blocks differ -- not this cipher, skipped'
+                      % (path, len(es)))
+                continue
+            n = new = 0
+            for _, off, size in es:
+                for b in range(0, size, BUF):
+                    if size - b < 64:
+                        continue
+                    c0, c1 = struct.unpack_from('<II', d, off + b)
+                    k = a_rounds(c0, c1)
+                    n += 1
+                    if k not in seen:
+                        seen[k] = True
+                        new += 1
+            print('  %-28s %d entries, %d buffers, %d new' % (path, len(es), n, new))
+    work = list(seen)
 
     if not work:
         raise SystemExit('nothing to capture')
@@ -173,7 +195,7 @@ def main():
         print('  boot check: EncodeData over %d bytes at DS:0x50F6 -> 1 block'
               % len(IGO3_BOOT))
 
-    cal = calibration(gen, img)
+    cal = calibration(gen, imgs[0])
     print('  calibration pairs: %d' % len(cal))
     for a, b in cal:
         print('     f(%08X) = %08X' % (a, b))

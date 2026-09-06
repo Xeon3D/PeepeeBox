@@ -58,6 +58,19 @@ typedef LONG (WINAPI *PFN_NTSIP)(HANDLE, ULONG, PVOID, ULONG);
 static unsigned short g_base = 0x378;
 static unsigned char  g_seed = 0;
 
+/* Each keyed round consults the part forty times.  Those bits are direct observations of
+   the byte-to-bit oracle, which the composite outputs cannot give -- see the header of
+   mkdongcap_dos.py.  Staged here, five bytes per round, MSB first. */
+static unsigned char  g_bits[5];
+static int            g_bitn = 0;
+
+static void putbit(unsigned char b)
+{
+    if (g_bitn < 40)
+        g_bits[g_bitn >> 3] |= (unsigned char) ((b & 1) << (7 - (g_bitn & 7)));
+    g_bitn++;
+}
+
 /* ------------------------------------------------------------------ port */
 
 static void outp8(unsigned short port, unsigned char val)
@@ -121,13 +134,18 @@ static unsigned int keyed_round(unsigned int v)
     unsigned char prev;
     int k;
 
+    for (k = 0; k < 5; k++)
+        g_bits[k] = 0;
+    g_bitn = 0;
     preamble();
     prev = query((unsigned char) (v & 0xFF));
+    putbit(prev);
     for (k = 1; k <= 39; k++) {
         unsigned int idx = (unsigned int) ((prev & 1) | ((v & 1) << 1));
 
         v = ((idx ^ v) & 1) ? ((v >> 1) ^ POLY) : (v >> 1);
         prev = query((unsigned char) ((v >> (8 * idx)) & 0xFF));
+        putbit(prev);
     }
     return v;
 }
@@ -235,6 +253,7 @@ void __stdcall start(void)
     unsigned char *lst;
     unsigned int *hdr, count, ncal, nenc, i;
     unsigned int *cal, *work, *enc, *out;
+    unsigned char *bits, *bp;
     int seed;
     DWORD t0 = 0;
     char *cmd;
@@ -364,6 +383,9 @@ void __stdcall start(void)
     /* --- capture --- */
     out = (unsigned int *) VirtualAlloc(NULL, ((count + nenc) * 2 + 8) * 4,
                                         MEM_COMMIT, PAGE_READWRITE);
+    bits = (unsigned char *) VirtualAlloc(NULL, ((count + nenc) * 2 + 2) * 5,
+                                          MEM_COMMIT, PAGE_READWRITE);
+    bp = bits;
     out[0] = OUT_MAGIC;
     out[1] = count;
     out[2] = (unsigned int) seed;
@@ -375,13 +397,43 @@ void __stdcall start(void)
         unsigned int L1 = work[i * 2];
         unsigned int R1 = work[i * 2 + 1];
         unsigned int f1 = keyed_round(L1);
-        unsigned int L3 = b_rounds_first(f1 ^ R1, L1);
-        unsigned int f2 = keyed_round(L3);
+        unsigned int L3, f2, j;
+
+        for (j = 0; j < 5; j++)
+            *bp++ = g_bits[j];
+        L3 = b_rounds_first(f1 ^ R1, L1);
+        f2 = keyed_round(L3);
+        for (j = 0; j < 5; j++)
+            *bp++ = g_bits[j];
 
         out[4 + i * 2]     = f1;
         out[4 + i * 2 + 1] = f2;
         if ((i & 511) == 0)
             say(".");
+    }
+
+    /* The encode direction starts from the plaintext instead of the ciphertext, so the
+       two keyed inputs are found in the opposite order: L3 is the plaintext's second
+       dword outright, and L1 falls out of the ascending B rounds once its answer is in
+       hand.  They are stored in the same slots as above -- f1 is L1's answer, f2 is
+       L3's -- so a consumer reads both kinds of entry the same way. */
+    for (i = 0; i < nenc; i++) {
+        unsigned int P0 = enc[i * 2];
+        unsigned int P1 = enc[i * 2 + 1];
+        unsigned int L3 = P1;
+        unsigned int f2 = keyed_round(L3);
+        unsigned int R3, L1, f1, j;
+
+        for (j = 0; j < 5; j++)
+            *bp++ = g_bits[j];
+        R3 = P0 ^ f2;
+        L1 = b_rounds_fwd_second(L3, R3);
+        f1 = keyed_round(L1);
+        for (j = 0; j < 5; j++)
+            *bp++ = g_bits[j];
+
+        out[4 + (count + i) * 2]     = f1;
+        out[4 + (count + i) * 2 + 1] = f2;
     }
     say("\r\n");
 
@@ -395,11 +447,21 @@ void __stdcall start(void)
     WriteFile(h, out, ((count + nenc) * 2 + 4) * 4, &wrote, NULL);
     CloseHandle(h);
 
-    say("Done -- DONGCAP.BIN written, ");
+    h = CreateFileA("DONGCAP.BIT", GENERIC_WRITE, 0, NULL,
+                    CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        say("cannot create DONGCAP.BIT\r\n");
+        finish();
+        ExitProcess(1);
+    }
+    WriteFile(h, bits, (DWORD) (bp - bits), &wrote, NULL);
+    CloseHandle(h);
+
+    say("Done -- DONGCAP.BIN and DONGCAP.BIT written, ");
     saynum((count + nenc) * 2);
     say(" rounds captured in ");
     saynum((GetTickCount() - t0) / 1000);
-    say(" seconds. Send DONGCAP.BIN back.\r\n");
+    say(" seconds. Send both back.\r\n");
     finish();
     ExitProcess(0);
 }
