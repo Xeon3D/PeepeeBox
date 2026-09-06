@@ -203,7 +203,15 @@ OFFLINE (§2.11). The ONLINE and OFFLINE lamps are simply lit or not.
 flat, so no arithmetic on the adapter's 6.5 V / 2 A is needed. It pauses while
 printing and resumes after, and the printer will not charge with the power off —
 all three are the manual's. `PEEPEEBOX_PRN_CHARGE=<minutes>` shortens it for
-testing, since nobody will sit through ten hours.
+testing, since nobody will sit through ten hours. The rate is constant, so
+charging from 60% takes about four hours rather than ten — ten is from flat,
+which is what the manual quotes.
+
+There is also a **pack slider** in the window, which is a test control and says
+so: the pack takes 3000 lines to run down and ten hours to fill, and neither is
+a thing to sit through while checking what a threshold looks like. It follows the
+pack when the pack moves on its own, and setting it by hand stops any charge in
+progress — dragging a slider is not connecting an adapter.
 
 **The pack persists** in `nvr/dpu414.nvr` beside the machine's own nvram, written
 at most every couple of seconds while it moves. A pack that starts full every
@@ -212,8 +220,15 @@ put back, which cannot be felt if closing the window undoes it. Missing or
 unreadable means a new pack, full. Text, because it is one number and reading it
 with an editor is worth more than four saved bytes.
 
-**The panel**: the Power LED is a lens in the front edge at x 41..65, y 411..414,
-not on the top panel. The Power *switch* is on the left-hand side of the machine
+**The Power LED blinks below 60%** — the same threshold at which the ink goes
+white, since both are `CP80_BATT_FLAT`. Once a second while charging, about twice
+a second when low, steady otherwise.
+
+**The panel**: the Power LED is a lens in the front edge, the dark bar measuring
+x 41..66 by y 411..414 — four pixels tall, which is why it is given as edges
+rather than an origin and a size. `CP80_SCALE(x) + CP80_SCALE(w)` rounds twice
+and the second rounding pushed the lit bar outside a lens that thin; differencing
+two scaled edges rounds once and stays inside. The Power *switch* is on the left-hand side of the machine
 and so is not in the photograph at all, which is why it is a labelled button in
 the row below rather than an invisible one on the picture. **Charge batteries**
 appears beside it once the pack is low.

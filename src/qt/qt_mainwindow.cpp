@@ -105,6 +105,7 @@ extern bool fast_forward;
 #include <QFile>
 #include <QFontDatabase>
 #include <QScrollBar>
+#include <QSlider>
 #include <QPixmap>
 #include <QPainter>
 #include <QGridLayout>
@@ -1573,15 +1574,19 @@ static size_t   cp80_paper_at = 0;
 #define CP80_LED_H       6
 
 /* The Power LED is not on the panel: it is a lens in the front edge, below and
-   left of the buttons.  Measured at x 41..65 by y 411..414, inset by a pixel.
+   left of the buttons.  The dark bar measures x 41..66 by y 411..414 -- four
+   pixels tall, which is why it is given as edges rather than as an origin and a
+   size.  CP80_SCALE(x) + CP80_SCALE(w) rounds twice and the second rounding
+   pushed the lit bar outside a lens this thin; differencing two scaled edges
+   rounds once and stays inside it.
 
    The Power *switch* is on the left-hand side of the machine and so is not in
    this photograph at all, which is why it is a labelled button in the row below
    rather than an invisible one on the picture. */
-#define CP80_LED_PWR_X  42
-#define CP80_LED_PWR_Y 411
-#define CP80_LED_PWR_W  23
-#define CP80_LED_PWR_H   4
+#define CP80_LED_PWR_X0  42
+#define CP80_LED_PWR_X1  65
+#define CP80_LED_PWR_Y0 411
+#define CP80_LED_PWR_Y1 415
 
 #define CP80_HEAD_W   460
 #define CP80_SCALE(v) (((v) * CP80_HEAD_W) / CP80_IMG_W)
@@ -1632,6 +1637,8 @@ static int          cp80_blink    = 0;       /* CP80_BLINK_MS ticks, for the LED
 static QPushButton *cp80_replace  = nullptr;
 static QPushButton *cp80_pwr_btn  = nullptr;
 static QTimer      *cp80_blink_t  = nullptr;
+static QSlider     *cp80_batt_sl  = nullptr;   /* testing only */
+static QLabel      *cp80_batt_lbl = nullptr;
 
 /* The battery level each printed line was printed at.  One entry per line of
    cp80_printed, because the fade belongs to the line and not to the printer: a
@@ -1845,9 +1852,11 @@ cp80_render()
             pwr_lit = ((cp80_blink / 2) & 1) == 0;
 
         if (pwr_lit) {
-            const QRect pwr(CP80_SCALE(CP80_LED_PWR_X),
-                            -top + CP80_SCALE(CP80_LED_PWR_Y),
-                            CP80_SCALE(CP80_LED_PWR_W), CP80_SCALE(CP80_LED_PWR_H));
+            const int x0 = CP80_SCALE(CP80_LED_PWR_X0);
+            const int y0 = CP80_SCALE(CP80_LED_PWR_Y0);
+            const QRect pwr(x0, -top + y0,
+                            CP80_SCALE(CP80_LED_PWR_X1) - x0,
+                            CP80_SCALE(CP80_LED_PWR_Y1) - y0);
 
             g.setBrush(QColor(0x35, 0xd0, 0x4a));
             g.drawRect(pwr);
@@ -1872,6 +1881,20 @@ cp80_render()
     if (cp80_pwr_btn != nullptr)
         cp80_pwr_btn->setText(cp80_power ? QObject::tr("Power: on")
                                          : QObject::tr("Power: off"));
+
+    /* The slider follows the pack when the pack moves on its own; blocked so
+       that following it does not read back as the user having dragged it. */
+    if (cp80_batt_sl != nullptr) {
+        const int want = int(cp80_batt + 0.5);
+
+        if (cp80_batt_sl->value() != want) {
+            cp80_batt_sl->blockSignals(true);
+            cp80_batt_sl->setValue(want);
+            cp80_batt_sl->blockSignals(false);
+        }
+    }
+    if (cp80_batt_lbl != nullptr)
+        cp80_batt_lbl->setText(QObject::tr("Pack %1%").arg(cp80_batt, 0, 'f', 1));
 
     g.end();
     cp80_view->setPixmap(out);
@@ -2163,11 +2186,40 @@ cp80_show(QWidget *parent)
                                      QObject::tr("Could not write %1").arg(to));
         });
 
+        /* Testing only: the pack takes 3000 lines to run down and ten hours to
+           charge, and neither is a thing to sit through while checking what a
+           threshold looks like.  Dragging this is not something the machine can
+           do, so it says so. */
+        cp80_batt_lbl = new QLabel(cp80_win);
+        cp80_batt_lbl->setEnabled(false);
+
+        cp80_batt_sl = new QSlider(Qt::Horizontal, cp80_win);
+        cp80_batt_sl->setRange(0, 100);
+        cp80_batt_sl->setValue(int(cp80_batt + 0.5));
+        cp80_batt_sl->setFixedWidth(140);
+        cp80_batt_sl->setToolTip(QObject::tr(
+            "Test control: set the pack level directly. The machine drains it a "
+            "line at a time and charges it over ten hours."));
+
+        QObject::connect(cp80_batt_sl, &QSlider::valueChanged, cp80_win, [](int v) {
+            cp80_batt       = double(v);
+            cp80_batt_dirty = true;
+            cp80_charging   = false;      /* dragging it is not charging it */
+            if (cp80_feed != nullptr)
+                cp80_feed->setInterval(int(CP80_LINE_MS
+                                           + ((CP80_LINE_MS_FLAT - CP80_LINE_MS)
+                                              * cp80_fade_at(cp80_batt))));
+            cp80_batt_store();
+            cp80_render();
+        });
+
         auto *row = new QHBoxLayout;
 
         row->addWidget(cp80_pwr_btn);
         row->addWidget(cp80_replace);
         row->addStretch(1);
+        row->addWidget(cp80_batt_lbl);
+        row->addWidget(cp80_batt_sl);
         row->addWidget(tear);
         row->addWidget(save);
 
