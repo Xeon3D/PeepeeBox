@@ -1888,6 +1888,31 @@ cp80_show(QWidget *parent)
 
         cp80_render();
         cp80_win->resize(CP80_HEAD_W + 60, CP80_HEAD_H + 320);
+
+        /* Beside the cabinet rather than on top of it: the printer stood next
+           to the machine and the paper is meant to be watched while the guest
+           is doing something.  Only on the first show -- after that it is
+           wherever it was put. */
+        if (parent != nullptr) {
+            QWidget      *top   = parent->window();
+            const QRect   g     = top->frameGeometry();
+            const QScreen *scr   = QGuiApplication::screenAt(g.center());
+            const QRect   avail = (scr != nullptr) ? scr->availableGeometry()
+                                : QGuiApplication::primaryScreen()->availableGeometry();
+            const QSize   sz    = cp80_win->size();
+
+            int x = g.right() + 8;
+            int y = g.top();
+
+            /* No room on the right; try the left before shoving it off the
+               edge of the desktop. */
+            if ((x + sz.width()) > avail.right())
+                x = g.left() - sz.width() - 8;
+            x = qBound(avail.left(), x, qMax(avail.left(), avail.right() - sz.width()));
+            y = qBound(avail.top(), y, qMax(avail.top(), avail.bottom() - sz.height()));
+
+            cp80_win->move(x, y);
+        }
     }
 
     cp80_win->show();
