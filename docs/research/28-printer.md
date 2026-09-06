@@ -223,8 +223,14 @@ resumed by itself would be a surprise.
 
 **Whenever the adapter is plugged in the print is black**, whatever the pack is
 at: 6.5 V at 2 A is more than the pack ever delivers, so the head is driven
-properly and runs at full speed too. Unplug it and the pack dictates the ink
-again.
+properly and runs at full speed too. **Printing on the adapter costs the pack
+nothing** — a full pack on the mains stays full. Unplug it and the pack dictates
+the ink again.
+
+Those are two separate rules and both hold: being plugged in does not let it
+print below 5%, it only means that what it *does* print is not coming out of the
+battery. So a pack at 4% with the adapter in charges up to 5%, prints black
+without draining, and the charge resumes when the job finishes.
 
 That is why the fade is stored **per line** rather than read from the pack when
 the paper is drawn. A receipt half printed on the adapter and half on the pack

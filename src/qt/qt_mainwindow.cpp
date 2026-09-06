@@ -1780,7 +1780,11 @@ cp80_batt_spend(const QString &line)
             cells += 1.0;
     }
 
-    if (cp80_batt > 0.0) {
+    /* Not on the adapter: the head is running off the mains, so printing costs
+       the pack nothing and a full pack stays full.  The gate below is separate
+       and still applies -- being plugged in does not let it print under 5%, it
+       only means that what it does print does not come out of the battery. */
+    if ((cp80_batt > 0.0) && !cp80_ac) {
         cp80_batt -= (cells / CP80_BATT_CHARS) * CP80_BATT_FULL * cp80_drain;
         if (cp80_batt < 0.0)
             cp80_batt = 0.0;
