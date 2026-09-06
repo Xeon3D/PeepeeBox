@@ -203,8 +203,25 @@ static char cp80_why[96] = "";
    on screen.  Read-and-clear. */
 static int cp80_attention = 0;
 
+/* How hard the guest polls COM2's line status, which is how the printer knows
+   the operator has gone looking for it.  Measured on I.G.O. 6:
+
+       attract screen, nothing touched   22,757 -- 22,758 reads/second
+       after the operator setup button   29,839 -- 29,840 reads/second
+
+   Flat to within one count either side, so the threshold sits between them with
+   room to spare.  Both are counted against an emulated-time tick, so the ratio
+   does not move with the speed of the host.
+
+   Two seconds of it before acting, because the second in which the screen
+   changes reads low -- 2,242 then 17,992 in that run -- and a threshold crossed
+   once on the way past is not a screen being opened. */
+#define CP80_POLL_BUSY 26000
+#define CP80_POLL_SECS 2
+
 static int cp80_polls     = 0;   /* line status reads since the last tick */
 static int cp80_poll_show = 0;
+static int cp80_busy_secs = 0;
 
 /* ------------------------------------------------------------- the buffers */
 
@@ -927,16 +944,31 @@ cp80_enq_tick(void *priv)
        interesting polling happens -- the guest is looking for a printer it
        cannot find -- so a report that only runs when connected would measure
        the one case nobody needs measured. */
-    if (cp80_poll_show) {
+    {
         static int ticks = 0;
 
         if (++ticks >= (int) (1000.0 / CP80_ENQ_MS)) {
             ticks = 0;
-            if (cp80_polls > 0)
+
+            if (cp80_poll_show && (cp80_polls > 0))
                 pclog("CP80-POLL: COM%d line status read %d times in the last "
                       "second (printer %s)\n",
                       dev->ports[0].port + 1, cp80_polls,
                       dev->connected ? "online" : "offline");
+
+            /* Busy enough for long enough, and not already on: the operator has
+               gone looking for the printer, so stop making them find a switch. */
+            if (dev->connected || (cp80_polls < CP80_POLL_BUSY))
+                cp80_busy_secs = 0;
+            else if (++cp80_busy_secs >= CP80_POLL_SECS) {
+                cp80_busy_secs = 0;
+                pclog("CP80: COM%d polled %d times a second; the operator is "
+                      "looking for the printer, coming online\n",
+                      dev->ports[0].port + 1, cp80_polls);
+                prn_cp80_set_connected(1);
+                cp80_attention = 1;
+            }
+
             cp80_polls = 0;
         }
     }
@@ -983,7 +1015,8 @@ cp80_enq_tick(void *priv)
    that screen" from everything else.  pp_serial_lsr_read counts them and the
    tick below reports the count, so the thresholds can come from a real run.
 
-   PEEPEEBOX_PRN_POLL=1 turns the reporting on; nothing acts on it yet. */
+   PEEPEEBOX_PRN_POLL=1 reports the rate every second, which is how the numbers
+   at CP80_POLL_BUSY were got and how to check them against another image. */
 static void
 cp80_lsr_read(int port)
 {

@@ -167,24 +167,46 @@ attached for 2008 images and for images that cannot be identified — an unreada
 image keeps the old behaviour, because losing the dongle is worse than losing the
 printer.
 
-### Coming online by itself: not yet
+### Coming online by itself
 
-The intent is that opening the Dataprint in the operator menu brings the printer
-online and puts the paper on screen, so nobody has to find a switch. Two
-candidate signals have been measured and **both are wrong**:
+Opening the Dataprint brings the printer online and puts the paper on screen, so
+nobody has to find a switch. Getting there took two wrong signals and one
+measurement.
 
-- **The LCR write.** MENU.EXE programs the port at `0x1D0E5` on its way to the
-  Dataprint, so an LCR write looked like the operator going looking. It fires
-  during a plain boot.
-- **Polling the line status.** The Dataprint screen reads the LSR in a tight
-  loop waiting for ENQ — but so does the menu. Sitting on the attract screen with
-  nothing touched, COM2's line status is read **22,757 times a second**, and the
-  rate is flat to within one count.
+**Not the LCR write.** MENU.EXE programs the port at `0x1D0E5` on its way to the
+Dataprint, so an LCR write looked like the operator going looking. It fires
+during a plain boot.
 
-So the software watches that port continuously, which is why the printer is
-found the instant it starts announcing. `PEEPEEBOX_PRN_POLL=1` reports the rate
-once a second; what is needed is a run that says whether the rate *changes* on
-the Dataprint screen, or another signal entirely.
+**Not polling as such.** The Dataprint screen reads the line status in a tight
+loop waiting for ENQ — but so does the attract screen. The software watches that
+port continuously, which is also why the printer is found the instant it starts
+announcing.
+
+**The rate, though, separates them.** `pp_serial_lsr_read` in `serial.c` counts
+reads of a UART's line status; on I.G.O. 6:
+
+| | reads/second |
+|---|---|
+| attract screen, nothing touched | 20,077–20,078, or 22,757–22,758 |
+| after the operator setup button | 29,839–29,840 |
+
+Each is flat to within one count for as long as the screen is up, and the two
+idle figures came from different runs of the same image — so the *baseline*
+moves between runs while the busy figure did not. `CP80_POLL_BUSY` is 26,000,
+which clears the highest idle seen by about 14%. Two consecutive seconds are
+required, because the second in which the screen changes reads low (2,242 then
+17,992 in that run) and a threshold crossed once on the way past is not a screen
+being opened.
+
+Counted against an emulated-time tick, so the ratio does not move with the speed
+of the host. `PEEPEEBOX_PRN_POLL=1` reports the rate every second, which is how
+those numbers were got and how to check them against another image.
+
+**What this does not yet distinguish** is the operator setup from the Dataprint
+screen within it — the rate rose on the setup button and no separate figure has
+been taken for the Dataprint dialog. So the printer comes online on entering the
+setup, one step earlier than asked for. Harmless, and the ON LINE button
+overrides it either way, but it is an approximation and not the thing itself.
 
 ## 6. The printer is a Seiko DPU-414
 
