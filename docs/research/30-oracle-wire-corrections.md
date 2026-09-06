@@ -169,7 +169,7 @@ times (`notes/HANDOFF2001.md` § 10.4, `0x3664D`). In this capture the run lengt
 is what makes the protocol legible at all; 155,538 framing accesses become 43,617 logical
 ones.
 
-### 8.2 Two phases, and no 0x80
+### 8.2 Two phases, and no 0x80  -- SUPERSEDED, see section 9.1
 
 The picture path, at guest sites `3372:1C1E` then `3372:07E8` / `3372:394D`:
 
@@ -207,6 +207,82 @@ byte sequence have not been mapped onto `HaspDecodeBlock`'s inputs, and no `f` v
 been checked against phase 26's `f(504EF2AE) = 32FC6611`. That is the next piece of work,
 and for the first time it can be done against recorded hardware behaviour instead of a
 model.
+
+## 9. The round is confirmed, the preamble is recovered, and § 8.2 was wrong
+
+Continuing from § 8, on the same capture.
+
+### 9.1 Correction: the query framing was right all along
+
+§ 8.2 said "none of these writes has bit 7 set" and concluded the tools used the wrong
+writer. **That is wrong.** It was read off phase 1 (guest site `3372:1C1E`), which is a
+different phase of the transaction. The keyed round's queries live at
+`3372:3457 / 346B / 347C` with the answer read at `3372:2CD5`, and they look like this:
+
+```
+   3457  AC      payload
+   346B  BC      payload | 0x10   -- the clock
+   347C  AC      payload
+   2CD5  r58     answer, bit 5
+```
+
+Every payload has bit 7 set. The framing is exactly `0x32f59`'s and exactly what
+`dongcap` emits. § 8.2's diagnosis should be disregarded; the rest of § 8 stands.
+
+### 9.2 The keyed round reproduces phase 26 on hardware
+
+4,720 query groups, in **118 runs of exactly 40** -- 118 keyed rounds, 59 buffers.
+Replaying the documented walk over the captured answers, and checking at every step that
+the payload the model would emit equals the payload actually on the wire:
+
+```
+run 0:  f(504EF2AE) = 32FC6611   expected 32FC6611   MATCH
+run 1:  f(012C6137) = DF57708B   expected DF57708B   MATCH
+```
+
+Both of phase 26's offline-solved values, reproduced by the part itself, with all 40
+payloads matching in each run. So the LFSR walk, the index selection
+`(prev & 1) | ((v & 1) << 1)`, the polynomial `0x80500062` and the byte selection
+`(v >> (8*idx)) & 0xFF` are **confirmed against hardware**. The round was never the
+problem.
+
+### 9.3 The preamble, which is what was missing
+
+Identical before all 118 rounds:
+
+```
+   B4 B5 B4          cmdbyte(0x34)     bit 0 clocked
+   FC FD FC          cmdbyte(0x7C)
+   CE CF CE          cmdbyte(0x4E)
+   (84 A4 84) x16    sixteen SK pulses -- bit 5 clocked, DI (bit 6) low
+   CE CF CE          cmdbyte(0x4E)
+   [40 queries]
+```
+
+Cooked bytes decode by `(b & 0xFE) | 0x80`, so `B4 -> 0x34`, `FC -> 0x7C`, `CE -> 0x4E`,
+`84 -> 0x04`. The `x16` pulses clock on **bit 5**, which § 16.1 identifies as SK, not on
+bit 0 like a command byte -- two different clocks in one preamble.
+
+Against this, `dongcap` opens with `cmdbyte(seed), cmdbyte(0x4E), raw(0x84)`. It is missing
+two of the three command bytes and all sixteen clock pulses, and it sweeps a seed byte that
+does not exist: the first command is a constant `0x34`. **That is why 256 seeds x 20 frame
+variants never moved a line** -- the part was never taken through its opening sequence, so
+it never reached the state where a query means anything.
+
+The sixteen pulses are almost certainly the part clocking out something the library
+discards, or a fixed setup interval; nothing here proves which, and the count is constant
+across every round in the capture.
+
+### 9.4 What this makes possible
+
+`dongcap` needs its `preamble()` replaced by the sequence above and its seed sweep deleted.
+With that, a capture run against the real part should reproduce `32FC6611` at calibration
+and then simply work -- which is the whole of what `capture-igo2/` was built for, and it
+would give I.G.O. 2 its photos without the cipher being broken at all.
+
+Not done here, and worth saying plainly: the tools have **not** been changed to match, and
+nothing in § 9.3 has been re-tested by driving the part from a tool rather than watching the
+game do it.
 
 Related: `docs/research/20` § 3, `notes/HANDOFF2001.md` §§ 16, 20, 23-24,
 `tools/dongcap/`.

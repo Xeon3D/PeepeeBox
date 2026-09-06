@@ -16,12 +16,23 @@
  *   query q        : payload = ((q<<1)&0x0E) | ((q<<2)&0x60) | 0x80
  *                    write payload, payload|0x10, payload             -- DATA bit 4 clocks
  *                    answer = STATUS bit 5
- *   round preamble : command(seed), command(0x4E), write 0x84
+ *   round preamble : cmdbyte(0x34), cmdbyte(0x7C), cmdbyte(0x4E),
+ *                    sixteen SK pulses (0x84 with bit 5 clocked, not bit 0),
+ *                    cmdbyte(0x4E)
  *
- * The seed byte never resolved from the binaries, so it is not guessed: the .LST carries
- * (input, expected output) pairs recovered offline from known plaintext, and every seed
- * is tried until one reproduces them all.  If none does, that failure is the finding and
- * DONGCAP.DIAG records what the part answered instead.
+ * The preamble is not guesswork any more.  It was read straight off the wire while the
+ * game itself drove the part, through PeepeeBox with the LPT passed through to real
+ * hardware -- identical before all 118 rounds of that capture.  See docs/research/30
+ * section 9.3.
+ *
+ * What was here before opened with cmdbyte(seed), cmdbyte(0x4E), raw(0x84) and swept all
+ * 256 seeds looking for one the part answered to.  There is no seed: the opening command
+ * is the constant 0x34, and two command bytes plus sixteen clock pulses were missing.
+ * That is why 256 seeds against 20 frame variants never moved a status line.
+ *
+ * The .LST's (input, expected output) pairs are now a check rather than a search: a part
+ * answering wrongly and a part not answering look identical downstream, so the run still
+ * verifies before it records, and still writes DONGCAP.DIAG if it fails.
  *
  * Build:  cc -O2 -o dongcap dongcap_linux.c
  * Run:    sudo ./dongcap [base]        base in hex, default 378
@@ -46,6 +57,19 @@
 
 static unsigned g_base = 0x378;
 static unsigned char g_seed;
+
+/* Each keyed round consults the part forty times.  Those bits are direct observations of
+   the byte-to-bit oracle, which is what the composite outputs cannot give -- see the
+   header of mkdongcap_dos.py.  Staged here, five bytes per round, MSB first. */
+static unsigned char g_bits[5];
+static int g_bitn;
+
+static void putbit(unsigned char b)
+{
+    if (g_bitn < 40)
+        g_bits[g_bitn >> 3] |= (unsigned char) ((b & 1) << (7 - (g_bitn & 7)));
+    g_bitn++;
+}
 
 /* ------------------------------------------------------------------ port */
 
@@ -73,11 +97,36 @@ static unsigned char query(unsigned char q)
     return (unsigned char) ((inb(g_base + 1) >> 5) & 1);
 }
 
+/* One SK pulse: the clock here is DATA bit 5, not bit 0 as in a command byte.
+   docs/research/30 section 9.3 -- the preamble uses both clocks. */
+static void sk_pulse(void)
+{
+    raw(0x84);
+    raw(0x84 | 0x20);
+    raw(0x84);
+}
+
+/* The real preamble, read straight off the wire while the game drove the part
+   (docs/research/30 section 9.3).  Identical before all 118 captured rounds:
+
+        cmdbyte(0x34)  cmdbyte(0x7C)  cmdbyte(0x4E)
+        sixteen SK pulses
+        cmdbyte(0x4E)
+
+   What was here before -- cmdbyte(seed), cmdbyte(0x4E), raw(0x84) -- was missing two
+   command bytes and all sixteen pulses, and swept a seed byte that does not exist:
+   the opening command is the constant 0x34.  That is why 256 seeds against 20 frame
+   variants never moved a status line. */
 static void preamble(void)
 {
-    cmdbyte(g_seed);
+    int i;
+
+    cmdbyte(0x34);
+    cmdbyte(0x7C);
     cmdbyte(0x4E);
-    raw(0x84);
+    for (i = 0; i < 16; i++)
+        sk_pulse();
+    cmdbyte(0x4E);
 }
 
 /* ------------------------------------------------- the keyed round itself */
@@ -89,13 +138,17 @@ static uint32_t keyed_round(uint32_t v)
     unsigned char prev;
     int k;
 
+    memset(g_bits, 0, sizeof g_bits);
+    g_bitn = 0;
     preamble();
     prev = query((unsigned char) (v & 0xFF));
+    putbit(prev);
     for (k = 1; k <= 39; k++) {
         unsigned idx = (unsigned) ((prev & 1) | ((v & 1) << 1));
 
         v = ((idx ^ v) & 1) ? ((v >> 1) ^ POLY) : (v >> 1);
         prev = query((unsigned char) ((v >> (8 * idx)) & 0xFF));
+        putbit(prev);
     }
     return v;
 }
@@ -190,6 +243,7 @@ static double now(void)
 int main(int argc, char **argv)
 {
     uint32_t *hdr, *cal, *work, *enc, *out;
+    unsigned char *bits, *bp;
     uint32_t ncal, count, nenc, i;
     unsigned char *lst;
     size_t len = 0;
@@ -236,30 +290,24 @@ int main(int argc, char **argv)
     printf("LPT base 0x%03X, %u buffers, %u encode blocks, %u calibration pairs\n",
            g_base, count, nenc, ncal);
 
-    /* --- find the preamble seed the part actually answers to --- */
-    fputs("Calibrating", stdout);
+    /* --- verify against answers already known, rather than hunting a seed ---
+       The seed sweep this used to do was chasing something that is not there: the
+       preamble opens with a constant 0x34 (docs/research/30 section 9.3).  What is
+       worth doing is still checking, because a part that answers wrongly and a part
+       that does not answer look identical downstream. */
+    fputs("Checking against known answers", stdout);
     fflush(stdout);
-    seed = -1;
-    for (i = 0; i < 256; i++) {
-        uint32_t j;
-        int ok = 1;
+    seed = 0;
+    for (i = 0; i < ncal; i++) {
+        uint32_t got = keyed_round(cal[i * 2]);
 
-        g_seed = (unsigned char) i;
-        for (j = 0; j < ncal; j++) {
-            if (keyed_round(cal[j * 2]) != cal[j * 2 + 1]) {
-                ok = 0;
-                break;
-            }
-        }
-        if ((i & 15) == 0) {
-            fputc('.', stdout);
-            fflush(stdout);
-        }
-        if (ok) {
-            seed = (int) i;
-            break;
-        }
+        printf("\n   f(%08X) = %08X   expected %08X   %s",
+               cal[i * 2], got, cal[i * 2 + 1],
+               got == cal[i * 2 + 1] ? "ok" : "MISMATCH");
+        if (got != cal[i * 2 + 1])
+            seed = -1;
     }
+    fputc('\n', stdout);
     if (seed < 0) {
         /* Calibration failing is itself information, so leave data behind rather than
            nothing: every seed against the first few inputs, for working out offline
@@ -294,6 +342,12 @@ int main(int argc, char **argv)
         fputs("out of memory\n", stderr);
         return 1;
     }
+    bits = calloc((size_t) (count + nenc) * 2 + 1, 5);
+    if (!out || !bits) {
+        fputs("out of memory\n", stderr);
+        return 1;
+    }
+    bp = bits;
     out[0] = OUT_MAGIC;
     out[1] = count;
     out[2] = (uint32_t) seed;
@@ -306,11 +360,17 @@ int main(int argc, char **argv)
         uint32_t L1 = work[i * 2];
         uint32_t R1 = work[i * 2 + 1];
         uint32_t f1 = keyed_round(L1);
-        uint32_t L3 = b_rounds_first(f1 ^ R1, L1);
-        uint32_t f2 = keyed_round(L3);
+        uint32_t L3;
 
+        memcpy(bp, g_bits, 5); bp += 5;
+        L3 = b_rounds_first(f1 ^ R1, L1);
+        {
+            uint32_t f2 = keyed_round(L3);
+
+            memcpy(bp, g_bits, 5); bp += 5;
+            out[4 + i * 2 + 1] = f2;
+        }
         out[4 + i * 2]     = f1;
-        out[4 + i * 2 + 1] = f2;
         if ((i & 511) == 0) {
             fputc('.', stdout);
             fflush(stdout);
@@ -327,9 +387,13 @@ int main(int argc, char **argv)
         uint32_t P1 = enc[i * 2 + 1];
         uint32_t L3 = P1;
         uint32_t f2 = keyed_round(L3);
-        uint32_t R3 = P0 ^ f2;
-        uint32_t L1 = b_rounds_fwd_second(L3, R3);
-        uint32_t f1 = keyed_round(L1);
+        uint32_t R3, L1, f1;
+
+        memcpy(bp, g_bits, 5); bp += 5;
+        R3 = P0 ^ f2;
+        L1 = b_rounds_fwd_second(L3, R3);
+        f1 = keyed_round(L1);
+        memcpy(bp, g_bits, 5); bp += 5;
 
         out[4 + (count + i) * 2]     = f1;
         out[4 + (count + i) * 2 + 1] = f2;
