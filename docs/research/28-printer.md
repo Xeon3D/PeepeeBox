@@ -200,8 +200,8 @@ Straight from §2.11, *When the Battery pack Gets Low During Printing*:
 
 - the printer **goes OFFLINE** — the OFFLINE lamp lights and stays lit, and the
   printer drops its connection to the Photo Play;
-- the **Power LED blinks about twice a second**, and it is the only thing
-  blinking to say the pack is low;
+- the **Power LED blinks once every half second** — the manual's "about once
+  every 0.5 seconds" — and it is the only thing blinking to say the pack is low;
 - **the ONLINE LED blinks if there is data left in the buffer** — a job that
   arrived and cannot be printed;
 - the operator connects the AC adapter and **pushes ONLINE**, and the rest prints.
@@ -244,6 +244,19 @@ without draining, and the charge resumes when the job finishes.
 That is why the fade is stored **per line** rather than read from the pack when
 the paper is drawn. A receipt half printed on the adapter and half on the pack
 has to show both, and there is no single number for the roll that can.
+
+The blink rates are worth stating as periods, because getting them wrong by a
+factor of two is easy and it happened: a blink is a whole cycle, on and off, so
+with a 250 ms tick a half-second blink is one tick each way and a one-second
+blink is two. The first version toggled every half second, which is a
+one-second blink rather than a half-second one.
+
+| | period |
+|---|---|
+| Power LED, pack flat | 0.5 s |
+| Power LED, charging | 1 s |
+| Power LED, on and idle | steady |
+| ONLINE LED, job left in the buffer | 1 s |
 
 Charging is a state rather than a button: the adapter is plugged in, the power is
 on, the pack is not full, and it is not printing. Putting the printer back online

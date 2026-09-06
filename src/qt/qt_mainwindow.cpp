@@ -1917,8 +1917,16 @@ cp80_render()
         g.setRenderHint(QPainter::Antialiasing, true);
         g.setPen(Qt::NoPen);
 
-        /* 250 ms a tick: /4 is once a second, /2 is twice. */
-        const bool half = (((cp80_blink / 2) & 1) == 0);
+        /* The tick is 250 ms and a blink is a whole cycle, on and off -- so a
+           half-second blink is on for one tick and off for the next, and a
+           one-second blink is two ticks each way.  Getting that wrong by a
+           factor of two is easy and it was: the LED was toggling every half
+           second, which is a one-second blink, not a half-second one.
+
+               CP80_BLINK_FAST   one tick on, one off   -> 0.5 s, the flat pack
+               CP80_BLINK_SLOW   two ticks on, two off  -> 1 s, charging */
+        const bool fast = ((cp80_blink & 1) == 0);
+        const bool slow = (((cp80_blink / 2) & 1) == 0);
 
         /* Two separate lamps, drawn separately.  They were being treated as one
            indicator that moved between two positions, so a job stuck in the
@@ -1942,7 +1950,7 @@ cp80_render()
                left in the memory buffer", section 2.11. */
             const bool waiting = !online && !cp80_queued.isEmpty();
 
-            if (online || (waiting && half)) {
+            if (online || (waiting && slow)) {
                 const int   ly = -top + CP80_SCALE(CP80_LED_ON_Y);
                 const QRect led(CP80_SCALE(CP80_LED_ON_X), ly,
                                 CP80_SCALE(CP80_LED_W), CP80_SCALE(CP80_LED_H));
@@ -1952,12 +1960,14 @@ cp80_render()
             }
         }
 
+        /* Steady when it is simply on; once a second while charging; twice a
+           second -- every half second -- when the pack is flat. */
         bool pwr_lit = cp80_power;
 
         if (cp80_power && cp80_charging && !full)
-            pwr_lit = ((cp80_blink / 4) & 1) == 0;
+            pwr_lit = slow;
         else if (cp80_power && low)
-            pwr_lit = half;
+            pwr_lit = fast;
 
         if (pwr_lit) {
             const int x0 = CP80_SCALE(CP80_LED_PWR_X0);
