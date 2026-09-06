@@ -1694,6 +1694,109 @@ hd_write_data(pp_t *dev, uint8_t val)
     dev->hd_sk = clk;
 }
 
+/* ------------------------------------------------------------------------------------
+ * LPT PASSTHROUGH -- hand the guest's parallel port to a real one.
+ *
+ * Set PEEPEEBOX_LPT_PASSTHRU to the host port's base in hex (e.g. 378) and the four
+ * accessors below stop emulating anything and drive that port instead.  The emulated
+ * dongle is bypassed entirely; a real one on the host answers the guest.
+ *
+ * Why this lives here rather than in a generic passthrough device: these four functions
+ * are already the whole of the guest's parallel-port surface, and pp_raw() already logs
+ * every access with the guest's CS:IP.  Passing through at this point therefore yields a
+ * complete, annotated wire trace for free -- which is the actual objective.  The picture
+ * cipher's keyed round is computed inside the dongle (docs/research/20 section 3), and no
+ * hand-written frame has ever made a real part answer, so the only way left to learn the
+ * sequence is to watch the game itself perform it.
+ *
+ * Raw in/out rather than ppdev: ppdev's PPWCONTROL applies the parport layer's own
+ * inversion to the control lines, so the byte on the wire would no longer be the byte the
+ * guest wrote.  Direct port I/O keeps the register semantics identical to the emulated
+ * path.  It needs ioperm, so run as root when using this.
+ */
+#if defined(__linux__) && (defined(__i386__) || defined(__x86_64__))
+/* <sys/io.h> deliberately NOT included: 86Box's own io.h already declares inb/outb, and
+   with the opposite argument order -- outb(port, val) here against glibc's
+   outb(val, port).  Including both would either fail to compile or, worse, silently
+   swap the arguments.  So declare ioperm and reach the port with inline asm. */
+extern int ioperm(unsigned long from, unsigned long num, int turn_on);
+
+static inline void
+pp_outb_real(unsigned port, uint8_t v)
+{
+    __asm__ __volatile__("outb %0, %w1" : : "a"(v), "d"((unsigned short) port));
+}
+
+static inline uint8_t
+pp_inb_real(unsigned port)
+{
+    uint8_t v;
+
+    __asm__ __volatile__("inb %w1, %0" : "=a"(v) : "d"((unsigned short) port));
+    return v;
+}
+
+static int      pp_pass_state = -1; /* -1 unknown, 0 off, 1 active */
+static unsigned pp_pass_base  = 0;
+
+static int
+pp_passthru(void)
+{
+    if (pp_pass_state < 0) {
+        const char *s = getenv("PEEPEEBOX_LPT_PASSTHRU");
+
+        pp_pass_state = 0;
+        if (s != NULL) {
+            pp_pass_base = (unsigned) strtoul(s, NULL, 16);
+            if (pp_pass_base == 0)
+                pp_pass_base = 0x378;
+            if ((ioperm(pp_pass_base, 3, 1) == 0) && (ioperm(0x80, 1, 1) == 0)) {
+                pp_pass_state = 1;
+                pp_log("PP: LPT PASSTHROUGH active at %03X -- emulated dongle bypassed\n",
+                       pp_pass_base);
+            } else
+                pp_log("PP: LPT passthrough at %03X FAILED -- needs root\n", pp_pass_base);
+        }
+    }
+
+    return pp_pass_state;
+}
+
+static void
+pp_pass_out(unsigned off, uint8_t v)
+{
+    pp_outb_real(pp_pass_base + off, v);
+    (void) pp_inb_real(0x80); /* the traditional I/O delay, as the DOS library does */
+    (void) pp_inb_real(0x80);
+}
+
+static uint8_t
+pp_pass_in(unsigned off)
+{
+    return pp_inb_real(pp_pass_base + off);
+}
+#else
+static int
+pp_passthru(void)
+{
+    return 0;
+}
+
+static void
+pp_pass_out(unsigned off, uint8_t v)
+{
+    (void) off;
+    (void) v;
+}
+
+static uint8_t
+pp_pass_in(unsigned off)
+{
+    (void) off;
+    return 0xFF;
+}
+#endif
+
 static void
 pp_write_data(uint8_t val, void *priv)
 {
@@ -1706,6 +1809,10 @@ pp_write_data(uint8_t val, void *priv)
     if (dev->n_wd++ < 300)
         pp_log("PP: raw write_data %02X\n", val);
     pp_raw(dev, "write_data", val);
+    if (pp_passthru()) {
+        pp_pass_out(0, val);
+        return;
+    }
     if (dev->hd_probe)
         hd_write_data(dev, val);
     cd_write_data(dev, val);
@@ -1724,6 +1831,11 @@ pp_write_ctrl(uint8_t val, void *priv)
     if (dev->n_wc++ < 300)
         pp_log("PP: raw write_ctrl %02X\n", val);
     pp_raw(dev, "write_ctrl", val);
+    if (pp_passthru()) {
+        pp_pass_out(2, val);
+        dev->last_ctrl = val;
+        return;
+    }
 
     if ((val ^ dev->last_ctrl) & 0x0c) {
         dev->in_have = 0;
@@ -1759,6 +1871,12 @@ pp_read_status(void *priv)
 {
     pp_t   *dev = (pp_t *) priv;
     uint8_t st  = 0;
+
+    if (pp_passthru()) {
+        st = pp_pass_in(1);
+        pp_raw(dev, "read_status", st);
+        return st;
+    }
 
     /* The 2001 generation.  Its dongle is a Microwire EEPROM -- see the section above
        pp_write_data -- and this line is that part's DO.  Three things drive it, in the
@@ -1912,6 +2030,13 @@ pp_read_data(void *priv)
     pp_t         *dev = (pp_t *) priv;
     const uint8_t latch = (dev->lpt != NULL) ? ((lpt_t *) dev->lpt)->dat : dev->last_data;
     const uint8_t out   = dev->ng_data ? pp_data_transform(dev->ng_mode, latch) : latch;
+
+    if (pp_passthru()) {
+        const uint8_t raw = pp_pass_in(0);
+
+        pp_raw(dev, "read_data", raw);
+        return raw;
+    }
 
     if (dev->n_rd++ < 200)
         pp_log("PP: raw read_data latch %02X -> %02X (mode %d)\n", latch, out, dev->ng_mode);
