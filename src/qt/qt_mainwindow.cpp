@@ -1920,21 +1920,34 @@ cp80_render()
         /* 250 ms a tick: /4 is once a second, /2 is twice. */
         const bool half = (((cp80_blink / 2) & 1) == 0);
 
+        /* Two separate lamps, drawn separately.  They were being treated as one
+           indicator that moved between two positions, so a job stuck in the
+           buffer lit the ONLINE lamp and the OFFLINE lamp was never drawn at
+           all -- which is backwards: the printer is *offline*, and that is the
+           lamp that should be on.  A machine with two LEDs can light both. */
         if (cp80_power) {
-            /* "The ONLINE LED will blink if there is data left in the memory
-               buffer" -- that is this: a job that arrived and cannot be printed
-               because the pack gave out. */
-            const bool waiting = !online && !cp80_queued.isEmpty();
-            const bool lit     = online || (waiting && half);
-            const bool use_on  = online || waiting;
-            const int  ly = -top + CP80_SCALE(use_on ? CP80_LED_ON_Y
-                                                     : CP80_LED_OFF_Y);
-            const QRect led(CP80_SCALE(use_on ? CP80_LED_ON_X : CP80_LED_OFF_X),
-                            ly, CP80_SCALE(CP80_LED_W), CP80_SCALE(CP80_LED_H));
+            /* OFFLINE: lit whenever it is not online.  Steady, because what is
+               blinking on a low pack is the Power LED. */
+            if (!online) {
+                const int   ly = -top + CP80_SCALE(CP80_LED_OFF_Y);
+                const QRect led(CP80_SCALE(CP80_LED_OFF_X), ly,
+                                CP80_SCALE(CP80_LED_W), CP80_SCALE(CP80_LED_H));
 
-            if (lit || !use_on) {
-                g.setBrush(use_on ? QColor(0x35, 0xd0, 0x4a)
-                                  : QColor(0xe0, 0x22, 0x18));
+                g.setBrush(QColor(0xe0, 0x22, 0x18));
+                g.drawRoundedRect(led, 1, 1);
+            }
+
+            /* ONLINE: lit when it is online, and blinking when it is not but
+               still holding a job -- "the ONLINE LED will blink if there is data
+               left in the memory buffer", section 2.11. */
+            const bool waiting = !online && !cp80_queued.isEmpty();
+
+            if (online || (waiting && half)) {
+                const int   ly = -top + CP80_SCALE(CP80_LED_ON_Y);
+                const QRect led(CP80_SCALE(CP80_LED_ON_X), ly,
+                                CP80_SCALE(CP80_LED_W), CP80_SCALE(CP80_LED_H));
+
+                g.setBrush(QColor(0x35, 0xd0, 0x4a));
                 g.drawRoundedRect(led, 1, 1);
             }
         }

@@ -198,10 +198,19 @@ what it does say is what happens at the end.
 
 Straight from §2.11, *When the Battery pack Gets Low During Printing*:
 
-- the printer **goes OFFLINE** and the **Power LED blinks about twice a second**;
+- the printer **goes OFFLINE** — the OFFLINE lamp lights and stays lit, and the
+  printer drops its connection to the Photo Play;
+- the **Power LED blinks about twice a second**, and it is the only thing
+  blinking to say the pack is low;
 - **the ONLINE LED blinks if there is data left in the buffer** — a job that
   arrived and cannot be printed;
 - the operator connects the AC adapter and **pushes ONLINE**, and the rest prints.
+
+The two panel lamps are **drawn independently**, which they were not at first:
+they were being treated as one indicator that moved between two positions, so a
+job stuck in the buffer lit the ONLINE lamp and the OFFLINE lamp was never drawn
+at all. That is backwards — the printer is offline, and that is the lamp that
+should be on. A machine with two LEDs can light both.
 
 The pack is called flat at **4%**, not zero: a Ni-MH pack driving a thermal head
 has no useful print left well before it is empty, and the machine stays *on* at
