@@ -319,5 +319,65 @@ The next step is mechanical rather than clever: the pre-mark portion of
 its writes verbatim before attempting a round would show whether the bring-up is
 sufficient, and bisecting the prefix would find the minimum that is.
 
+### 9.6 A tool drives the part and gets the right answer
+
+```
+base 378   replaying 100782 of 100782 captured accesses   idle STATUS 78
+replayed.  STATUS now 58
+preamble: skipped (the replay already sent one)
+f(504EF2AE) = 32FC6611   expected 32FC6611   *** MATCH ***   (status moved: yes)
+```
+
+`dongreplay.c`, on the Linux host, with the emulator stopped. The first time anything
+other than the game has made this part answer.
+
+Two things had to be right, and both were mistakes of mine rather than properties of the
+protocol:
+
+**The trace holds two sessions.** The PPRAW counter restarts once, at file row 48,798 --
+the emulator resets between config load and boot, so `dongle_photoplay` initialises twice
+and its counter starts again. § 9.5's replay filtered on `n <= 97602` and therefore spliced
+the tail of the first session onto the head of the second. The real session is rows
+48,798 onward, and the first picture query in it is at row 149,580, so the genuine bring-up
+is the 100,782 accesses between.
+
+**Do not send a second preamble.** The replay runs up to the first query, so it already
+ends with the round's opening. Issuing our own on top talks over the part mid-transaction,
+and that alone is the difference between `BDC587AC` and the right answer -- the same run
+with `nopre` matches and without it does not.
+
+### 9.7 Why this is not yet a capture tool, and what the last piece is
+
+Replaying the bring-up and then *reconstructing* the preamble from § 9.3 does **not** work:
+
+```
+--- trimmed bring-up + our own preamble ---
+f(504EF2AE) = BDC587AC   no
+```
+
+Because § 9.3's preamble is wrong. The real block before a round is **840 accesses -- 420
+DATA writes, about 35 command bytes** -- not the four command bytes and sixteen pulses I
+read off the collapsed view. Collapsed, round 0's opening is
+
+```
+C6 C7 C6  DA DB DA  E8 E9 E8  FA FB FA  BE BF BE  B4 B5 B4  D8 D9 D8 ...
+   0x46      0x5A      0x68      0x7A      0x3E      0x34      0x58   ...
+```
+
+and round 1's differs. **The preamble carries the round's data**, which is exactly what one
+would expect of `HaspDecodeData`: the block goes in before the oracle is walked. That is
+why replaying a recorded preamble yields only the answer for the block it was recorded
+with -- `504EF2AE` is the first buffer's `L1`, and getting it back is correct but not
+general.
+
+So the last piece is the encoding: how a 32-bit input becomes those ~35 command bytes. The
+material to solve it is already in hand -- 118 captured rounds, each with a preamble and an
+input that is known from the archive, under one key. That is a mapping problem with 118
+examples, not another hardware hunt.
+
+Once it is solved, `dongcap` becomes: replay the bring-up once, then per buffer emit the
+encoded preamble and walk the forty queries -- and `capture-igo2/` does what it was built
+for.
+
 Related: `docs/research/20` § 3, `notes/HANDOFF2001.md` §§ 16, 20, 23-24,
 `tools/dongcap/`.
