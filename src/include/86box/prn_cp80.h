@@ -64,6 +64,13 @@ extern size_t prn_cp80_take(int which, size_t *pos, int *reset,
 /* Tear the paper off. */
 extern void prn_cp80_clear(void);
 
+/* Start the sample-free DPU-414 mechanics for a line that has actually reached
+   the paper, or for the front-panel FEED button.  columns is the logical-seek
+   distance, ink is the number of non-blank cells, and speed is a permille value
+   (1000 is a healthy pack / AC adapter). */
+extern void prn_cp80_sound_line(unsigned columns, unsigned ink, unsigned speed);
+extern void prn_cp80_sound_feed(unsigned speed);
+
 /* There was a prn_cp80_raw_path() here, for a cp80-raw.bin that every byte was
    written to.  It was the ground truth while the protocol was unknown and it
    earned its keep; the protocol is known now, so it was a file the emulator

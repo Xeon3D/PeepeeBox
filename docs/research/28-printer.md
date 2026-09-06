@@ -150,9 +150,10 @@ moves the port for a run, `PEEPEEBOX_PRN_ENQ=0` silences the keepalive, and
 
 The machine, photographed and painted, with the roll drawn on it rising out of
 the slot — twenty lines of paper and then the earliest ride out of sight, with a
-scrollbar inside the paper to get them back. It feeds a line every 400 ms, about
-what a 24-column impact printer of the period managed against a link forty times
-faster.
+scrollbar inside the paper to get them back. The mechanism is paced from the
+DPU-414's 52.5-character/s normal-text rating and logical-seek distance rather
+than a fixed line delay. The procedural mechanical sound uses the same timing;
+its measurements and derivation are in [29](29-dpu414-sound.md).
 
 The panel works: **ON LINE** connects and disconnects and lights the green lamp,
 **OFF LINE** lights red, and **FEED** advances the roll by a line — the printer's
@@ -190,9 +191,9 @@ pack and finished on a flat one reads that way — black at the top, faint at th
 bottom. Colouring the whole roll from the present level would rewrite the earlier
 lines every time a new one arrived, which is not what paper does.
 
-Below **12%** the head weakens: the ink fades toward the paper colour and the
-feed stretches from 400 ms a line toward 1400. The manual does not quantify that;
-what it does say is what happens at the end.
+Below **12%** the head weakens: the ink fades toward the paper colour and each
+line's calculated carriage-and-feed interval stretches toward 1400 ms. The
+manual does not quantify that; what it does say is what happens at the end.
 
 ### What happens when it runs out
 
