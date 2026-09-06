@@ -149,27 +149,72 @@ moves the port for a run, `PEEPEEBOX_PRN_ENQ=0` silences the keepalive, and
 ### The window
 
 The machine, photographed and painted, with the roll drawn on it rising out of
-the slot — twenty lines of paper and then the earliest ride out of sight, with a
-scrollbar inside the paper to get them back. The mechanism is paced from the
-DPU-414's 52.5-character/s normal-text rating and logical-seek distance rather
-than a fixed line delay. The procedural mechanical sound uses the same timing;
-its measurements and derivation are in [29](29-dpu414-sound.md).
+the slot. The visible roll length is derived from the active screen's usable
+work area, so a short display scrolls sooner while a tall one exposes more paper;
+once it is full, the earliest lines ride out of sight and a scrollbar inside the
+paper retrieves them. The scrollbar stays hidden until the pointer is over the
+receipt, and the wheel scrolls anywhere on the paper. The printer stays anchored
+above the taskbar and the dialog grows upward with the receipt instead of leaving
+a fixed strip beneath it. The printer canvas is measured in physical pixels and counter-scales its Qt
+widget coordinates, so Windows at 125% does not enlarge the machine, paper,
+print pitch or panel targets. At the vertical limit the canvas stops changing
+size and surplus paper
+buckles into an uneven stack of folds at the top; its ripped leading edge
+remains drawn above those folds. Each platen advance is animated over the
+measured 0.20 seconds, with the new line emerging from behind the slot and a
+two-pixel damped settling motion at the end. The printer and window remain still;
+only the paper and the pressed panel button move. The mechanism is paced from the DPU-414's
+52.5-character/s normal-text rating and logical-seek distance rather than a
+fixed line delay. The procedural mechanical sound uses the same timing; its
+measurements and derivation are in [29](29-dpu414-sound.md).
 
 The panel works: **ON LINE** connects and disconnects and lights the green lamp,
-**OFF LINE** lights red, and **FEED** advances the roll by a line — the printer's
-own paper feed, so it goes on the paper and not down the wire. Both are invisible
+**OFF LINE** lights red, and **FEED** advances the roll by a line only while
+OFFLINE — the DPU-414 guide's operation-panel description and hint both make
+that restriction explicit. Thus pressing FEED during an ONLINE print does not
+splice blank lines into the job. A short press advances immediately and holding
+the switch repeats after a short delay, as required while loading and aligning
+paper. It is the printer's own paper feed, so an accepted feed goes on the paper
+and not down the wire. Both are invisible
 buttons over the ones in the photograph, children of the picture so they travel
-with it as the roll grows.
+with it as the roll grows. While either is held, its photographed cap moves into
+the panel recess and returns on release.
 
-It opens against the right edge of the emulator, level with its top — the real
-printer stood beside the machine, and the paper is meant to be watched while the
-guest is doing something. First show only; after that it stays where it is put.
+Tearing is independent of printing. It detaches only the exposed sheet and
+removes only device-buffer bytes the UI has already copied; queued lines, bytes
+that arrived since the last UI pump, the parser's partial line, and the feed
+timer all continue behind the departing receipt. A short blank lip remains at
+the cutter, and its shallow edge profile changes deterministically after each
+tear instead of every receipt having the same silhouette.
 
-Everything in that window is painted into one pixmap rather than laid out. Two
-attempts at overlapping a picture and a text widget both failed: the machine was
-clipped to its top half, then vanished entirely as the paper grew and squeezed it
-out. A layout asked to put one child on top of another at a fixed offset is a
-layout being used as a canvas.
+After the last line, an odd bidirectional pass leaves the head away from its
+left stop. A delayed carriage-only event returns it home with matching sound and
+without feeding paper. If the final pass already ended at home, there is no
+invented movement.
+
+The receipt type is likewise measured rather than inherited from the desktop.
+The manual specifies a 112 mm roll at 0.28 mm dot pitch, an 89.6 mm-wide head,
+a 7 x 9 character matrix, one blank dot between characters and the default six
+blank dots between 9-dot rows. The renderer therefore uses a crisp,
+un-antialiased typewriter strike, places glyphs on fixed eight-dot cells and
+advances lines in the same 15-dot proportion. A uniform 1.2x readability scale
+then enlarges the result and recentres all 40 normal columns on the roll. The
+spacing remains stable when Windows is using 125% display scaling or substitutes
+a different fallback font.
+
+It opens against the right edge of the emulator with its base just above the
+taskbar — the real printer stood beside the machine, and the paper is meant to
+be watched while the guest is doing something. As the receipt grows, the dialog
+extends upward and leaves the printer in place. First show only; after that it
+stays where it is put.
+
+Everything in that window is painted into one pixmap rather than laid out. The
+paper has a shallow cross-sheet bow, subdued fibres, slot shadow and a slightly
+irregular torn leading edge, while the printer photograph remains the measured
+reference for its width and exit position. Two attempts at overlapping a picture
+and a text widget both failed: the machine was clipped to its top half, then
+vanished entirely as the paper grew and squeezed it out. A layout asked to put
+one child on top of another at a fixed offset is a layout being used as a canvas.
 
 ### The battery pack
 
@@ -287,10 +332,13 @@ two scaled edges rounds once and stays inside. The Power *switch* is on the
 left-hand side of the machine and so is not in the photograph at all, which is
 why it is a labelled button rather than an invisible one on the picture.
 
-There was a **pack slider** while the thresholds were being settled; it is gone.
-The window title carries the level, and `PEEPEEBOX_PRN_DRAIN=<multiplier>` and
-`PEEPEEBOX_PRN_CHARGE=<minutes>` reach any state worth testing without putting a
-control on the machine that the machine does not have.
+There is also a **large battery-shaped pack control**, which is a test control —
+3000 lines to run down and ten hours to fill are not things to sit through while
+checking what a threshold looks like. Its coloured interior is both the live
+level indication and the draggable slider, with the percentage printed inside;
+green turns amber below 20% and red at the flat threshold. A sheen distinguishes
+active charging. `PEEPEEBOX_PRN_DRAIN=<multiplier>` scales the drain for the same
+reason.
 
 ### The 2008 reader had to move
 
