@@ -74,19 +74,19 @@
    head rides across the paper on a carriage.  SII specifies 52.5 normal
    characters/second, with seven dot columns and one inter-character column;
    that makes the head motor's high-speed step rate 52.5 * 8 = 420 Hz.  The
-   second recording's narrow 421--422 Hz tone lands directly on that prediction;
-   the first has the same carriage band running a little slower, around 401 Hz.
+   NSK recording's narrow 421--422 Hz tone lands directly on that prediction;
+   other units in the recordings run a little slower, around 401--407 Hz.
 
    A normal line is nine printed dots plus the manual's default six-dot line
-   space.  The separate geared paper motor therefore advances fifteen steps.
-   Optical tracking of the exposed paper in both recordings puts an ordinary
-   advance at 0.17--0.20 seconds, and the first recording has a broad motor
-   group around 86 Hz.  85 steps/second satisfies both observations; unlike the
-   head rate, SII does not publish the paper motor's drive frequency. */
+   space.  In the clean portable-printer recording each such advance lasts about
+   0.20 seconds while its geared motor produces a 150 Hz pulse train, or about
+   thirty audible phase transitions for fifteen dots of paper travel.  The
+   service schematic exposes four phase outputs for each motor (CM1--CM4 and
+   FM1--FM4), although SII does not publish the paper motor's drive sequence. */
 #define CP80_HEAD_STEP_HZ  420.0
-#define CP80_FEED_STEP_HZ   85.0
+#define CP80_FEED_STEP_HZ  150.0
 #define CP80_CHAR_STEPS       8
-#define CP80_FEED_STEPS      15
+#define CP80_FEED_STEPS      30
 
 #define CP80_SOUND_Q        256
 
@@ -106,6 +106,8 @@ typedef struct cp80_sound_t {
     cp80_sound_event_t q[CP80_SOUND_Q];
     int                q_head;
     int                q_tail;
+    int                button_pending;
+    int                tear_pending;
 
     int      on;
     int      mode;
@@ -129,6 +131,40 @@ typedef struct cp80_sound_t {
     double   body2_z1;
     double   body2_z2;
     double   noise_lp;
+
+    /* The two front-panel pushbuttons are mechanical even when the printer is
+       off.  Their snap is mixed independently of the motor event queue so an
+       ON LINE or FEED press is heard immediately, including during printing. */
+    int      button_noise_samples;
+    int      button_noise_total;
+    double   button_noise_a;
+    double   button_noise_z;
+    double   button1_c;
+    double   button1_r2;
+    double   button1_z1;
+    double   button1_z2;
+    double   button2_c;
+    double   button2_r2;
+    double   button2_z1;
+    double   button2_z2;
+
+    /* Tearing is a separate, asynchronous sheet event.  A broad rubbing bed
+       carries irregular short fibre failures, followed by the lower, softer
+       flutter of the released receipt.  It may overlap a motor already in the
+       queue, just as an operator can tear the exposed part while data remains. */
+    int      tear_samples;
+    int      tear_total;
+    int      tear_next;
+    int      tear_burst_samples;
+    int      tear_burst_total;
+    int      tear_final;
+    double   tear_burst_gain;
+    double   tear_hp_a;
+    double   tear_lp_a;
+    double   tear_flutter_a;
+    double   tear_hp_z;
+    double   tear_lp_z;
+    double   tear_flutter_z;
 
     /* The roll is its own sound source, rather than more motor harmonics.  Two
        one-pole filters colour microscopic sliding friction; three short modal
@@ -415,6 +451,30 @@ cp80_sound_coefficients(cp80_sound_t *sound, int rate)
     sound->body2_c   = 2.0 * r * cos((2.0 * CP80_PI * 2380.0) / (double) rate);
     sound->body2_r2  = r * r;
 
+    /* A short, sample-free pushbutton snap: a dull plastic plunger mode and a
+       quicker contact/cap mode, excited together with a sub-millisecond burst
+       of high-passed noise.  These are deliberately less resonant than the
+       printer case so the result is a click rather than another motor note. */
+    r                  = exp(-1.0 / ((double) rate * 0.0035));
+    sound->button1_c   = 2.0 * r * cos((2.0 * CP80_PI * 680.0) / (double) rate);
+    sound->button1_r2  = r * r;
+    r                  = exp(-1.0 / ((double) rate * 0.0012));
+    sound->button2_c   = 2.0 * r * cos((2.0 * CP80_PI * 2850.0) / (double) rate);
+    sound->button2_r2  = r * r;
+    sound->button_noise_a = 1.0 - exp((-2.0 * CP80_PI * 1350.0)
+                                      / (double) rate);
+
+    /* Thin thermal stock fails as broadband, non-periodic fibre bursts rather
+       than a pitched cutter sound.  The high-pass removes the hissy air-like
+       bottom from white noise; the second pole rolls it off before Nyquist.
+       A much slower path supplies the sheet flex after it leaves the bar. */
+    sound->tear_hp_a      = 1.0 - exp((-2.0 * CP80_PI * 900.0)
+                                     / (double) rate);
+    sound->tear_lp_a      = 1.0 - exp((-2.0 * CP80_PI * 8200.0)
+                                     / (double) rate);
+    sound->tear_flutter_a = 1.0 - exp((-2.0 * CP80_PI * 310.0)
+                                     / (double) rate);
+
     /* The feed-over-carriage spectrum in the clean self-test has broad maxima
        near 1.35, 3.1 and 6--8 kHz.  Very short decays keep these as a sheet
        rattle instead of three pitched notes. */
@@ -564,6 +624,45 @@ prn_cp80_sound_feed(unsigned speed)
     cp80_sound_enqueue(cp80_inst, 0, 0, speed);
 }
 
+void
+prn_cp80_sound_button(void)
+{
+    cp80_t *dev = cp80_inst;
+
+    if ((dev == NULL) || !dev->sound.on)
+        return;
+
+    thread_wait_mutex(dev->lock);
+    if (dev->sound.button_pending < 8)
+        dev->sound.button_pending++;
+    thread_release_mutex(dev->lock);
+}
+
+void
+prn_cp80_sound_tear(void)
+{
+    cp80_t *dev = cp80_inst;
+
+    if ((dev == NULL) || !dev->sound.on)
+        return;
+
+    thread_wait_mutex(dev->lock);
+    if (dev->sound.tear_pending < 2)
+        dev->sound.tear_pending++;
+    thread_release_mutex(dev->lock);
+}
+
+static void
+cp80_sound_take_controls(cp80_t *dev, int *buttons, int *tears)
+{
+    thread_wait_mutex(dev->lock);
+    *buttons                  = dev->sound.button_pending;
+    *tears                    = dev->sound.tear_pending;
+    dev->sound.button_pending = 0;
+    dev->sound.tear_pending   = 0;
+    thread_release_mutex(dev->lock);
+}
+
 static void
 cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
 {
@@ -580,12 +679,135 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
     if (sound->mode == CP80_SOUND_IDLE)
         cp80_sound_pop(dev);
 
+    int button_presses = 0;
+    int tear_events    = 0;
+
+    cp80_sound_take_controls(dev, &button_presses, &tear_events);
+
+    if (tear_events > 0) {
+        /* About 320 ms crosses the 112 mm paper at a brisk hand pull; the last
+           140 ms is the now-free receipt flexing and settling.  Keeping the
+           timing in samples locks every internal envelope to the UI event. */
+        sound->tear_total = sound->tear_samples
+                          = (rate * 460 + 500) / 1000;
+        sound->tear_next          = 0;
+        sound->tear_burst_samples = 0;
+        sound->tear_burst_total   = 0;
+        sound->tear_final         = 0;
+    }
+
     for (uint16_t i = 0; i < len; i++) {
         double impulse = 0.0;
         double direct  = 0.0;
         double grain   = 0.0;
         double paper   = 0.0;
         double paper_impulse = 0.0;
+        double button_impulse = 0.0;
+        double button_noise   = 0.0;
+        double tear_noise     = 0.0;
+
+        if ((i == 0) && (button_presses > 0)) {
+            button_impulse = (double) button_presses;
+            sound->button_noise_total = sound->button_noise_samples
+                                      = (rate + 999) / 1000;
+            /* Let the same cabinet body answer quietly underneath the local
+               button modes, tying the click to the printer enclosure. */
+            impulse += 0.50 * button_impulse;
+        }
+
+        if (sound->button_noise_samples > 0) {
+            const double white = ((double) (int32_t) cp80_sound_rand(sound))
+                               / 2147483648.0;
+            const double envelope = (double) sound->button_noise_samples
+                                  / (double) sound->button_noise_total;
+
+            sound->button_noise_z += sound->button_noise_a
+                                   * (white - sound->button_noise_z);
+            button_noise = (white - sound->button_noise_z) * 1300.0 * envelope;
+            sound->button_noise_samples--;
+        }
+
+        if (sound->tear_samples > 0) {
+            const int    elapsed  = sound->tear_total - sound->tear_samples;
+            const double progress = (double) elapsed / (double) sound->tear_total;
+            const double white    = ((double) (int32_t) cp80_sound_rand(sound))
+                                  / 2147483648.0;
+            double       high;
+            double       zip_env = 0.0;
+
+            sound->tear_hp_z += sound->tear_hp_a * (white - sound->tear_hp_z);
+            high              = white - sound->tear_hp_z;
+            sound->tear_lp_z += sound->tear_lp_a * (high - sound->tear_lp_z);
+            sound->tear_flutter_z += sound->tear_flutter_a
+                                   * (white - sound->tear_flutter_z);
+
+            /* The diagonal pull reaches the teeth after a brief bend and has
+               crossed the bar by 70% of the event.  Random spacing keeps the
+               fine crackle from turning into an artificial zipper pitch. */
+            if ((progress >= 0.07) && (progress < 0.70)) {
+                const double z = (progress - 0.07) / 0.63;
+
+                zip_env = 0.30 + (0.70 * sin(CP80_PI * z));
+                if (sound->tear_next <= 0) {
+                    const double spacing = 0.0045
+                                         + (0.0075 * ((double) (cp80_sound_rand(sound)
+                                                                & 0xffffu) / 65535.0));
+                    const double length  = 0.0011
+                                         + (0.0022 * ((double) (cp80_sound_rand(sound)
+                                                                & 0xffffu) / 65535.0));
+                    const double strength = (double) (cp80_sound_rand(sound) & 0xffffu)
+                                          / 65535.0;
+
+                    sound->tear_next = (int) (spacing * (double) rate);
+                    sound->tear_burst_total = sound->tear_burst_samples
+                                            = (int) (length * (double) rate) + 1;
+                    sound->tear_burst_gain = 1150.0 + (2500.0 * strength * strength);
+                    paper_impulse += (0.035 + (0.16 * strength * strength)) * zip_env;
+                }
+                sound->tear_next--;
+            }
+
+            /* The release burst begins at the boundary above and continues on
+               following samples, where the travelling-tear envelope is no
+               longer active.  Give that stored burst its own full envelope. */
+            if (sound->tear_final && (sound->tear_burst_samples > 0))
+                zip_env = 1.0;
+
+            if (sound->tear_burst_samples > 0) {
+                const double burst_env = (double) sound->tear_burst_samples
+                                       / (double) sound->tear_burst_total;
+
+                tear_noise += sound->tear_lp_z * sound->tear_burst_gain
+                            * burst_env * burst_env * zip_env;
+                sound->tear_burst_samples--;
+            }
+
+            /* Continuous rubbing under the fractures, then a broad, lower
+               flap as the free edge clears the cutter. */
+            if (progress < 0.74) {
+                const double bend = fmin(1.0, progress * 10.0)
+                                  * fmin(1.0, (0.74 - progress) * 8.0);
+
+                tear_noise += sound->tear_lp_z * (150.0 + (260.0 * bend));
+            } else {
+                const double release = (progress - 0.74) / 0.26;
+                const double envelope = 1.0 - release;
+
+                tear_noise += sound->tear_flutter_z * 980.0 * envelope
+                            * (0.72 + (0.28 * sin(2.0 * CP80_PI * release * 3.0)));
+            }
+
+            if (!sound->tear_final && (progress >= 0.70)) {
+                /* The last connected strip lets go in one brighter snap. */
+                sound->tear_final = 1;
+                sound->tear_burst_total = sound->tear_burst_samples
+                                        = (rate + 399) / 400;
+                sound->tear_burst_gain = 3900.0;
+                paper_impulse         += 0.42;
+            }
+
+            sound->tear_samples--;
+        }
 
         if (sound->mode == CP80_SOUND_HEAD) {
             const int    done = sound->head_total - sound->head_steps;
@@ -596,11 +818,12 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
             const double load = 0.82 + (0.18 * sound->head_load);
 
             /* The recordings put the 422 Hz fundamental about 17 dB above its
-               second and third harmonics.  A mostly sinusoidal two-phase motor,
-               a small third harmonic and the step-excited case modes recreate
-               that spectrum without a sample. */
+               second and third harmonics.  A mostly sinusoidal four-phase-driven
+               motor, two small harmonics and the step-excited case modes
+               recreate that spectrum without a sample. */
             direct = 1750.0 * load * ramp
                    * (sin(2.0 * CP80_PI * p)
+                      + (0.11 * sin(4.0 * CP80_PI * p + 0.25))
                       + (0.12 * sin(6.0 * CP80_PI * p + 0.80)));
 
             sound->head_phase += sound->head_hz / (double) rate;
@@ -608,6 +831,16 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
                 sound->head_phase -= 1.0;
                 sound->head_steps--;
                 impulse = 0.70 + (0.16 * sound->head_load);
+
+                /* The carriage has a rapid ticking texture underneath its
+                   420 Hz motor pitch in the reference passes.  Eight motor
+                   transitions make one normal-width character, and the
+                   broadband envelope has a weaker group near that 50--53 Hz
+                   cadence.  Give that boundary a stronger, still synthetic
+                   case excitation.  The short body-mode decays keep the
+                   individual ticks separate instead of adding another tone. */
+                if (!(sound->head_steps % CP80_CHAR_STEPS))
+                    impulse += (3.20 + (0.55 * sound->head_load)) * ramp;
 
                 if (sound->head_steps <= 0) {
                     cp80_sound_begin_feed(sound);
@@ -635,17 +868,20 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
             double       rough;
             double       texture;
 
-            /* The paper path is a slower, more harmonic geared stepper. */
-            direct = 1325.0
+            /* The clean feed captures contain strong components at about 150,
+               300, 450 and 600 Hz.  Keep their combined level close to the old
+               model while giving the geared motor its measured third harmonic. */
+            direct = 1025.0
                    * (sin(2.0 * CP80_PI * p)
-                      + (0.36 * sin(4.0 * CP80_PI * p + 0.20))
-                      + (0.20 * sin(8.0 * CP80_PI * p + 0.55)));
+                      + (0.65 * sin(4.0 * CP80_PI * p + 0.20))
+                      + (0.50 * sin(6.0 * CP80_PI * p + 0.42))
+                      + (0.54 * sin(8.0 * CP80_PI * p + 0.55)));
 
             /* Paper sliding over the rubber platen/cutter is continuous
                friction, not another oscillator.  Band-limited noise is the
                standard compact physical proxy for microscopic roughness.  A
                slow independent noise process varies contact pressure so it
-               rustles instead of sounding like a steady air leak; the 85 Hz
+               rustles instead of sounding like a steady air leak; the 150 Hz
                motor steps add only a shallow corrugation. */
             white = ((double) (int32_t) cp80_sound_rand(sound))
                   / 2147483648.0;
@@ -693,12 +929,22 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
                             - (sound->body1_r2 * sound->body1_z2) + impulse;
             const double y2 = (sound->body2_c * sound->body2_z1)
                             - (sound->body2_r2 * sound->body2_z2) + impulse;
+            const double by1 = (sound->button1_c * sound->button1_z1)
+                             - (sound->button1_r2 * sound->button1_z2)
+                             + button_impulse;
+            const double by2 = (sound->button2_c * sound->button2_z1)
+                             - (sound->button2_r2 * sound->button2_z2)
+                             - (button_impulse * 0.72);
             int32_t      out;
 
             sound->body1_z2 = sound->body1_z1;
             sound->body1_z1 = y1;
             sound->body2_z2 = sound->body2_z1;
             sound->body2_z1 = y2;
+            sound->button1_z2 = sound->button1_z1;
+            sound->button1_z1 = by1;
+            sound->button2_z2 = sound->button2_z1;
+            sound->button2_z1 = by2;
 
             /* The paper modes ring after the feed itself stops, which matters
                most on a single FEED press. */
@@ -723,8 +969,16 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
                 paper += (py1 * 23.0) + (py2 * 15.0) + (py3 * 8.0);
             }
 
-            out = (int32_t) (direct + grain + paper
-                             + (y1 * 36.0) + (y2 * 18.0));
+            /* The visually aligned press near 7.405 s in the clean test video
+               peaks within about 1 dB of the mechanism that follows it.  Keep
+               this very short transient at roughly the feed model's peak too;
+               its integrated loudness remains much lower because it is only a
+               click.  The low mode carries slightly more of the gain, matching
+               the recording's chunky plastic rather than making a sharp UI
+               tick. */
+            out = (int32_t) (direct + grain + paper + button_noise + tear_noise
+                             + (y1 * 36.0) + (y2 * 18.0)
+                             + (by1 * 160.0) + (by2 * 170.0));
             buffer[(i << 1)]     += out;
             buffer[(i << 1) + 1] += out;
         }

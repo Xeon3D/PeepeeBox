@@ -108,6 +108,9 @@ extern bool fast_forward;
 #include <QScrollBar>
 #include <QPixmap>
 #include <QPainter>
+#include <QPainterPath>
+#include <QLinearGradient>
+#include <QTransform>
 #include <QGridLayout>
 #if QT_CONFIG(vulkan)
 #    include <QVulkanInstance>
@@ -1522,6 +1525,18 @@ static QString  cp80_printed;            /* what is on the paper                
 static QTimer  *cp80_feed   = nullptr;
 static size_t   cp80_paper_at = 0;
 
+/* A torn receipt remains a visible object long enough to leave the serrated
+   bar instead of vanishing on the button click.  Its text and historical ink
+   levels are copied before the live roll is cleared, so newly printed data can
+   appear behind it without becoming part of the departing sheet. */
+static QTimer          *cp80_tear_timer = nullptr;
+static QPushButton     *cp80_tear_btn   = nullptr;
+static QString          cp80_torn_text;
+static QVector<double>  cp80_torn_batt;
+static int              cp80_torn_first = 0;
+static int              cp80_tear_frame = 0;
+static bool             cp80_tearing    = false;
+
 /* How much paper is out of the machine at once.  A real roll keeps coming and
    hangs over the front; twenty lines is the length that still reads as a receipt
    on screen.  Past that the earliest lines ride up out of sight. */
@@ -1531,14 +1546,20 @@ static size_t   cp80_paper_at = 0;
    empty it.  This is a moving-head DPU-414, not a stationary line-thermal
    printer: SII rates normal text at at most 52.5 characters/second.  The head
    uses eight horizontal steps per cell (seven dots and a space), matching the
-   420/422 Hz motor tone in both reference recordings.  A line also advances
+   401--422 Hz motor tone in the reference recordings.  A line also advances
    nine character dots plus the default six-dot line spacing.  Optical tracking
-   of the roll in both reference videos measures ordinary advances at about
-   0.17--0.20 seconds, consistent with the first recording's 86 Hz low motor
-   group. */
+   and the isolated 150 Hz feed pulse train in the clean portable-printer video
+   put an ordinary fifteen-dot advance at about 0.20 seconds. */
 #define CP80_CHAR_CPS        52.5
-#define CP80_PAPER_MS       176.5
+#define CP80_PAPER_MS       200.0
 #define CP80_FIRST_LINE_MS  400
+
+/* 30 frames at 16 ms is 480 ms: about 320 ms for a diagonal pull across the
+   documented 112 mm paper width, then 160 ms for the released sheet to flex
+   and settle. */
+#define CP80_TEAR_FRAME_MS 16
+#define CP80_TEAR_FRAMES   30
+#define CP80_UI_PI 3.14159265358979323846
 
 /* The DPU-414 is a top-exit printer: the paper rises out of the slot on top of
    the machine and lies over the lid.
@@ -1854,6 +1875,25 @@ static QPushButton *cp80_btn_on = nullptr;   /* ON LINE */
 static QPushButton *cp80_btn_fd = nullptr;   /* FEED    */
 static QScrollBar  *cp80_scroll = nullptr;   /* on the paper, past 20 lines */
 
+static QStringList
+cp80_lines_on(const QString &paper)
+{
+    QStringList lines = paper.split(QLatin1Char('\n'));
+
+    /* split() leaves an empty tail after the final newline; that is the blank
+       the next line will be printed on, not a line of exposed paper. */
+    if (!lines.isEmpty() && lines.last().isEmpty())
+        lines.removeLast();
+    return lines;
+}
+
+static double
+cp80_smoothstep(double t)
+{
+    t = qBound(0.0, t, 1.0);
+    return t * t * (3.0 - (2.0 * t));
+}
+
 static void
 cp80_render()
 {
@@ -1867,12 +1907,7 @@ cp80_render()
     const QFontMetrics fm(mono);
     const int          lh = fm.lineSpacing();
 
-    QStringList all = cp80_printed.split(QLatin1Char('\n'));
-
-    /* split() leaves an empty tail after the final newline; that is the blank
-       the next line will be printed on, not a line of paper. */
-    if (!all.isEmpty() && all.last().isEmpty())
-        all.removeLast();
+    const QStringList all = cp80_lines_on(cp80_printed);
 
     /* Past twenty lines the roll stops growing and the earlier ones ride up out
        of sight.  The scrollbar is how they are got back; it follows the bottom
@@ -1897,9 +1932,16 @@ cp80_render()
     const QStringList lines = all.mid(first, CP80_MAX_LINES);
 
     const int paperH = lines.isEmpty() ? 0 : ((lines.size() * lh) + 12);
+    const QStringList torn_all   = cp80_tearing ? cp80_lines_on(cp80_torn_text)
+                                               : QStringList();
+    const QStringList torn_lines = torn_all.mid(cp80_torn_first, CP80_MAX_LINES);
+    const int tornH = torn_lines.isEmpty() ? 0 : ((torn_lines.size() * lh) + 12);
     /* Negative when the roll is longer than the machine is tall, which is the
        whole point of measuring it this way. */
-    const int top    = qMin(0, CP80_SLOT_YS - paperH);
+    /* Rotation lifts the free upper corners.  Reserve that room while tearing
+       so a long receipt does not lose its top edge against the label bounds. */
+    const int tear_room = (tornH > 0) ? 48 : 0;
+    const int top    = qMin(0, CP80_SLOT_YS - qMax(paperH, tornH) - tear_room);
     const int H      = CP80_HEAD_H - top;
 
     QPixmap out(CP80_HEAD_W, H);
@@ -1941,6 +1983,110 @@ cp80_render()
            rather than to the window. */
         if ((cp80_scroll != nullptr) && (over > 0))
             cp80_scroll->setGeometry(r.right() - 12, r.top() + 4, 9, paperH - 8);
+    }
+
+    if (tornH > 0) {
+        /* Cut a real silhouette rather than rotating a rectangular widget.  A
+           repeating but non-uniform tooth profile reads as the DPU-414's tear
+           bar at native size and stays deterministic between repaints. */
+        QPixmap      sheet(CP80_PAPER_W, tornH);
+        QPainterPath shape;
+
+        sheet.fill(Qt::transparent);
+        shape.moveTo(0, 0);
+        shape.lineTo(CP80_PAPER_W, 0);
+        shape.lineTo(CP80_PAPER_W, tornH - 3);
+        for (int x = CP80_PAPER_W; x >= 0; x -= 7) {
+            static const int tooth[] = { 1, 4, 2, 5, 2, 3, 0, 4 };
+            const int at = (x / 7) & 7;
+
+            shape.lineTo(x, tornH - 1 - tooth[at]);
+        }
+        shape.lineTo(0, tornH - 2);
+        shape.lineTo(0, 0);
+        shape.closeSubpath();
+
+        {
+            QPainter s(&sheet);
+
+            s.setRenderHint(QPainter::Antialiasing, true);
+            s.setClipPath(shape);
+            s.fillPath(shape, QColor(CP80_PAPER_RGB));
+
+            /* A faint cross-sheet gradient and a moving lower-edge shadow make
+               the flat label bend as it is pulled; ink stays on the surface. */
+            QLinearGradient cross(0, 0, CP80_PAPER_W, 0);
+            cross.setColorAt(0.00, QColor(255, 255, 255, 22));
+            cross.setColorAt(0.56, QColor(255, 255, 255, 0));
+            cross.setColorAt(1.00, QColor(105, 108, 122, 19));
+            s.fillPath(shape, cross);
+
+            QLinearGradient curl(0, qMax(0, tornH - 30), 0, tornH);
+            const int curl_alpha = int(12.0 + (30.0 * cp80_smoothstep(
+                                             (double) cp80_tear_frame
+                                             / (CP80_TEAR_FRAMES * 0.70))));
+            curl.setColorAt(0.0, QColor(80, 84, 96, 0));
+            curl.setColorAt(1.0, QColor(80, 84, 96, curl_alpha));
+            s.fillPath(shape, curl);
+
+            s.setFont(mono);
+            int y = 6 + fm.ascent();
+            for (int i = 0; i < torn_lines.size(); i++) {
+                const int    at = cp80_torn_first + i;
+                const double bt = (at < cp80_torn_batt.size())
+                                ? cp80_torn_batt.at(at) : CP80_BATT_FULL;
+
+                s.setPen(cp80_mix(QColor(CP80_INK_RGB), QColor(CP80_PAPER_RGB),
+                                  cp80_fade_at(bt)));
+                s.drawText(8, y, torn_lines.at(i));
+                y += lh;
+            }
+
+            s.setClipping(false);
+            s.setPen(QColor(92, 94, 104, 105));
+            s.drawPath(shape);
+        }
+
+        const double t       = qBound(0.0, (double) cp80_tear_frame
+                                          / (double) (CP80_TEAR_FRAMES - 1), 1.0);
+        const double across  = cp80_smoothstep(t / 0.70);
+        const double release = cp80_smoothstep((t - 0.70) / 0.30);
+        const double angle   = (5.2 * across) + (2.3 * release)
+                             + (0.8 * sin(CP80_UI_PI * release));
+        const double dx      = 16.0 * release;
+        const double dy      = 32.0 * release * release;
+        const double opacity = 1.0 - cp80_smoothstep((t - 0.78) / 0.22);
+        const QPointF origin(CP80_PAPER_L,
+                             (-top + CP80_SLOT_YS) - tornH);
+        const QPointF pivot(origin.x() + CP80_PAPER_W,
+                            origin.y() + tornH - 2);
+        QTransform motion;
+
+        /* The rightmost tooth is the pivot while the tear travels left to
+           right.  Once it releases, the receipt carries on forward and down
+           with a small elastic overshoot instead of simply fading in place. */
+        motion.translate(dx, dy);
+        motion.translate(pivot.x(), pivot.y());
+        motion.rotate(angle);
+        motion.scale(1.0 - (0.018 * sin(CP80_UI_PI * t)), 1.0);
+        motion.translate(-pivot.x(), -pivot.y());
+
+        QPainterPath shadow_shape = shape.translated(origin);
+
+        g.save();
+        g.setRenderHint(QPainter::Antialiasing, true);
+        g.setWorldTransform(motion);
+        g.translate(3.0, 5.0);
+        g.setOpacity(0.20 * opacity);
+        g.fillPath(shadow_shape, QColor(25, 27, 34));
+        g.restore();
+
+        g.save();
+        g.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        g.setWorldTransform(motion);
+        g.setOpacity(opacity);
+        g.drawPixmap(origin, sheet);
+        g.restore();
     }
 
     /* The three lamps.  They are lit or they are not -- no dimming with the
@@ -2195,6 +2341,17 @@ cp80_show(QWidget *parent)
         cp80_btn_fd->setCursor(Qt::PointingHandCursor);
         cp80_btn_fd->setToolTip(QObject::tr("FEED — one blank line per press"));
 
+        /* The physical momentary switches still snap when their electrical
+           action is unavailable (power off or an exhausted pack), so trigger
+           the synthesized click on depression, before the clicked handlers
+           below decide whether the printer can do anything. */
+        QObject::connect(cp80_btn_on, &QPushButton::pressed, cp80_win, []() {
+            prn_cp80_sound_button();
+        });
+        QObject::connect(cp80_btn_fd, &QPushButton::pressed, cp80_win, []() {
+            prn_cp80_sound_button();
+        });
+
         QObject::connect(cp80_btn_on, &QPushButton::clicked, cp80_win, []() {
             if (!prn_cp80_present() || !cp80_power)
                 return;
@@ -2247,7 +2404,7 @@ cp80_show(QWidget *parent)
         lbl->setWordWrap(true);
         lbl->setVisible(prn_cp80_present() == 0);
 
-        auto *tear = new QPushButton(QObject::tr("Tear off"), cp80_win);
+        cp80_tear_btn = new QPushButton(QObject::tr("Tear off"), cp80_win);
         auto *save = new QPushButton(QObject::tr("Save paper…"), cp80_win);
 
         /* The power switch is on the left-hand side of the machine, which this
@@ -2354,13 +2511,52 @@ cp80_show(QWidget *parent)
             }
         }
 
-        QObject::connect(tear, &QPushButton::clicked, cp80_win, []() {
+        cp80_tear_timer = new QTimer(cp80_win);
+        cp80_tear_timer->setTimerType(Qt::PreciseTimer);
+        cp80_tear_timer->setInterval(CP80_TEAR_FRAME_MS);
+        QObject::connect(cp80_tear_timer, &QTimer::timeout, cp80_win, []() {
+            if (!cp80_tearing) {
+                cp80_tear_timer->stop();
+                return;
+            }
+
+            cp80_tear_frame++;
+            if (cp80_tear_frame >= CP80_TEAR_FRAMES) {
+                cp80_tearing = false;
+                cp80_torn_text.clear();
+                cp80_torn_batt.clear();
+                cp80_tear_timer->stop();
+                if (cp80_tear_btn != nullptr)
+                    cp80_tear_btn->setEnabled(true);
+            }
+            cp80_render();
+        });
+
+        QObject::connect(cp80_tear_btn, &QPushButton::clicked, cp80_win, []() {
+            if (cp80_tearing)
+                return;
+
+            /* Freeze only the exposed part of the old roll.  The device and
+               live UI state are cleared immediately, allowing a new job to
+               begin behind the receipt while this one leaves the cutter. */
+            if (!cp80_printed.isEmpty()) {
+                cp80_torn_text  = cp80_printed;
+                cp80_torn_batt  = cp80_line_batt;
+                cp80_torn_first = (cp80_scroll != nullptr) ? cp80_scroll->value() : 0;
+                cp80_tear_frame = 0;
+                cp80_tearing    = true;
+                cp80_tear_btn->setEnabled(false);
+                prn_cp80_sound_tear();
+            }
+
             prn_cp80_clear();
             cp80_queued.clear();
             cp80_printed.clear();
             cp80_line_batt.clear();
             cp80_paper_at = 0;
             cp80_render();
+            if (cp80_tearing)
+                cp80_tear_timer->start();
         });
 
         QObject::connect(save, &QPushButton::clicked, cp80_win, [parent]() {
@@ -2392,7 +2588,7 @@ cp80_show(QWidget *parent)
         row->addWidget(cp80_pwr_btn);
         row->addWidget(cp80_replace);
         row->addStretch(1);
-        row->addWidget(tear);
+        row->addWidget(cp80_tear_btn);
         row->addWidget(save);
 
         auto *box = new QVBoxLayout(cp80_win);

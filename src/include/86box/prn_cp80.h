@@ -70,6 +70,8 @@ extern void prn_cp80_clear(void);
    (1000 is a healthy pack / AC adapter). */
 extern void prn_cp80_sound_line(unsigned columns, unsigned ink, unsigned speed);
 extern void prn_cp80_sound_feed(unsigned speed);
+extern void prn_cp80_sound_button(void);
+extern void prn_cp80_sound_tear(void);
 
 /* There was a prn_cp80_raw_path() here, for a cp80-raw.bin that every byte was
    written to.  It was the ground truth while the protocol was unknown and it
