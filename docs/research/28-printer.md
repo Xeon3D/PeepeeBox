@@ -170,6 +170,37 @@ clipped to its top half, then vanished entirely as the paper grew and squeezed i
 out. A layout asked to put one child on top of another at a fixed offset is a
 layout being used as a canvas.
 
+### The batteries
+
+A DPU-414 runs off a pack and prints about 3000 lines on a charge (manual
+§2.10). A thermal head on a tired battery does not stop — it prints fainter and
+slower until the paper comes out blank, and nobody notices for a page. That is
+the failure worth having in front of you, so it is modelled.
+
+The pack starts full and loses **0.01% per line**, the feed motor included since
+it runs off the same battery. One number drives everything:
+
+| | |
+|---|---|
+| above **90%** | full ink, lamp at full brightness, 400 ms a line |
+| 90% down to 60% | ink fades toward the paper colour, the lamp dims toward its unlit housing, the feed stretches toward 1400 ms |
+| at **60%** | ink *is* the paper colour, so the receipt is blank rather than missing |
+
+Ink, lamp and feed rate all read the same fade fraction, so they go together
+rather than each having its own idea of what a tired battery looks like. The
+lamp fades toward the colour of the unlit housing rather than to black, because
+a dead LED still has a lens.
+
+A **Replace batteries** button appears next to Tear off only once the pack is
+flat — a flat battery should be noticed because the paper came out blank, and
+the fix should then be obvious. The window title carries the level throughout.
+
+**Those thresholds are for testing** and are deliberately kind: 90% and 60% put
+the whole arc inside a couple of dozen reports. A real pack would fade far later
+and far lower. `PEEPEEBOX_PRN_DRAIN=<percent per line>` makes it quicker again —
+at 1% the fade starts after ten lines and the paper is blank after forty, which
+is one report.
+
 ### The 2008 reader had to move
 
 `igo8_reader_device` was attached on every image, on the grounds that no other

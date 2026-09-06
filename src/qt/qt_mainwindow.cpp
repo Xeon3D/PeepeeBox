@@ -1581,6 +1581,69 @@ static size_t   cp80_paper_at = 0;
 
 /* Sampled out of the photograph, so the drawn roll and the real one match. */
 #define CP80_PAPER_RGB 227, 228, 236
+#define CP80_INK_RGB    34,  34,  40
+
+/* The batteries.
+
+   A DPU-414 runs off a pack and prints about 3000 lines on a charge (manual
+   section 2.10), and a thermal head fed by a tired battery does not stop -- it
+   prints fainter and slower until the paper comes out blank and nobody notices
+   for a page.  That is the failure worth having in front of you.
+
+   The numbers below are for *testing* and are deliberately kind: fading starts
+   at 90% and the paper is blank by 60%, so the effect shows up in a few reports
+   instead of after three thousand lines.  A real pack would fade far later and
+   far lower.  PEEPEEBOX_PRN_DRAIN=<percent per line> makes it quicker still when
+   what is being checked is the thresholds themselves. */
+#define CP80_BATT_FULL     100.0
+#define CP80_BATT_DRAIN      0.01   /* per line printed */
+#define CP80_BATT_FADE      90.0    /* below this the ink starts going */
+#define CP80_BATT_FLAT      60.0    /* here it is white, and the head crawls */
+#define CP80_LINE_MS_FLAT 1400      /* feed interval on a flat pack */
+
+static double       cp80_batt    = CP80_BATT_FULL;
+static double       cp80_drain   = CP80_BATT_DRAIN;
+static QPushButton *cp80_replace = nullptr;
+
+/* 0 on a full pack, 1 at the flat end.  Everything the battery affects reads
+   this one number, so the ink, the lamp and the feed rate fade together instead
+   of each having its own idea of what a tired battery looks like. */
+static double
+cp80_batt_fade(void)
+{
+    if (cp80_batt >= CP80_BATT_FADE)
+        return 0.0;
+    if (cp80_batt <= CP80_BATT_FLAT)
+        return 1.0;
+    return (CP80_BATT_FADE - cp80_batt) / (CP80_BATT_FADE - CP80_BATT_FLAT);
+}
+
+static QColor
+cp80_mix(const QColor &a, const QColor &b, double t)
+{
+    return QColor(int(a.red()   + ((b.red()   - a.red())   * t)),
+                  int(a.green() + ((b.green() - a.green()) * t)),
+                  int(a.blue()  + ((b.blue()  - a.blue())  * t)));
+}
+
+/* One line's worth of print, and the head slowing down as it goes. */
+static void
+cp80_batt_spend(void)
+{
+    if (cp80_batt > 0.0) {
+        cp80_batt -= cp80_drain;
+        if (cp80_batt < 0.0)
+            cp80_batt = 0.0;
+    }
+
+    if (cp80_feed != nullptr) {
+        const int ms = int(CP80_LINE_MS
+                           + ((CP80_LINE_MS_FLAT - CP80_LINE_MS) * cp80_batt_fade()));
+
+        if (cp80_feed->interval() != ms)
+            cp80_feed->setInterval(ms);
+    }
+}
 
 static QPushButton *cp80_btn_on = nullptr;   /* ON LINE */
 static QPushButton *cp80_btn_fd = nullptr;   /* FEED    */
@@ -1651,7 +1714,12 @@ cp80_render()
 
         g.fillRect(r, QColor(CP80_PAPER_RGB));
         g.setFont(mono);
-        g.setPen(QColor(0x22, 0x22, 0x28));
+
+        /* Ink towards the colour of the paper as the pack goes: at the flat end
+           they are the same colour, which is a blank receipt rather than a
+           missing one -- the way a thermal printer actually fails. */
+        g.setPen(cp80_mix(QColor(CP80_INK_RGB), QColor(CP80_PAPER_RGB),
+                          cp80_batt_fade()));
 
         int y = r.top() + 6 + fm.ascent();
         for (const QString &line : qAsConst(lines)) {
@@ -1675,9 +1743,19 @@ cp80_render()
 
         g.setRenderHint(QPainter::Antialiasing, true);
         g.setPen(Qt::NoPen);
-        g.setBrush(on ? QColor(0x35, 0xd0, 0x4a) : QColor(0xe0, 0x22, 0x18));
+
+        /* The lamp dims with the pack, towards the unlit housing rather than to
+           black -- a dead LED still has a lens. */
+        g.setBrush(cp80_mix(on ? QColor(0x35, 0xd0, 0x4a) : QColor(0xe0, 0x22, 0x18),
+                            QColor(0x3a, 0x33, 0x2c), cp80_batt_fade()));
         g.drawRoundedRect(led, 1, 1);
     }
+
+    if (cp80_win != nullptr)
+        cp80_win->setWindowTitle(QObject::tr("Seiko DPU-414 — battery %1%")
+                                     .arg(cp80_batt, 0, 'f', 2));
+    if (cp80_replace != nullptr)
+        cp80_replace->setVisible(cp80_batt <= CP80_BATT_FLAT);
 
     g.end();
     cp80_view->setPixmap(out);
@@ -1711,6 +1789,7 @@ cp80_feed_line()
 
     cp80_printed += cp80_queued.left(at + 1);
     cp80_queued.remove(0, at + 1);
+    cp80_batt_spend();
     cp80_render();
 }
 
@@ -1810,7 +1889,9 @@ cp80_show(QWidget *parent)
             /* What the button does on the machine: advance the paper by a line.
                It is the printer's own feed, so it goes on the roll and not down
                the wire. */
+            /* The feed motor runs off the same pack as the head. */
             cp80_printed += QLatin1Char('\n');
+            cp80_batt_spend();
             cp80_render();
         });
 
@@ -1843,6 +1924,30 @@ cp80_show(QWidget *parent)
         auto *tear = new QPushButton(QObject::tr("Tear off"), cp80_win);
         auto *save = new QPushButton(QObject::tr("Save paper…"), cp80_win);
 
+        /* Only there when it is needed, which is the point: a flat pack should
+           be noticed because the paper came out blank, and the fix should then
+           be obvious rather than hidden in a menu. */
+        cp80_replace = new QPushButton(QObject::tr("Replace batteries"), cp80_win);
+        cp80_replace->hide();
+
+        QObject::connect(cp80_replace, &QPushButton::clicked, cp80_win, []() {
+            cp80_batt = CP80_BATT_FULL;
+            if (cp80_feed != nullptr)
+                cp80_feed->setInterval(CP80_LINE_MS);
+            cp80_render();
+        });
+
+        {
+            const char *drain = getenv("PEEPEEBOX_PRN_DRAIN");
+
+            if (drain != NULL) {
+                const double v = atof(drain);
+
+                if ((v > 0.0) && (v <= 100.0))
+                    cp80_drain = v;
+            }
+        }
+
         QObject::connect(tear, &QPushButton::clicked, cp80_win, []() {
             prn_cp80_clear();
             cp80_queued.clear();
@@ -1873,6 +1978,7 @@ cp80_show(QWidget *parent)
 
         auto *row = new QHBoxLayout;
 
+        row->addWidget(cp80_replace);
         row->addStretch(1);
         row->addWidget(tear);
         row->addWidget(save);
