@@ -203,11 +203,39 @@ Straight from §2.11, *When the Battery pack Gets Low During Printing*:
   arrived and cannot be printed;
 - the operator connects the AC adapter and **pushes ONLINE**, and the rest prints.
 
-All three are implemented, including the last one being a deliberate two-step:
-connecting the charger does not restart the job on its own, because the manual
-has the operator press ONLINE and a printer that resumed by itself would be a
-surprise. Pressing ONLINE on a flat pack with nothing plugged in does what it
-does on the machine — nothing, and says so in the log.
+The pack is called flat at **4%**, not zero: a Ni-MH pack driving a thermal head
+has no useful print left well before it is empty, and the machine stays *on* at
+that point — the manual has it go offline with the lamp blinking, not shut down.
+
+There is **a percent of hysteresis**: it drops offline at 4% and will not print
+again until 5%. Without it a pack nursed along on the adapter would drop offline
+on every second line at the threshold; with it, it prints a burst, gives out,
+charges a little and prints another, which is what nursing a flat pack is like.
+Pressing ONLINE below 5% puts it online and the first print attempt puts it
+straight back off, which is what the machine does and what the operator sees when
+they press it too early. It says so in the log.
+
+Coming back is deliberately two moves — connecting the adapter does not restart
+the job, because the manual has the operator press ONLINE and a printer that
+resumed by itself would be a surprise.
+
+### On the adapter
+
+**Whenever the adapter is plugged in the print is black**, whatever the pack is
+at: 6.5 V at 2 A is more than the pack ever delivers, so the head is driven
+properly and runs at full speed too. Unplug it and the pack dictates the ink
+again.
+
+That is why the fade is stored **per line** rather than read from the pack when
+the paper is drawn. A receipt half printed on the adapter and half on the pack
+has to show both, and there is no single number for the roll that can.
+
+Charging is a state rather than a button: the adapter is plugged in, the power is
+on, the pack is not full, and it is not printing. Putting the printer back online
+with something to print stops the charge until the job is done, which is §2.10's
+"charging is temporarily disrupted while the printer is printing". The button
+plugs the adapter in and unplugs it again; the title says which of connected,
+charging or neither it is.
 
 The buffer is **28,000 characters** (§2.9). Past that it stops growing and says
 so once; a real printer would be holding the host off with flow control.

@@ -1645,11 +1645,15 @@ static size_t   cp80_paper_at = 0;
 #define CP80_FEED_COST       2.0
 #define CP80_BATT_CHARS   (CP80_BATT_LINES * (CP80_BATT_COLS + CP80_FEED_COST))
 
-/* The head weakens before it stops.  The manual does not quantify that either;
-   what it does say is that the printer goes OFFLINE when the pack is low, which
-   is what happens at zero here. */
+/* The head weakens before it stops, and then the pack is called flat with
+   something still in it -- 4%, not 0.  A Ni-MH pack driving a thermal head has
+   no useful print left well before it is empty, and the machine stays *on* at
+   that point: the manual has it go OFFLINE with the Power LED blinking, not shut
+   down.  The fade runs out at the same figure, so the last line printed is the
+   faintest one and nothing prints after it. */
 #define CP80_BATT_FADE      12.0    /* the last stretch, where print goes faint */
-#define CP80_BATT_FLAT       0.0    /* nothing left: offline */
+#define CP80_BATT_FLAT       4.0    /* flat: offline, Power LED blinking */
+#define CP80_BATT_RESUME     5.0    /* and this much before it will print again */
 #define CP80_LINE_MS_FLAT 1400      /* feed interval as the pack gives out */
 #define CP80_CHARGE_MINS   600.0    /* about ten hours, per the manual */
 #define CP80_BLINK_MS      250      /* the LED tick; 1 Hz and 2 Hz divide into it */
@@ -1664,7 +1668,8 @@ static double       cp80_batt     = CP80_BATT_FULL;
 static double       cp80_drain    = 1.0;     /* multiplier, for testing */
 static double       cp80_charge   = CP80_CHARGE_MINS;
 static bool         cp80_power    = true;    /* the switch on the left side */
-static bool         cp80_charging = false;   /* the AC adapter is plugged in */
+static bool         cp80_ac       = false;   /* the AC adapter is plugged in */
+static bool         cp80_charging = false;   /* and is actually putting charge in */
 static int          cp80_blink    = 0;       /* CP80_BLINK_MS ticks, for the LEDs */
 static QPushButton *cp80_replace  = nullptr;
 static QPushButton *cp80_pwr_btn  = nullptr;
@@ -1678,6 +1683,32 @@ static QLabel      *cp80_batt_lbl = nullptr;
    with the first lines black and the last ones gone.  Fading the whole roll to
    match the present level would rewrite history every time a line arrived. */
 static QVector<double> cp80_line_batt;
+
+/* Enough to print with.  There is a percent of hysteresis on purpose: it drops
+   offline at 4 and will not print again until 5, so a pack nursed along on the
+   adapter prints a burst, gives out, charges a little and prints another --
+   rather than dropping offline on every second line at the threshold.  The
+   adapter does not exempt it: the head still comes off the pack. */
+static bool
+cp80_can_print(void)
+{
+    return cp80_power && (cp80_batt >= CP80_BATT_RESUME);
+}
+
+/* What the head is actually being driven by, as a battery level.
+
+   Plugged in, that is the adapter: 6.5 V at 2 A, which is more than the pack
+   ever delivers, so the print comes out black and at full speed however tired
+   the pack is.  It is the pack only when it is on its own.
+
+   That is why the fade is stored per line rather than read from the pack when
+   the paper is drawn -- a receipt half of which was printed on the adapter has
+   to show both, and there is no single number for the roll that can. */
+static double
+cp80_drive_level(void)
+{
+    return cp80_ac ? CP80_BATT_FULL : cp80_batt;
+}
 
 /* 0 on a full pack, 1 at the flat end. */
 static double
@@ -1759,7 +1790,7 @@ cp80_batt_spend(const QString &line)
     if (cp80_feed != nullptr) {
         const int ms = int(CP80_LINE_MS
                            + ((CP80_LINE_MS_FLAT - CP80_LINE_MS)
-                              * cp80_fade_at(cp80_batt)));
+                              * cp80_fade_at(cp80_drive_level())));
 
         if (cp80_feed->interval() != ms)
             cp80_feed->setInterval(ms);
@@ -1768,10 +1799,10 @@ cp80_batt_spend(const QString &line)
     /* Flat.  The manual: the printer goes OFFLINE and the Power LED blinks about
        twice a second; anything still in the buffer stays there and the ONLINE
        lamp blinks over it until the adapter is connected and ONLINE pressed. */
-    if ((cp80_batt <= 0.0) && (prn_cp80_connected() != 0)) {
+    if ((cp80_batt <= CP80_BATT_FLAT) && (prn_cp80_connected() != 0)) {
         prn_cp80_set_connected(0);
-        pclog("CP80: the pack is flat -- offline, %d characters still buffered\n",
-              int(cp80_queued.size()));
+        pclog("CP80: pack down to %.2f%% -- offline, %d characters still "
+              "buffered\n", cp80_batt, int(cp80_queued.size()));
     }
 }
 
@@ -1928,16 +1959,16 @@ cp80_render()
             cp80_power ? QObject::tr("Seiko DPU-414 — pack %1%%2")
                              .arg(cp80_batt, 0, 'f', 2)
                              .arg(cp80_charging ? QObject::tr(", charging")
-                                                : QString())
+                                  : (cp80_ac ? QObject::tr(", on the adapter")
+                                             : QString()))
                        : QObject::tr("Seiko DPU-414 — off"));
 
-    if (cp80_replace != nullptr) {
-        cp80_replace->setVisible(cp80_charging
-                                 || (cp80_batt <= CP80_BATT_FADE));
-        cp80_replace->setEnabled(cp80_power && !cp80_charging);
-        cp80_replace->setText(cp80_charging ? QObject::tr("Charging…")
-                                            : QObject::tr("Charge batteries"));
-    }
+    /* Always there now that it unplugs as well as plugs in: an adapter is a
+       thing on the desk, not a button that appears when the machine is in
+       trouble. */
+    if (cp80_replace != nullptr)
+        cp80_replace->setText(cp80_ac ? QObject::tr("Disconnect adapter")
+                                      : QObject::tr("Connect adapter"));
     if (cp80_pwr_btn != nullptr)
         cp80_pwr_btn->setText(cp80_power ? QObject::tr("Power: on")
                                          : QObject::tr("Power: off"));
@@ -1979,9 +2010,20 @@ cp80_feed_line()
     /* A flat pack prints nothing, and neither does a printer that is off or
        offline.  What has already arrived stays in the buffer -- that is the
        state the manual describes, with the ONLINE lamp blinking over it. */
-    if (cp80_queued.isEmpty() || !cp80_power || (cp80_batt <= 0.0)
-        || (prn_cp80_connected() == 0))
+    if (cp80_queued.isEmpty() || !cp80_power || (prn_cp80_connected() == 0))
         return;
+
+    /* Put online on a pack that cannot drive the head: it goes straight back
+       off, which is what the machine does and what the operator sees when they
+       press ONLINE too early. */
+    if (!cp80_can_print()) {
+        prn_cp80_set_connected(0);
+        pclog("CP80: pack at %.2f%% is below the %.0f%% needed to print; "
+              "offline again with %d characters buffered\n",
+              cp80_batt, CP80_BATT_RESUME, int(cp80_queued.size()));
+        cp80_render();
+        return;
+    }
 
     const int at = cp80_queued.indexOf(QLatin1Char('\n'));
 
@@ -1995,7 +2037,7 @@ cp80_feed_line()
     cp80_printed += line;
     cp80_queued.remove(0, at + 1);
     cp80_batt_spend(line);
-    cp80_line_batt.append(cp80_batt);
+    cp80_line_batt.append(cp80_drive_level());
     cp80_render();
 }
 
@@ -2102,16 +2144,6 @@ cp80_show(QWidget *parent)
 
             const bool on = (prn_cp80_connected() == 0);
 
-            /* A flat pack does not come back because the button was pressed.
-               The manual: connect the adapter, then push ONLINE, and the rest of
-               the buffer prints.  Pressing it on a flat pack with nothing plugged
-               in does what it does on the machine -- nothing. */
-            if (on && (cp80_batt <= 0.0) && !cp80_charging) {
-                pclog("CP80: ONLINE pressed on a flat pack with no adapter; "
-                      "still offline\n");
-                return;
-            }
-
             prn_cp80_set_connected(on ? 1 : 0);
             cp80_render();                   /* the lamp follows */
         });
@@ -2122,11 +2154,11 @@ cp80_show(QWidget *parent)
                the wire. */
             /* The feed motor runs off the same pack as the head, and a blank
                line costs only the motor. */
-            if (!cp80_power || (cp80_batt <= 0.0))
+            if (!cp80_can_print())
                 return;
             cp80_printed += QLatin1Char('\n');
             cp80_batt_spend(QString());
-            cp80_line_batt.append(cp80_batt);
+            cp80_line_batt.append(cp80_drive_level());
             cp80_render();
         });
 
@@ -2173,7 +2205,7 @@ cp80_show(QWidget *parent)
                that it does not charge with the power off. */
             if (!cp80_power) {
                 prn_cp80_set_connected(0);
-                cp80_charging = false;
+                cp80_charging = false;   /* the adapter stays plugged in */
             }
             cp80_render();
         });
@@ -2181,15 +2213,15 @@ cp80_show(QWidget *parent)
         /* Only there when it is needed, which is the point: a flat pack should
            be noticed because the paper came out blank, and the fix should then
            be obvious rather than hidden in a menu. */
-        cp80_replace = new QPushButton(QObject::tr("Charge batteries"), cp80_win);
-        cp80_replace->hide();
+        cp80_replace = new QPushButton(QObject::tr("Connect adapter"), cp80_win);
         cp80_replace->setToolTip(QObject::tr(
-            "Connect the AC adapter. About ten hours from flat, per the manual; "
-            "PEEPEEBOX_PRN_CHARGE=<minutes> shortens it for testing"));
+            "Plug in or unplug the AC adapter. About ten hours from flat, per "
+            "the manual; PEEPEEBOX_PRN_CHARGE=<minutes> shortens it for testing"));
 
         QObject::connect(cp80_replace, &QPushButton::clicked, cp80_win, []() {
-            if (cp80_power)
-                cp80_charging = true;
+            cp80_ac = !cp80_ac;
+            if (!cp80_ac)
+                cp80_charging = false;
             /* Deliberately does not come back online by itself: the manual has
                the operator connect the adapter and then push ONLINE, and a
                printer that restarted a job on its own would be a surprise. */
@@ -2204,9 +2236,20 @@ cp80_show(QWidget *parent)
 
             cp80_blink++;
 
-            /* The manual: charging pauses while printing and resumes after, and
-               there is nothing to charge once the pack is full. */
-            if (cp80_charging && cp80_power && cp80_queued.isEmpty()) {
+            /* Charging is a state the machine is in, not a button that was
+               pressed: the adapter is plugged in, the power is on, the pack is
+               not full, and it is not printing.  The manual has charging pause
+               while printing and resume after, and printing is the printer being
+               online with something still to print -- a buffer sitting there
+               with the printer offline is not printing and should not hold the
+               charge up. */
+            const bool printing = (prn_cp80_connected() != 0)
+                                && !cp80_queued.isEmpty();
+
+            cp80_charging = cp80_ac && cp80_power && !printing
+                          && (cp80_batt < CP80_BATT_FULL);
+
+            if (cp80_charging) {
                 cp80_batt += (CP80_BATT_FULL / (cp80_charge * 60.0))
                            * (CP80_BLINK_MS / 1000.0);
                 cp80_batt_dirty = true;
@@ -2225,8 +2268,8 @@ cp80_show(QWidget *parent)
                 cp80_batt_store();
 
             /* Repaint only when something on the machine is actually moving. */
-            if (was_charging || cp80_charging || (cp80_batt <= CP80_BATT_FLAT)
-                || !cp80_queued.isEmpty())
+            if (was_charging || cp80_charging || cp80_ac
+                || (cp80_batt <= CP80_BATT_FLAT) || !cp80_queued.isEmpty())
                 cp80_render();
         });
         cp80_blink_t->start(CP80_BLINK_MS);
@@ -2299,11 +2342,10 @@ cp80_show(QWidget *parent)
         QObject::connect(cp80_batt_sl, &QSlider::valueChanged, cp80_win, [](int v) {
             cp80_batt       = double(v);
             cp80_batt_dirty = true;
-            cp80_charging   = false;      /* dragging it is not charging it */
             if (cp80_feed != nullptr)
                 cp80_feed->setInterval(int(CP80_LINE_MS
                                            + ((CP80_LINE_MS_FLAT - CP80_LINE_MS)
-                                              * cp80_fade_at(cp80_batt))));
+                                              * cp80_fade_at(cp80_drive_level()))));
             cp80_batt_store();
             cp80_render();
         });
