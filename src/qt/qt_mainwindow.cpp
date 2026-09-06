@@ -1572,6 +1572,17 @@ static size_t   cp80_paper_at = 0;
 #define CP80_LED_W      14
 #define CP80_LED_H       6
 
+/* The Power LED is not on the panel: it is a lens in the front edge, below and
+   left of the buttons.  Measured at x 41..65 by y 411..414, inset by a pixel.
+
+   The Power *switch* is on the left-hand side of the machine and so is not in
+   this photograph at all, which is why it is a labelled button in the row below
+   rather than an invisible one on the picture. */
+#define CP80_LED_PWR_X  42
+#define CP80_LED_PWR_Y 411
+#define CP80_LED_PWR_W  23
+#define CP80_LED_PWR_H   4
+
 #define CP80_HEAD_W   460
 #define CP80_SCALE(v) (((v) * CP80_HEAD_W) / CP80_IMG_W)
 #define CP80_HEAD_H   CP80_SCALE(CP80_IMG_H)
@@ -1583,39 +1594,61 @@ static size_t   cp80_paper_at = 0;
 #define CP80_PAPER_RGB 227, 228, 236
 #define CP80_INK_RGB    34,  34,  40
 
-/* The batteries.
+/* The battery pack.
 
-   A DPU-414 runs off a pack and prints about 3000 lines on a charge (manual
-   section 2.10), and a thermal head fed by a tired battery does not stop -- it
-   prints fainter and slower until the paper comes out blank and nobody notices
-   for a page.  That is the failure worth having in front of you.
+   A **BP-4005-E**: Ni-MH, 4.8 V, about 120 g, and good for **3000 lines** on a
+   charge (manual sections 2.10 and 6.1).  So a line costs 100/3000 of a pack,
+   and that number is the manual's rather than a guess.
 
-   The numbers below are for *testing* and are deliberately kind: fading starts
-   at 90% and the paper is blank by 60%, so the effect shows up in a few reports
-   instead of after three thousand lines.  A real pack would fade far later and
-   far lower.  PEEPEEBOX_PRN_DRAIN=<percent per line> makes it quicker still when
-   what is being checked is the thresholds themselves. */
+   A thermal head on a tired pack does not stop.  It prints fainter and slower
+   until the paper comes out blank and nobody notices for a page, which is the
+   failure worth being able to see.
+
+   The two thresholds are for *testing* and are deliberately kind -- fading from
+   90% and blank by 60% puts the whole arc inside a few reports where a real pack
+   would fade far later and far lower.  PEEPEEBOX_PRN_DRAIN=<percent per line>
+   makes it quicker again.
+
+   Charging is the manual's too: about **ten hours** from flat, the Power LED
+   blinking once a second while it happens and going steady when it is done
+   (section 2.10, Charging the Battery pack).  Charging stops while printing and
+   resumes after, and the printer will not charge with the power off.
+   PEEPEEBOX_PRN_CHARGE=<minutes> shortens it for testing, since ten hours is not
+   a thing anybody will sit through. */
 #define CP80_BATT_FULL     100.0
-#define CP80_BATT_DRAIN      0.01   /* per line printed */
+#define CP80_BATT_LINES   3000.0    /* a full pack, per the manual */
 #define CP80_BATT_FADE      90.0    /* below this the ink starts going */
 #define CP80_BATT_FLAT      60.0    /* here it is white, and the head crawls */
 #define CP80_LINE_MS_FLAT 1400      /* feed interval on a flat pack */
+#define CP80_CHARGE_MINS   600.0    /* about ten hours, per the manual */
+#define CP80_BLINK_MS      250      /* the LED tick; 1 Hz and 2 Hz divide into it */
 
-static double       cp80_batt    = CP80_BATT_FULL;
-static double       cp80_drain   = CP80_BATT_DRAIN;
-static QPushButton *cp80_replace = nullptr;
+static double       cp80_batt     = CP80_BATT_FULL;
+static double       cp80_drain    = CP80_BATT_FULL / CP80_BATT_LINES;
+static double       cp80_charge   = CP80_CHARGE_MINS;
+static bool         cp80_power    = true;    /* the switch on the left side */
+static bool         cp80_charging = false;   /* the AC adapter is plugged in */
+static int          cp80_blink    = 0;       /* CP80_BLINK_MS ticks, for the LEDs */
+static QPushButton *cp80_replace  = nullptr;
+static QPushButton *cp80_pwr_btn  = nullptr;
+static QTimer      *cp80_blink_t  = nullptr;
 
-/* 0 on a full pack, 1 at the flat end.  Everything the battery affects reads
-   this one number, so the ink, the lamp and the feed rate fade together instead
-   of each having its own idea of what a tired battery looks like. */
+/* The battery level each printed line was printed at.  One entry per line of
+   cp80_printed, because the fade belongs to the line and not to the printer: a
+   receipt that started on a good pack and ended on a flat one should show that,
+   with the first lines black and the last ones gone.  Fading the whole roll to
+   match the present level would rewrite history every time a line arrived. */
+static QVector<double> cp80_line_batt;
+
+/* 0 on a full pack, 1 at the flat end. */
 static double
-cp80_batt_fade(void)
+cp80_fade_at(double batt)
 {
-    if (cp80_batt >= CP80_BATT_FADE)
+    if (batt >= CP80_BATT_FADE)
         return 0.0;
-    if (cp80_batt <= CP80_BATT_FLAT)
+    if (batt <= CP80_BATT_FLAT)
         return 1.0;
-    return (CP80_BATT_FADE - cp80_batt) / (CP80_BATT_FADE - CP80_BATT_FLAT);
+    return (CP80_BATT_FADE - batt) / (CP80_BATT_FADE - CP80_BATT_FLAT);
 }
 
 static QColor
@@ -1626,6 +1659,45 @@ cp80_mix(const QColor &a, const QColor &b, double t)
                   int(a.blue()  + ((b.blue()  - a.blue())  * t)));
 }
 
+/* The pack keeps its charge across runs, in the rig's nvr directory beside the
+   machine's own nvram.  A pack that starts full every boot is not a pack, and
+   the whole point of the thing is that it runs down over a session and has to be
+   put back -- which cannot be felt if closing the window undoes it.
+
+   Absent or unreadable means a new pack, full.  Text rather than a struct
+   because it is one number and being able to read it with an editor is worth
+   more than four saved bytes. */
+#define CP80_NVR_FILE "dpu414.nvr"
+
+static bool cp80_batt_dirty = false;
+
+static void
+cp80_batt_load(void)
+{
+    FILE  *f = plat_fopen(nvr_path((char *) CP80_NVR_FILE), "rt");
+    double v = 0.0;
+
+    if (f == nullptr)
+        return;                        /* no file: a fresh pack */
+
+    if ((fscanf(f, "%lf", &v) == 1) && (v >= 0.0) && (v <= CP80_BATT_FULL))
+        cp80_batt = v;
+    fclose(f);
+}
+
+static void
+cp80_batt_store(void)
+{
+    FILE *f = plat_fopen(nvr_path((char *) CP80_NVR_FILE), "wt");
+
+    if (f == nullptr)
+        return;
+
+    fprintf(f, "%.4f\n", cp80_batt);
+    fclose(f);
+    cp80_batt_dirty = false;
+}
+
 /* One line's worth of print, and the head slowing down as it goes. */
 static void
 cp80_batt_spend(void)
@@ -1634,11 +1706,13 @@ cp80_batt_spend(void)
         cp80_batt -= cp80_drain;
         if (cp80_batt < 0.0)
             cp80_batt = 0.0;
+        cp80_batt_dirty = true;
     }
 
     if (cp80_feed != nullptr) {
         const int ms = int(CP80_LINE_MS
-                           + ((CP80_LINE_MS_FLAT - CP80_LINE_MS) * cp80_batt_fade()));
+                           + ((CP80_LINE_MS_FLAT - CP80_LINE_MS)
+                              * cp80_fade_at(cp80_batt)));
 
         if (cp80_feed->interval() != ms)
             cp80_feed->setInterval(ms);
@@ -1715,15 +1789,20 @@ cp80_render()
         g.fillRect(r, QColor(CP80_PAPER_RGB));
         g.setFont(mono);
 
-        /* Ink towards the colour of the paper as the pack goes: at the flat end
-           they are the same colour, which is a blank receipt rather than a
-           missing one -- the way a thermal printer actually fails. */
-        g.setPen(cp80_mix(QColor(CP80_INK_RGB), QColor(CP80_PAPER_RGB),
-                          cp80_batt_fade()));
-
+        /* Each line in the ink it was printed with.  A receipt that began on a
+           good pack and finished on a flat one reads that way -- black at the
+           top, gone at the bottom -- which is what the paper would look like.
+           Colouring the whole roll from the present level would rewrite the
+           earlier lines every time a new one arrived. */
         int y = r.top() + 6 + fm.ascent();
-        for (const QString &line : qAsConst(lines)) {
-            g.drawText(r.left() + 8, y, line);
+        for (int i = 0; i < lines.size(); i++) {
+            const int    at = first + i;
+            const double bt = (at < cp80_line_batt.size())
+                            ? cp80_line_batt.at(at) : CP80_BATT_FULL;
+
+            g.setPen(cp80_mix(QColor(CP80_INK_RGB), QColor(CP80_PAPER_RGB),
+                              cp80_fade_at(bt)));
+            g.drawText(r.left() + 8, y, lines.at(i));
             y += lh;
         }
 
@@ -1733,29 +1812,66 @@ cp80_render()
             cp80_scroll->setGeometry(r.right() - 12, r.top() + 4, 9, paperH - 8);
     }
 
-    /* The lamp that is lit says which one it is.  Green for ON LINE, amber for
-       OFF LINE / PAPER END, exactly as the panel is labelled. */
+    /* The three lamps.  They are lit or they are not -- no dimming with the
+       pack, because that is not what the machine does: a low battery is
+       announced by the Power LED blinking, and the manual is explicit about the
+       rates.  Section 2.10: once a second while charging, steady when full.
+       Section, low pack during printing: about twice a second, and the printer
+       goes OFFLINE. */
     {
-        const bool  on  = (prn_cp80_connected() != 0);
-        const int   ly  = -top + CP80_SCALE(on ? CP80_LED_ON_Y : CP80_LED_OFF_Y);
-        const QRect led(CP80_SCALE(on ? CP80_LED_ON_X : CP80_LED_OFF_X), ly,
-                        CP80_SCALE(CP80_LED_W), CP80_SCALE(CP80_LED_H));
+        const bool online = cp80_power && (prn_cp80_connected() != 0);
+        const bool low    = (cp80_batt <= CP80_BATT_FLAT);
+        const bool full   = (cp80_batt >= CP80_BATT_FULL);
 
         g.setRenderHint(QPainter::Antialiasing, true);
         g.setPen(Qt::NoPen);
 
-        /* The lamp dims with the pack, towards the unlit housing rather than to
-           black -- a dead LED still has a lens. */
-        g.setBrush(cp80_mix(on ? QColor(0x35, 0xd0, 0x4a) : QColor(0xe0, 0x22, 0x18),
-                            QColor(0x3a, 0x33, 0x2c), cp80_batt_fade()));
-        g.drawRoundedRect(led, 1, 1);
+        if (cp80_power) {
+            const int   ly = -top + CP80_SCALE(online ? CP80_LED_ON_Y
+                                                      : CP80_LED_OFF_Y);
+            const QRect led(CP80_SCALE(online ? CP80_LED_ON_X : CP80_LED_OFF_X),
+                            ly, CP80_SCALE(CP80_LED_W), CP80_SCALE(CP80_LED_H));
+
+            g.setBrush(online ? QColor(0x35, 0xd0, 0x4a) : QColor(0xe0, 0x22, 0x18));
+            g.drawRoundedRect(led, 1, 1);
+        }
+
+        /* 250 ms a tick: /4 is once a second, /2 is twice. */
+        bool pwr_lit = cp80_power;
+
+        if (cp80_power && cp80_charging && !full)
+            pwr_lit = ((cp80_blink / 4) & 1) == 0;
+        else if (cp80_power && low)
+            pwr_lit = ((cp80_blink / 2) & 1) == 0;
+
+        if (pwr_lit) {
+            const QRect pwr(CP80_SCALE(CP80_LED_PWR_X),
+                            -top + CP80_SCALE(CP80_LED_PWR_Y),
+                            CP80_SCALE(CP80_LED_PWR_W), CP80_SCALE(CP80_LED_PWR_H));
+
+            g.setBrush(QColor(0x35, 0xd0, 0x4a));
+            g.drawRect(pwr);
+        }
     }
 
     if (cp80_win != nullptr)
-        cp80_win->setWindowTitle(QObject::tr("Seiko DPU-414 — battery %1%")
-                                     .arg(cp80_batt, 0, 'f', 2));
-    if (cp80_replace != nullptr)
-        cp80_replace->setVisible(cp80_batt <= CP80_BATT_FLAT);
+        cp80_win->setWindowTitle(
+            cp80_power ? QObject::tr("Seiko DPU-414 — pack %1%%2")
+                             .arg(cp80_batt, 0, 'f', 2)
+                             .arg(cp80_charging ? QObject::tr(", charging")
+                                                : QString())
+                       : QObject::tr("Seiko DPU-414 — off"));
+
+    if (cp80_replace != nullptr) {
+        cp80_replace->setVisible(cp80_charging
+                                 || (cp80_batt <= CP80_BATT_FLAT));
+        cp80_replace->setEnabled(cp80_power && !cp80_charging);
+        cp80_replace->setText(cp80_charging ? QObject::tr("Charging…")
+                                            : QObject::tr("Charge batteries"));
+    }
+    if (cp80_pwr_btn != nullptr)
+        cp80_pwr_btn->setText(cp80_power ? QObject::tr("Power: on")
+                                         : QObject::tr("Power: off"));
 
     g.end();
     cp80_view->setPixmap(out);
@@ -1790,6 +1906,7 @@ cp80_feed_line()
     cp80_printed += cp80_queued.left(at + 1);
     cp80_queued.remove(0, at + 1);
     cp80_batt_spend();
+    cp80_line_batt.append(cp80_batt);
     cp80_render();
 }
 
@@ -1813,6 +1930,7 @@ cp80_pump()
         if (reset) {
             cp80_queued.clear();
             cp80_printed.clear();
+            cp80_line_batt.clear();
             cp80_render();
         }
         if (n == 0)
@@ -1890,8 +2008,11 @@ cp80_show(QWidget *parent)
                It is the printer's own feed, so it goes on the roll and not down
                the wire. */
             /* The feed motor runs off the same pack as the head. */
+            if (!cp80_power)
+                return;
             cp80_printed += QLatin1Char('\n');
             cp80_batt_spend();
+            cp80_line_batt.append(cp80_batt);
             cp80_render();
         });
 
@@ -1924,21 +2045,80 @@ cp80_show(QWidget *parent)
         auto *tear = new QPushButton(QObject::tr("Tear off"), cp80_win);
         auto *save = new QPushButton(QObject::tr("Save paper…"), cp80_win);
 
-        /* Only there when it is needed, which is the point: a flat pack should
-           be noticed because the paper came out blank, and the fix should then
-           be obvious rather than hidden in a menu. */
-        cp80_replace = new QPushButton(QObject::tr("Replace batteries"), cp80_win);
-        cp80_replace->hide();
+        /* The power switch is on the left-hand side of the machine, which this
+           photograph does not show, so it is a labelled button rather than an
+           invisible one on the picture.  Everything else on the panel is where
+           the panel has it. */
+        cp80_pwr_btn = new QPushButton(QObject::tr("Power: on"), cp80_win);
 
-        QObject::connect(cp80_replace, &QPushButton::clicked, cp80_win, []() {
-            cp80_batt = CP80_BATT_FULL;
-            if (cp80_feed != nullptr)
-                cp80_feed->setInterval(CP80_LINE_MS);
+        QObject::connect(cp80_pwr_btn, &QPushButton::clicked, cp80_win, []() {
+            cp80_power = !cp80_power;
+
+            /* A printer that is switched off is not a printer that is quiet:
+               the guest should see no cable at all.  And the manual is explicit
+               that it does not charge with the power off. */
+            if (!cp80_power) {
+                prn_cp80_set_connected(0);
+                cp80_charging = false;
+            }
             cp80_render();
         });
 
+        /* Only there when it is needed, which is the point: a flat pack should
+           be noticed because the paper came out blank, and the fix should then
+           be obvious rather than hidden in a menu. */
+        cp80_replace = new QPushButton(QObject::tr("Charge batteries"), cp80_win);
+        cp80_replace->hide();
+        cp80_replace->setToolTip(QObject::tr(
+            "Connect the AC adapter. About ten hours from flat, per the manual; "
+            "PEEPEEBOX_PRN_CHARGE=<minutes> shortens it for testing"));
+
+        QObject::connect(cp80_replace, &QPushButton::clicked, cp80_win, []() {
+            if (cp80_power)
+                cp80_charging = true;
+            cp80_render();
+        });
+
+        /* The lamps blink, so something has to tick even when nothing is being
+           printed; the same tick moves the charge along. */
+        cp80_blink_t = new QTimer(cp80_win);
+        QObject::connect(cp80_blink_t, &QTimer::timeout, cp80_win, []() {
+            const bool was_charging = cp80_charging;
+
+            cp80_blink++;
+
+            /* The manual: charging pauses while printing and resumes after, and
+               there is nothing to charge once the pack is full. */
+            if (cp80_charging && cp80_power && cp80_queued.isEmpty()) {
+                cp80_batt += (CP80_BATT_FULL / (cp80_charge * 60.0))
+                           * (CP80_BLINK_MS / 1000.0);
+                cp80_batt_dirty = true;
+                if (cp80_batt >= CP80_BATT_FULL) {
+                    cp80_batt     = CP80_BATT_FULL;
+                    cp80_charging = false;
+                    if (cp80_feed != nullptr)
+                        cp80_feed->setInterval(CP80_LINE_MS);
+                }
+            }
+
+            /* Written at most every couple of seconds rather than on every
+               line: it is one small file, but a print is forty lines and a
+               charge is a tick every quarter second. */
+            if (cp80_batt_dirty && ((cp80_blink % 8) == 0))
+                cp80_batt_store();
+
+            /* Repaint only when something on the machine is actually moving. */
+            if (was_charging || cp80_charging || (cp80_batt <= CP80_BATT_FLAT))
+                cp80_render();
+        });
+        cp80_blink_t->start(CP80_BLINK_MS);
+
+        /* Whatever the pack was left at, before anything can spend it. */
+        cp80_batt_load();
+
         {
-            const char *drain = getenv("PEEPEEBOX_PRN_DRAIN");
+            const char *drain  = getenv("PEEPEEBOX_PRN_DRAIN");
+            const char *charge = getenv("PEEPEEBOX_PRN_CHARGE");
 
             if (drain != NULL) {
                 const double v = atof(drain);
@@ -1946,12 +2126,19 @@ cp80_show(QWidget *parent)
                 if ((v > 0.0) && (v <= 100.0))
                     cp80_drain = v;
             }
+            if (charge != NULL) {
+                const double v = atof(charge);
+
+                if (v > 0.0)
+                    cp80_charge = v;
+            }
         }
 
         QObject::connect(tear, &QPushButton::clicked, cp80_win, []() {
             prn_cp80_clear();
             cp80_queued.clear();
             cp80_printed.clear();
+            cp80_line_batt.clear();
             cp80_paper_at = 0;
             cp80_render();
         });
@@ -1978,6 +2165,7 @@ cp80_show(QWidget *parent)
 
         auto *row = new QHBoxLayout;
 
+        row->addWidget(cp80_pwr_btn);
         row->addWidget(cp80_replace);
         row->addStretch(1);
         row->addWidget(tear);

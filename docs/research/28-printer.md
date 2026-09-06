@@ -170,36 +170,53 @@ clipped to its top half, then vanished entirely as the paper grew and squeezed i
 out. A layout asked to put one child on top of another at a fixed offset is a
 layout being used as a canvas.
 
-### The batteries
+### The battery pack
 
-A DPU-414 runs off a pack and prints about 3000 lines on a charge (manual
-§2.10). A thermal head on a tired battery does not stop — it prints fainter and
-slower until the paper comes out blank, and nobody notices for a page. That is
-the failure worth having in front of you, so it is modelled.
+A **BP-4005-E**: Ni-MH, 4.8 V, about 120 g, good for **3000 lines** on a charge
+(manual §2.10 and §6.1). So a line costs 100/3000 of a pack — the manual's
+number, not a guess. A thermal head on a tired pack does not stop; it prints
+fainter and slower until the paper comes out blank and nobody notices for a page,
+which is the failure worth being able to see.
 
-The pack starts full and loses **0.01% per line**, the feed motor included since
-it runs off the same battery. One number drives everything:
+**Each line keeps the level it was printed at.** A receipt that began on a good
+pack and finished on a flat one reads that way — black at the top, gone at the
+bottom. Colouring the whole roll from the present level would rewrite the earlier
+lines every time a new one arrived, which is not what paper does.
 
 | | |
 |---|---|
-| above **90%** | full ink, lamp at full brightness, 400 ms a line |
-| 90% down to 60% | ink fades toward the paper colour, the lamp dims toward its unlit housing, the feed stretches toward 1400 ms |
+| above **90%** | full ink, 400 ms a line |
+| 90% → 60% | ink fades toward the paper colour, feed stretches toward 1400 ms |
 | at **60%** | ink *is* the paper colour, so the receipt is blank rather than missing |
 
-Ink, lamp and feed rate all read the same fade fraction, so they go together
-rather than each having its own idea of what a tired battery looks like. The
-lamp fades toward the colour of the unlit housing rather than to black, because
-a dead LED still has a lens.
+Those two thresholds are for testing and deliberately kind; a real pack would
+fade far later and far lower. `PEEPEEBOX_PRN_DRAIN=<percent per line>` makes it
+quicker again.
 
-A **Replace batteries** button appears next to Tear off only once the pack is
-flat — a flat battery should be noticed because the paper came out blank, and
-the fix should then be obvious. The window title carries the level throughout.
+**The lamps do not fade.** That was tried and it is not what the machine does —
+a low pack is announced by the Power LED blinking, and the manual gives the
+rates: once a second while charging and steady when full (§2.10), about twice a
+second when the pack is low during printing, at which point the printer goes
+OFFLINE (§2.11). The ONLINE and OFFLINE lamps are simply lit or not.
 
-**Those thresholds are for testing** and are deliberately kind: 90% and 60% put
-the whole arc inside a couple of dozen reports. A real pack would fade far later
-and far lower. `PEEPEEBOX_PRN_DRAIN=<percent per line>` makes it quicker again —
-at 1% the fade starts after ten lines and the paper is blank after forty, which
-is one report.
+**Charging** is the AC adapter, and the manual says **about ten hours** from
+flat, so no arithmetic on the adapter's 6.5 V / 2 A is needed. It pauses while
+printing and resumes after, and the printer will not charge with the power off —
+all three are the manual's. `PEEPEEBOX_PRN_CHARGE=<minutes>` shortens it for
+testing, since nobody will sit through ten hours.
+
+**The pack persists** in `nvr/dpu414.nvr` beside the machine's own nvram, written
+at most every couple of seconds while it moves. A pack that starts full every
+boot is not a pack: the point is that it runs down over a session and has to be
+put back, which cannot be felt if closing the window undoes it. Missing or
+unreadable means a new pack, full. Text, because it is one number and reading it
+with an editor is worth more than four saved bytes.
+
+**The panel**: the Power LED is a lens in the front edge at x 41..65, y 411..414,
+not on the top panel. The Power *switch* is on the left-hand side of the machine
+and so is not in the photograph at all, which is why it is a labelled button in
+the row below rather than an invisible one on the picture. **Charge batteries**
+appears beside it once the pack is low.
 
 ### The 2008 reader had to move
 
