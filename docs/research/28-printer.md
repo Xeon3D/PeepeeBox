@@ -156,7 +156,19 @@ faster.
 
 The panel works: **ON LINE** connects and disconnects and lights the green lamp,
 **OFF LINE** lights red, and **FEED** advances the roll by a line — the printer's
-own paper feed, so it goes on the paper and not down the wire.
+own paper feed, so it goes on the paper and not down the wire. Both are invisible
+buttons over the ones in the photograph, children of the picture so they travel
+with it as the roll grows.
+
+It opens against the right edge of the emulator, level with its top — the real
+printer stood beside the machine, and the paper is meant to be watched while the
+guest is doing something. First show only; after that it stays where it is put.
+
+Everything in that window is painted into one pixmap rather than laid out. Two
+attempts at overlapping a picture and a text widget both failed: the machine was
+clipped to its top half, then vanished entirely as the paper grew and squeezed it
+out. A layout asked to put one child on top of another at a fixed offset is a
+layout being used as a canvas.
 
 ### The 2008 reader had to move
 
