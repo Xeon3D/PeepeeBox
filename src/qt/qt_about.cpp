@@ -67,14 +67,19 @@ About::About(QWidget *parent)
                        + tr("This fork was entirely vibecoded by Claude, steered by the "
                             "HUEG PP team.")
                        + "<br><br>"
-                       + tr("An emulator of old computers\n\nAuthors: Miran Grča (OBattler), RichardG867, Jasmine Iwanek, TC1995, coldbrewed, Teemu Korhonen (Manaatti), Joakim L. Gilje, Adrien Moulin (elyosh), Daniel Balsom (gloriouscow), Cacodemon345, Fred N. van Kempen (waltje), Tiseno100, reenigne, and others.\n\nWith previous core contributions from Sarah Walker, leilei, JohnElliott, greatpsycho, and others.\n\nReleased under the GNU General Public License version 2 or later. See LICENSE for more information.").replace("\n", "<br>"));
+                       /* Upstream's block carried a description, its author
+                          roll and the licence in one string.  The credit above
+                          already says whose emulator this is and points at the
+                          project; what has to stay is the licence. */
+                       + tr("Released under the GNU General Public License "
+                            "version 2 or later. See LICENSE for more "
+                            "information."));
     setWindowTitle(tr("About %1").arg(EMU_NAME));
     const auto closeButton = addButton("OK", QMessageBox::ButtonRole::AcceptRole);
     setEscapeButton(closeButton);
-    const auto webSiteButton = addButton(EMU_SITE, QMessageBox::ButtonRole::HelpRole);
-    webSiteButton->connect(webSiteButton, &QPushButton::released, []() {
-        QDesktopServices::openUrl(QUrl("https://" EMU_SITE));
-    });
+    /* There was an 86box.net button here.  This is a fork's About box and the
+       text above already credits the project by name; a button that takes the
+       reader somewhere else is upstream's to offer, not this build's. */
     setIconPixmap(QIcon(EMU_ICON_PATH).pixmap(32, 32));
     setWindowFlags(Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
 }

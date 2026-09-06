@@ -256,7 +256,6 @@
    <addaction name="actionInsert_note_3"/>
    <addaction name="actionInsert_note_4"/>
    <addaction name="actionOperator_setup"/>
-   <addaction name="actionCalibrate"/>
    <addaction name="actionPrinter_paper"/>
   </widget>
   <action name="actionHard_Reset">
@@ -297,7 +296,7 @@
     <string>Coin &amp;1 (0.10 EUR)</string>
    </property>
    <property name="toolTip">
-    <string>Coin channel 1 -- 0.10 EUR as this image is programmed</string>
+    <string>Coin 1 — 0.10 EUR</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
@@ -312,7 +311,7 @@
     <string>Coin &amp;2 (0.20 EUR)</string>
    </property>
    <property name="toolTip">
-    <string>Coin channel 2 -- 0.20 EUR as this image is programmed</string>
+    <string>Coin 2 — 0.20 EUR</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
@@ -327,7 +326,7 @@
     <string>Coin &amp;3 (0.50 EUR)</string>
    </property>
    <property name="toolTip">
-    <string>Coin channel 3 -- 0.50 EUR as this image is programmed</string>
+    <string>Coin 3 — 0.50 EUR</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
@@ -342,7 +341,7 @@
     <string>Coin &amp;4 (1.00 EUR)</string>
    </property>
    <property name="toolTip">
-    <string>Coin channel 4 -- 1.00 EUR as this image is programmed</string>
+    <string>Coin 4 — 1.00 EUR</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
@@ -357,7 +356,7 @@
     <string>Coin &amp;5 (2.00 EUR)</string>
    </property>
    <property name="toolTip">
-    <string>Coin channel 5 -- 2.00 EUR as this image is programmed</string>
+    <string>Coin 5 — 2.00 EUR</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
@@ -372,7 +371,7 @@
     <string>Coin &amp;6 (TOKEN 10)</string>
    </property>
    <property name="toolTip">
-    <string>Coin channel 6 -- TOKEN 10 as this image is programmed</string>
+    <string>Coin 6 — TOKEN 10</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
@@ -387,7 +386,7 @@
     <string>Note &amp;1 (5 EUR)</string>
    </property>
    <property name="toolTip">
-    <string>Note channel 1 -- 5 EUR as this image is programmed</string>
+    <string>Note 1 — 5 EUR</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
@@ -402,7 +401,7 @@
     <string>Note &amp;2 (10 EUR)</string>
    </property>
    <property name="toolTip">
-    <string>Note channel 2 -- 10 EUR as this image is programmed</string>
+    <string>Note 2 — 10 EUR</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
@@ -417,7 +416,7 @@
     <string>Note &amp;3 (20 EUR)</string>
    </property>
    <property name="toolTip">
-    <string>Note channel 3 -- 20 EUR as this image is programmed</string>
+    <string>Note 3 — 20 EUR</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
@@ -432,7 +431,7 @@
     <string>Note &amp;4 (50 EUR)</string>
    </property>
    <property name="toolTip">
-    <string>Note channel 4 -- 50 EUR as this image is programmed</string>
+    <string>Note 4 — 50 EUR</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
@@ -447,7 +446,7 @@
     <string>&amp;Operator setup</string>
    </property>
    <property name="toolTip">
-    <string>Open the operator setup, as the cabinet's setup button did</string>
+    <string>Operator setup button</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
@@ -462,7 +461,7 @@
     <string>Second &amp;door button</string>
    </property>
    <property name="toolTip">
-    <string>The other button behind the cabinet door, on A1. From the menu the software answers it with a CRC check, which takes minutes. Whether it is also the touchscreen calibration somewhere else is not known.</string>
+    <string>Second door button (A1)</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
@@ -477,7 +476,7 @@
     <string>&amp;Receipt printer…</string>
    </property>
    <property name="toolTip">
-    <string>What the cabinet's serial printer would be printing, and the control codes that produced it</string>
+    <string>Receipt printer</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
@@ -492,7 +491,7 @@
     <string>&amp;Touchscreen…</string>
    </property>
    <property name="toolTip">
-    <string>Which touchscreen is fitted, and its options</string>
+    <string>Touchscreen</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
@@ -510,7 +509,7 @@
     <string>&amp;Floppy drive</string>
    </property>
    <property name="toolTip">
-    <string>Attach a 3.5&quot; 1.44M floppy drive</string>
+    <string>Floppy drive</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
@@ -528,7 +527,7 @@
     <string>CD-&amp;ROM drive</string>
    </property>
    <property name="toolTip">
-    <string>Attach a 52x CD-ROM drive</string>
+    <string>CD-ROM drive</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
