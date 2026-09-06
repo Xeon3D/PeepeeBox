@@ -19,6 +19,7 @@
  *          Copyright 2022 dob205
  */
 #include <QDebug>
+#include <cmath>
 
 #include "qt_mainwindow.hpp"
 #include "ui_qt_mainwindow.h"
@@ -1526,10 +1527,18 @@ static size_t   cp80_paper_at = 0;
    on screen.  Past that the earliest lines ride up out of sight. */
 #define CP80_MAX_LINES 20
 
-/* A 24-column impact printer of this vintage manages something like two and a
-   half lines a second, while the link feeding it runs at 9600 -- forty times
-   faster.  So the report arrives in one burst and the paper must not. */
-#define CP80_LINE_MS 400
+/* The serial link can fill the 28 KB buffer far faster than the mechanism can
+   empty it.  This is a moving-head DPU-414, not a stationary line-thermal
+   printer: SII rates normal text at at most 52.5 characters/second.  The head
+   uses eight horizontal steps per cell (seven dots and a space), matching the
+   420/422 Hz motor tone in both reference recordings.  A line also advances
+   nine character dots plus the default six-dot line spacing.  Optical tracking
+   of the roll in both reference videos measures ordinary advances at about
+   0.17--0.20 seconds, consistent with the first recording's 86 Hz low motor
+   group. */
+#define CP80_CHAR_CPS        52.5
+#define CP80_PAPER_MS       176.5
+#define CP80_FIRST_LINE_MS  400
 
 /* The DPU-414 is a top-exit printer: the paper rises out of the slot on top of
    the machine and lies over the lid.
@@ -1767,10 +1776,40 @@ cp80_batt_store(void)
 
 /* What one line costs the pack: the dots on it, plus the motor that moved the
    paper.  Spaces are free of everything but the motor. */
-static void
-cp80_batt_spend(const QString &line)
+static int
+cp80_print_columns(const QString &line)
+{
+    int columns = line.size();
+
+    while ((columns > 0) && line.at(columns - 1).isSpace())
+        columns--;
+    /* The Dataprint formats 24 columns.  Forty is the DPU-414's normal-mode
+       physical limit and also bounds malformed/unwrapped input. */
+    return qMin(columns, 40);
+}
+
+static int
+cp80_print_ink(const QString &line)
+{
+    int ink = 0;
+
+    for (const QChar &c : line)
+        if (!c.isSpace())
+            ink++;
+    return ink;
+}
+
+/* Spend the line and return the motor-speed scale in permille.  Logical seek
+   means a short line really is faster than a 40-column line; pacing every line
+   at one guessed fixed interval hid one of the DPU-414's defining behaviours. */
+static int
+cp80_batt_spend(const QString &line, bool pace_queue = true)
 {
     double cells = CP80_FEED_COST;
+    const int columns = cp80_print_columns(line);
+    const int base_ms = int(CP80_PAPER_MS
+                          + std::ceil((double) columns * 1000.0 / CP80_CHAR_CPS));
+    int       speed = 1000;
 
     for (const QChar &c : line) {
         if (!c.isSpace())
@@ -1788,13 +1827,15 @@ cp80_batt_spend(const QString &line)
         cp80_batt_dirty = true;
     }
 
-    if (cp80_feed != nullptr) {
-        const int ms = int(CP80_LINE_MS
-                           + ((CP80_LINE_MS_FLAT - CP80_LINE_MS)
+    {
+        const int ms = int(base_ms
+                           + ((CP80_LINE_MS_FLAT - base_ms)
                               * cp80_fade_at(cp80_drive_level())));
 
-        if (cp80_feed->interval() != ms)
+        if (pace_queue && (cp80_feed != nullptr) && (cp80_feed->interval() != ms))
             cp80_feed->setInterval(ms);
+
+        speed = qBound(100, (base_ms * 1000) / qMax(ms, 1), 1000);
     }
 
     /* Flat.  The manual: the printer goes OFFLINE and the Power LED blinks about
@@ -1805,6 +1846,8 @@ cp80_batt_spend(const QString &line)
         pclog("CP80: pack down to %.2f%% -- offline, %d characters still "
               "buffered\n", cp80_batt, int(cp80_queued.size()));
     }
+
+    return speed;
 }
 
 static QPushButton *cp80_btn_on = nullptr;   /* ON LINE */
@@ -2043,10 +2086,14 @@ cp80_feed_line()
         return;
 
     const QString line = cp80_queued.left(at + 1);
+    const int     columns = cp80_print_columns(line);
+    const int     ink     = cp80_print_ink(line);
 
     cp80_printed += line;
     cp80_queued.remove(0, at + 1);
-    cp80_batt_spend(line);
+    const int speed = cp80_batt_spend(line);
+
+    prn_cp80_sound_line(unsigned(columns), unsigned(ink), unsigned(speed));
     cp80_line_batt.append(cp80_drive_level());
     cp80_render();
 }
@@ -2167,7 +2214,9 @@ cp80_show(QWidget *parent)
             if (!cp80_can_print())
                 return;
             cp80_printed += QLatin1Char('\n');
-            cp80_batt_spend(QString());
+            const int speed = cp80_batt_spend(QString(), false);
+
+            prn_cp80_sound_feed(unsigned(speed));
             cp80_line_batt.append(cp80_drive_level());
             cp80_render();
         });
@@ -2177,7 +2226,7 @@ cp80_show(QWidget *parent)
             QObject::connect(cp80_feed, &QTimer::timeout, cp80_win, []() {
                 cp80_feed_line();
             });
-            cp80_feed->start(CP80_LINE_MS);
+            cp80_feed->start(CP80_FIRST_LINE_MS);
         }
 
         /* There was a "Dataprint connected" checkbox and a line saying which
@@ -2267,7 +2316,7 @@ cp80_show(QWidget *parent)
                     cp80_batt     = CP80_BATT_FULL;
                     cp80_charging = false;
                     if (cp80_feed != nullptr)
-                        cp80_feed->setInterval(CP80_LINE_MS);
+                        cp80_feed->setInterval(CP80_FIRST_LINE_MS);
                 }
             }
 

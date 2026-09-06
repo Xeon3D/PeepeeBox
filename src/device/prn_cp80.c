@@ -45,6 +45,7 @@
  *             later.  See COPYING for more information.
  */
 #include <stdarg.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -55,6 +56,7 @@
 #include <86box/device.h>
 #include <86box/timer.h>
 #include <86box/serial.h>
+#include <86box/sound.h>
 #include <86box/plat.h>
 #include <86box/thread.h>
 #include <86box/photoplay.h>
@@ -67,6 +69,93 @@
 #define CP80_TRACE_MAX (1u * 1024u * 1024u)
 
 #define CP80_TABS      8
+
+/* The DPU-414 is not a stationary line-thermal printer.  Its nine-dot thermal
+   head rides across the paper on a carriage.  SII specifies 52.5 normal
+   characters/second, with seven dot columns and one inter-character column;
+   that makes the head motor's high-speed step rate 52.5 * 8 = 420 Hz.  The
+   second recording's narrow 421--422 Hz tone lands directly on that prediction;
+   the first has the same carriage band running a little slower, around 401 Hz.
+
+   A normal line is nine printed dots plus the manual's default six-dot line
+   space.  The separate geared paper motor therefore advances fifteen steps.
+   Optical tracking of the exposed paper in both recordings puts an ordinary
+   advance at 0.17--0.20 seconds, and the first recording has a broad motor
+   group around 86 Hz.  85 steps/second satisfies both observations; unlike the
+   head rate, SII does not publish the paper motor's drive frequency. */
+#define CP80_HEAD_STEP_HZ  420.0
+#define CP80_FEED_STEP_HZ   85.0
+#define CP80_CHAR_STEPS       8
+#define CP80_FEED_STEPS      15
+
+#define CP80_SOUND_Q        256
+
+enum {
+    CP80_SOUND_IDLE = 0,
+    CP80_SOUND_HEAD,
+    CP80_SOUND_FEED
+};
+
+typedef struct cp80_sound_event_t {
+    uint16_t columns;              /* carriage's logical-seek distance */
+    uint16_t ink;                  /* non-blank cells: a small load change */
+    uint16_t speed;                /* 1000 at full battery speed */
+} cp80_sound_event_t;
+
+typedef struct cp80_sound_t {
+    cp80_sound_event_t q[CP80_SOUND_Q];
+    int                q_head;
+    int                q_tail;
+
+    int      on;
+    int      mode;
+    int      direction;
+    int      head_steps;
+    int      head_total;
+    int      feed_steps;
+    double   head_phase;
+    double   feed_phase;
+    double   head_hz;
+    double   feed_hz;
+    double   head_load;
+
+    int      rate;
+    double   body1_c;
+    double   body1_r2;
+    double   body1_z1;
+    double   body1_z2;
+    double   body2_c;
+    double   body2_r2;
+    double   body2_z1;
+    double   body2_z2;
+    double   noise_lp;
+
+    /* The roll is its own sound source, rather than more motor harmonics.  Two
+       one-pole filters colour microscopic sliding friction; three short modal
+       resonators give the exposed 64-micron sheet its measured flex/rattle
+       bands.  All are driven from the same deterministic generator. */
+    double   paper_hp_a;
+    double   paper_lp_a;
+    double   paper_texture_a;
+    double   paper_hp_z;
+    double   paper_lp_z;
+    double   paper_texture_z;
+    double   paper_speed;
+    double   paper_gain;
+    double   paper1_c;
+    double   paper1_r2;
+    double   paper1_z1;
+    double   paper1_z2;
+    double   paper2_c;
+    double   paper2_r2;
+    double   paper2_z1;
+    double   paper2_z2;
+    double   paper3_c;
+    double   paper3_r2;
+    double   paper3_z1;
+    double   paper3_z2;
+    uint32_t rng;
+} cp80_sound_t;
 
 typedef struct cp80_buf_t {
     char  *s;
@@ -176,6 +265,8 @@ typedef struct cp80_t {
     cp80_buf_t trace;
     mutex_t   *lock;
 
+    cp80_sound_t sound;
+
     int        dirty;              /* the guest has sent at least one byte */
     int        col;                /* for tab stops */
     int        pending_cr;         /* CR seen, waiting to see whether LF follows */
@@ -284,6 +375,361 @@ cp80_tracef(cp80_t *dev, const char *fmt, ...)
     if (n > (int) (sizeof(line) - 1))
         n = (int) (sizeof(line) - 1);
     cp80_put(&dev->trace, line, (size_t) n, CP80_TRACE_MAX);
+}
+
+/* ------------------------------------------------------- mechanical sound */
+
+#define CP80_PI 3.14159265358979323846
+
+static uint32_t
+cp80_sound_rand(cp80_sound_t *sound)
+{
+    uint32_t x = sound->rng;
+
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    sound->rng = x;
+    return x;
+}
+
+static void cp80_sound_paper_speed(cp80_sound_t *sound, double speed);
+
+static void
+cp80_sound_coefficients(cp80_sound_t *sound, int rate)
+{
+    double r;
+
+    if ((rate <= 0) || (sound->rate == rate))
+        return;
+
+    sound->rate = rate;
+
+    /* A step is a short mechanical impulse into the carriage and case.  These
+       two lightly damped modes provide the hollow plastic body around the
+       motor tone; neither is a recording or a wavetable. */
+    r                = exp(-1.0 / ((double) rate * 0.0060));
+    sound->body1_c   = 2.0 * r * cos((2.0 * CP80_PI * 910.0) / (double) rate);
+    sound->body1_r2  = r * r;
+    r                = exp(-1.0 / ((double) rate * 0.0020));
+    sound->body2_c   = 2.0 * r * cos((2.0 * CP80_PI * 2380.0) / (double) rate);
+    sound->body2_r2  = r * r;
+
+    /* The feed-over-carriage spectrum in the clean self-test has broad maxima
+       near 1.35, 3.1 and 6--8 kHz.  Very short decays keep these as a sheet
+       rattle instead of three pitched notes. */
+    r                 = exp(-1.0 / ((double) rate * 0.0045));
+    sound->paper1_c   = 2.0 * r * cos((2.0 * CP80_PI * 1350.0) / (double) rate);
+    sound->paper1_r2  = r * r;
+    r                 = exp(-1.0 / ((double) rate * 0.0024));
+    sound->paper2_c   = 2.0 * r * cos((2.0 * CP80_PI * 3100.0) / (double) rate);
+    sound->paper2_r2  = r * r;
+    r                 = exp(-1.0 / ((double) rate * 0.0012));
+    sound->paper3_c   = 2.0 * r * cos((2.0 * CP80_PI * 6900.0) / (double) rate);
+    sound->paper3_r2  = r * r;
+
+    /* Preserve the physical filter frequencies if the host output rate changes
+       while a line is in flight. */
+    if (sound->paper_speed > 0.0)
+        cp80_sound_paper_speed(sound, sound->paper_speed);
+}
+
+static void
+cp80_sound_paper_speed(cp80_sound_t *sound, double speed)
+{
+    double colour;
+
+    if (sound->rate <= 0)
+        return;
+    if (speed < 0.1)
+        speed = 0.1;
+    if (speed > 1.0)
+        speed = 1.0;
+
+    /* Sliding asperities pass more slowly on a weak pack, so their spectrum
+       moves down as well as becoming quieter.  Keeping 35% of the full-speed
+       colour at the lowest emulated drive avoids turning paper into a low hum. */
+    sound->paper_speed     = speed;
+    colour                 = 0.35 + (0.65 * speed);
+    sound->paper_hp_a      = 1.0 - exp((-2.0 * CP80_PI * 720.0 * colour)
+                                      / (double) sound->rate);
+    sound->paper_lp_a      = 1.0 - exp((-2.0 * CP80_PI * 9800.0 * colour)
+                                      / (double) sound->rate);
+    sound->paper_texture_a = 1.0 - exp((-2.0 * CP80_PI * 75.0 * speed)
+                                      / (double) sound->rate);
+    /* Unit-amplitude discrete white noise contains less energy in a fixed-Hz
+       band as the sample rate rises.  This square-root correction keeps the
+       paper level stable at every output rate. */
+    sound->paper_gain      = 250.0 * (0.45 + (0.55 * speed))
+                           * sqrt((double) sound->rate / 48000.0);
+}
+
+static void
+cp80_sound_begin_feed(cp80_sound_t *sound)
+{
+    sound->mode       = CP80_SOUND_FEED;
+    sound->feed_phase = 0.0;
+
+    /* Taking up slack flexes the curved strip over the platen and cutter. */
+    sound->paper1_z1 += 0.62;
+    sound->paper2_z1 -= 0.31;
+    sound->paper3_z1 += 0.16;
+}
+
+static int
+cp80_sound_pop(cp80_t *dev)
+{
+    cp80_sound_t      *sound = &dev->sound;
+    cp80_sound_event_t event;
+
+    thread_wait_mutex(dev->lock);
+    if (sound->q_head == sound->q_tail) {
+        thread_release_mutex(dev->lock);
+        return 0;
+    }
+    event         = sound->q[sound->q_head];
+    sound->q_head = (sound->q_head + 1) % CP80_SOUND_Q;
+    thread_release_mutex(dev->lock);
+
+    if (event.speed < 100)
+        event.speed = 100;
+    if (event.speed > 1000)
+        event.speed = 1000;
+
+    sound->head_hz  = CP80_HEAD_STEP_HZ * ((double) event.speed / 1000.0);
+    sound->feed_hz  = CP80_FEED_STEP_HZ * ((double) event.speed / 1000.0);
+    sound->head_load = (event.columns > 0)
+                     ? (double) event.ink / (double) event.columns : 0.0;
+    sound->head_phase = 0.0;
+    sound->feed_phase = 0.0;
+    sound->feed_steps = CP80_FEED_STEPS;
+    cp80_sound_paper_speed(sound, (double) event.speed / 1000.0);
+
+    if (event.columns > 0) {
+        sound->head_steps = event.columns * CP80_CHAR_STEPS;
+        sound->head_total = sound->head_steps;
+        sound->mode       = CP80_SOUND_HEAD;
+    } else {
+        sound->head_steps = 0;
+        sound->head_total = 0;
+        cp80_sound_begin_feed(sound);
+    }
+
+    /* The carrier taking up the drive is audible before its regular steps. */
+    sound->body1_z1 += 0.55;
+    sound->body2_z1 += 0.25;
+    return 1;
+}
+
+static void
+cp80_sound_enqueue(cp80_t *dev, unsigned columns, unsigned ink,
+                   unsigned speed)
+{
+    cp80_sound_t *sound;
+    int           next;
+
+    if ((dev == NULL) || !dev->sound.on)
+        return;
+
+    if (columns > 80)
+        columns = 80;
+    if (ink > columns)
+        ink = columns;
+    if (speed < 100)
+        speed = 100;
+    if (speed > 1000)
+        speed = 1000;
+
+    sound = &dev->sound;
+    thread_wait_mutex(dev->lock);
+    next = (sound->q_tail + 1) % CP80_SOUND_Q;
+    if (next != sound->q_head) {
+        sound->q[sound->q_tail].columns = (uint16_t) columns;
+        sound->q[sound->q_tail].ink     = (uint16_t) ink;
+        sound->q[sound->q_tail].speed   = (uint16_t) speed;
+        sound->q_tail                   = next;
+    }
+    thread_release_mutex(dev->lock);
+}
+
+void
+prn_cp80_sound_line(unsigned columns, unsigned ink, unsigned speed)
+{
+    cp80_sound_enqueue(cp80_inst, columns, ink, speed);
+}
+
+void
+prn_cp80_sound_feed(unsigned speed)
+{
+    cp80_sound_enqueue(cp80_inst, 0, 0, speed);
+}
+
+static void
+cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
+{
+    cp80_t       *dev   = (cp80_t *) priv;
+    cp80_sound_t *sound;
+    const int     rate  = sound_sample_rate;
+
+    if ((dev == NULL) || (buffer == NULL) || (rate <= 0))
+        return;
+
+    sound = &dev->sound;
+    cp80_sound_coefficients(sound, rate);
+
+    if (sound->mode == CP80_SOUND_IDLE)
+        cp80_sound_pop(dev);
+
+    for (uint16_t i = 0; i < len; i++) {
+        double impulse = 0.0;
+        double direct  = 0.0;
+        double grain   = 0.0;
+        double paper   = 0.0;
+        double paper_impulse = 0.0;
+
+        if (sound->mode == CP80_SOUND_HEAD) {
+            const int    done = sound->head_total - sound->head_steps;
+            const int    edge = (done < sound->head_steps) ? done : sound->head_steps;
+            const double ramp = (edge >= 7) ? 1.0 : ((double) (edge + 1) / 8.0);
+            const double p    = (sound->direction > 0)
+                              ? sound->head_phase : (1.0 - sound->head_phase);
+            const double load = 0.82 + (0.18 * sound->head_load);
+
+            /* The recordings put the 422 Hz fundamental about 17 dB above its
+               second and third harmonics.  A mostly sinusoidal two-phase motor,
+               a small third harmonic and the step-excited case modes recreate
+               that spectrum without a sample. */
+            direct = 1750.0 * load * ramp
+                   * (sin(2.0 * CP80_PI * p)
+                      + (0.12 * sin(6.0 * CP80_PI * p + 0.80)));
+
+            sound->head_phase += sound->head_hz / (double) rate;
+            if (sound->head_phase >= 1.0) {
+                sound->head_phase -= 1.0;
+                sound->head_steps--;
+                impulse = 0.70 + (0.16 * sound->head_load);
+
+                if (sound->head_steps <= 0) {
+                    cp80_sound_begin_feed(sound);
+                    sound->body1_z1  += 0.45;
+                    sound->body2_z1  -= 0.20;
+                }
+            }
+
+            /* A little brushless-drive grain stops the tone sounding like a
+               laboratory oscillator.  It is deterministic and high-passed. */
+            {
+                const double white = ((double) (int32_t) cp80_sound_rand(sound))
+                                   / 2147483648.0;
+
+                sound->noise_lp += 0.035 * (white - sound->noise_lp);
+                grain = (white - sound->noise_lp) * 115.0 * ramp;
+            }
+        } else if (sound->mode == CP80_SOUND_FEED) {
+            const double p        = sound->feed_phase;
+            const double progress = ((double) (CP80_FEED_STEPS - sound->feed_steps)
+                                    + p) / (double) CP80_FEED_STEPS;
+            const double edge     = fmin(1.0, fmin(progress * 12.0,
+                                                   (1.0 - progress) * 9.0));
+            double       white;
+            double       rough;
+            double       texture;
+
+            /* The paper path is a slower, more harmonic geared stepper. */
+            direct = 1325.0
+                   * (sin(2.0 * CP80_PI * p)
+                      + (0.36 * sin(4.0 * CP80_PI * p + 0.20))
+                      + (0.20 * sin(8.0 * CP80_PI * p + 0.55)));
+
+            /* Paper sliding over the rubber platen/cutter is continuous
+               friction, not another oscillator.  Band-limited noise is the
+               standard compact physical proxy for microscopic roughness.  A
+               slow independent noise process varies contact pressure so it
+               rustles instead of sounding like a steady air leak; the 85 Hz
+               motor steps add only a shallow corrugation. */
+            white = ((double) (int32_t) cp80_sound_rand(sound))
+                  / 2147483648.0;
+            sound->paper_hp_z += sound->paper_hp_a * (white - sound->paper_hp_z);
+            rough = white - sound->paper_hp_z;
+            sound->paper_lp_z += sound->paper_lp_a * (rough - sound->paper_lp_z);
+
+            white = ((double) (int32_t) cp80_sound_rand(sound))
+                  / 2147483648.0;
+            sound->paper_texture_z += sound->paper_texture_a
+                                    * (white - sound->paper_texture_z);
+            texture = 0.78 + (2.8 * fabs(sound->paper_texture_z));
+            paper = sound->paper_lp_z * sound->paper_gain * edge * texture
+                  * (0.90 + (0.10 * cos(2.0 * CP80_PI * p)));
+
+            sound->feed_phase += sound->feed_hz / (double) rate;
+            if (sound->feed_phase >= 1.0) {
+                const double fleck = fabs(((double) (int32_t)
+                                           cp80_sound_rand(sound))
+                                          / 2147483648.0);
+
+                sound->feed_phase -= 1.0;
+                sound->feed_steps--;
+                impulse = 1.10;
+                /* Irregular fibres and the curved roll release a tiny flex on
+                   most platen steps.  Squaring the random value makes quiet
+                   events common and conspicuous ticks rare. */
+                paper_impulse = 0.025 + (0.105 * fleck * fleck);
+
+                if (sound->feed_steps <= 0) {
+                    sound->mode       = CP80_SOUND_IDLE;
+                    sound->direction = -sound->direction;
+                    sound->body1_z1  -= 0.38;
+                    sound->body2_z1  += 0.18;
+                    paper_impulse    -= 0.34;
+                    cp80_sound_pop(dev);
+                }
+            }
+        }
+
+        /* Two resonant case modes, excited only by the synthetic motor steps
+           and take-up/turnaround impulses above. */
+        {
+            const double y1 = (sound->body1_c * sound->body1_z1)
+                            - (sound->body1_r2 * sound->body1_z2) + impulse;
+            const double y2 = (sound->body2_c * sound->body2_z1)
+                            - (sound->body2_r2 * sound->body2_z2) + impulse;
+            int32_t      out;
+
+            sound->body1_z2 = sound->body1_z1;
+            sound->body1_z1 = y1;
+            sound->body2_z2 = sound->body2_z1;
+            sound->body2_z1 = y2;
+
+            /* The paper modes ring after the feed itself stops, which matters
+               most on a single FEED press. */
+            {
+                const double py1 = (sound->paper1_c * sound->paper1_z1)
+                                 - (sound->paper1_r2 * sound->paper1_z2)
+                                 + paper_impulse;
+                const double py2 = (sound->paper2_c * sound->paper2_z1)
+                                 - (sound->paper2_r2 * sound->paper2_z2)
+                                 - (paper_impulse * 0.58);
+                const double py3 = (sound->paper3_c * sound->paper3_z1)
+                                 - (sound->paper3_r2 * sound->paper3_z2)
+                                 + (paper_impulse * 0.30);
+
+                sound->paper1_z2 = sound->paper1_z1;
+                sound->paper1_z1 = py1;
+                sound->paper2_z2 = sound->paper2_z1;
+                sound->paper2_z1 = py2;
+                sound->paper3_z2 = sound->paper3_z1;
+                sound->paper3_z1 = py3;
+
+                paper += (py1 * 23.0) + (py2 * 15.0) + (py3 * 8.0);
+            }
+
+            out = (int32_t) (direct + grain + paper
+                             + (y1 * 36.0) + (y2 * 18.0));
+            buffer[(i << 1)]     += out;
+            buffer[(i << 1) + 1] += out;
+        }
+
+    }
 }
 
 /* --------------------------------------------------------- the character set */
@@ -1143,6 +1589,18 @@ cp80_init(UNUSED(const device_t *info))
             dev->enq_on = (atoi(env) != 0);
     }
 
+    dev->sound.on        = (device_get_config_int_ex("sound", 1) != 0);
+    dev->sound.direction = 1;
+    dev->sound.rng       = 0x414d5055u;
+    {
+        const char *env = getenv("PEEPEEBOX_PRN_SOUND");
+
+        if (env != NULL)
+            dev->sound.on = (atoi(env) != 0);
+    }
+    if (dev->sound.on)
+        sound_add_handler(cp80_sound_get_buffer, dev);
+
     /* The one byte of the reply that matters, checked out loud.  Editing that
        string and quietly moving the C off index 15 would put the guest back on
        the error path with nothing to say why. */
@@ -1195,6 +1653,17 @@ static const device_config_t cp80_config[] = {
     {
         .name           = "enq",
         .description    = "Announce itself (ENQ)",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "sound",
+        .description    = "Mechanical sound",
         .type           = CONFIG_BINARY,
         .default_string = NULL,
         .default_int    = 1,
