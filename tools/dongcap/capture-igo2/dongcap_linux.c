@@ -73,11 +73,31 @@ static void putbit(unsigned char b)
 
 /* ------------------------------------------------------------------ port */
 
+/* The transport writes each byte more than once -- notes/HANDOFF2001.md section 10.4,
+   the repeat count out of the state struct at 0x3664D.  The captured wire shows four
+   (33,160 runs) with a few of eight, not the thirty-two section 4 once guessed.  Writing
+   it once, as this did, holds the line for a quarter as long as the part is used to. */
+#define PP_REPEAT 4
+
 static void raw(unsigned char b)
 {
-    outb(b, g_base);
-    (void) inb(0x80);           /* the traditional I/O delay */
-    (void) inb(0x80);
+    int i;
+
+    for (i = 0; i < PP_REPEAT; i++) {
+        outb(b, g_base);
+        (void) inb(0x80);       /* the traditional I/O delay */
+        (void) inb(0x80);
+    }
+}
+
+/* A command byte that is NOT put through the cooked writer: bit 0 is still the clock,
+   but bit 7 is left alone.  The session init uses this form; the round preamble uses the
+   cooked one.  Both appear in the capture. */
+static void rawcmd(unsigned char b)
+{
+    raw(b);
+    raw((unsigned char) (b | 0x01));
+    raw(b);
 }
 
 static void cmdbyte(unsigned char b)
@@ -95,6 +115,34 @@ static unsigned char query(unsigned char q)
     raw((unsigned char) (pay | 0x10));
     raw(pay);
     return (unsigned char) ((inb(g_base + 1) >> 5) & 1);
+}
+
+/* The once-per-session opening, taken verbatim off the wire (docs/research/30 § 9.3).
+   The game does this before its first round and never again -- 118 rounds followed it in
+   the capture, and only the first was preceded by this.  Firing rounds at a part that has
+   not been through it is what every silent probe was doing.
+
+   Two loose writes, then fourteen bit-0-clocked bytes in the uncooked form, then a
+   64-step sweep that clocks 64 bits back out.  The bits are read and discarded here: the
+   capture shows the game reading 50 50 73 73 FF 50 FF 73, but nothing establishes what
+   they mean, and the part evidently wants them clocked out either way. */
+static const unsigned char init_bytes[14] = {
+    0x58, 0x1A, 0x7A, 0x54, 0x08, 0x68, 0x40,
+    0x32, 0x50, 0x20, 0x2C, 0x16, 0x1C, 0x34
+};
+
+static void session_init(void)
+{
+    int i;
+
+    raw(0x5B);
+    raw(0x5A);
+    for (i = 0; i < 14; i++)
+        rawcmd(init_bytes[i]);
+    for (i = 0; i < 64; i++) {
+        raw((unsigned char) (i * 2));
+        (void) inb(g_base + 1);
+    }
 }
 
 /* One SK pulse: the clock here is DATA bit 5, not bit 0 as in a command byte.
@@ -265,6 +313,9 @@ int main(int argc, char **argv)
         fputs("Run as root.\n", stderr);
         return 1;
     }
+
+    /* Take the part through its opening sequence once, before anything else. */
+    session_init();
 
     lst = slurp("DONGCAP.LST", &len);
     if (!lst) {

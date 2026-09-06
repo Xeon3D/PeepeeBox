@@ -284,5 +284,40 @@ Not done here, and worth saying plainly: the tools have **not** been changed to 
 nothing in § 9.3 has been re-tested by driving the part from a tool rather than watching the
 game do it.
 
+### 9.5 The tool still does not work, and what that rules out
+
+`dongcap_linux.c` was given the § 9.3 preamble, the uncooked bit-0 command form, the
+transport's repeat count of 4, and the 64-step sweep that precedes the first captured
+round. Run against the real part with the emulator stopped and the port exclusively its
+own, it still returns `BDC587AC` for `504EF2AE` -- the signature of a line that never
+moved.
+
+Ruled out by measurement, not by argument:
+
+- **Contention.** The first attempt ran while PeepeeBox still held `ioperm` on the same
+  port (its process name is `qt_thread`, so the obvious `pkill` pattern missed it). Killing
+  it by pid changed nothing.
+- **Speed.** `dongtiming.c` sweeps the repeat count (1, 4, 8, 16) against six I/O-delay
+  paddings from 2 to 2048 dummy reads -- 24 combinations spanning three orders of
+  magnitude. Every one returns `BDC587AC`, and no status line moves in any of them. The
+  capture came through an emulated 486 running at 22%, so slowness was the obvious
+  suspect; it is not the answer.
+
+What this leaves is the thing the tool cannot fake: **the part is not in the state the
+game had already put it in.** The sequence in § 9.3 is what precedes the first *picture*
+round, which happens deep into a session -- the mark for that capture is at PPRAW line
+97,602, and everything before it is the machine booting, the BIOS probing LPT, and the
+HASP library performing its own initialisation. `docs/research/30` § 4 already noted an
+init at `0x32e2f` that no capture tool performs; this is that debt coming due.
+
+So calling § 9.3's sequence a "session init" was wrong. It is a per-round preamble that
+happens to sit at the front of the picture path, and the real bring-up is in the 97,602
+accesses before it, which have not been mined.
+
+The next step is mechanical rather than clever: the pre-mark portion of
+`igo2-dongle-wire-2026-09-06.log.gz` is a complete recording of that bring-up. Replaying
+its writes verbatim before attempting a round would show whether the bring-up is
+sufficient, and bisecting the prefix would find the minimum that is.
+
 Related: `docs/research/20` § 3, `notes/HANDOFF2001.md` §§ 16, 20, 23-24,
 `tools/dongcap/`.
