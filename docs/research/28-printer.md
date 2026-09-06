@@ -172,66 +172,68 @@ layout being used as a canvas.
 
 ### The battery pack
 
-A **BP-4005-E**: Ni-MH, 4.8 V, about 120 g, good for **3000 lines** on a charge
-(manual §2.10 and §6.1). So a line costs 100/3000 of a pack — the manual's
-number, not a guess. A thermal head on a tired pack does not stop; it prints
-fainter and slower until the paper comes out blank and nobody notices for a page,
-which is the failure worth being able to see.
+A **BP-4005-E**: Ni-MH, 4.8 V, about 120 g, rated at **3000 lines of 40 columns
+of the number "8"** (manual §2.10 and §6.1). That is the worst case, every dot
+fired — so a pack is 3000 × 42 character-cells, forty columns plus the paper
+movement, and **a line costs what is on it**. A space fires no dots and costs
+only the motor; a 24-column report line half full of spaces costs about a third
+of the manual's line. Draining a flat percentage per line would price a page of
+blanks the same as a page of solid print, and the whole point of the manual's
+figure is that it is about dots.
+
+The motor is an assumption and a visible one: a feed costs what two characters
+cost, so 3000 blank feeds are about 5% of a pack. It is counted into the capacity
+so that 3000 full lines comes to exactly one pack rather than 105% of one.
 
 **Each line keeps the level it was printed at.** A receipt that began on a good
-pack and finished on a flat one reads that way — black at the top, gone at the
+pack and finished on a flat one reads that way — black at the top, faint at the
 bottom. Colouring the whole roll from the present level would rewrite the earlier
 lines every time a new one arrived, which is not what paper does.
 
-| | |
-|---|---|
-| above **90%** | full ink, 400 ms a line |
-| 90% → 60% | ink fades toward the paper colour, feed stretches toward 1400 ms |
-| at **60%** | ink *is* the paper colour, so the receipt is blank rather than missing |
+Below **12%** the head weakens: the ink fades toward the paper colour and the
+feed stretches from 400 ms a line toward 1400. The manual does not quantify that;
+what it does say is what happens at the end.
 
-Those two thresholds are for testing and deliberately kind; a real pack would
-fade far later and far lower. `PEEPEEBOX_PRN_DRAIN=<percent per line>` makes it
-quicker again.
+### What happens when it runs out
 
-**The lamps do not fade.** That was tried and it is not what the machine does —
-a low pack is announced by the Power LED blinking, and the manual gives the
-rates: once a second while charging and steady when full (§2.10), about twice a
-second when the pack is low during printing, at which point the printer goes
-OFFLINE (§2.11). The ONLINE and OFFLINE lamps are simply lit or not.
+Straight from §2.11, *When the Battery pack Gets Low During Printing*:
 
-**Charging** is the AC adapter, and the manual says **about ten hours** from
-flat, so no arithmetic on the adapter's 6.5 V / 2 A is needed. It pauses while
-printing and resumes after, and the printer will not charge with the power off —
-all three are the manual's. `PEEPEEBOX_PRN_CHARGE=<minutes>` shortens it for
-testing, since nobody will sit through ten hours. The rate is constant, so
-charging from 60% takes about four hours rather than ten — ten is from flat,
-which is what the manual quotes.
+- the printer **goes OFFLINE** and the **Power LED blinks about twice a second**;
+- **the ONLINE LED blinks if there is data left in the buffer** — a job that
+  arrived and cannot be printed;
+- the operator connects the AC adapter and **pushes ONLINE**, and the rest prints.
 
-There is also a **pack slider** in the window, which is a test control and says
-so: the pack takes 3000 lines to run down and ten hours to fill, and neither is
-a thing to sit through while checking what a threshold looks like. It follows the
-pack when the pack moves on its own, and setting it by hand stops any charge in
-progress — dragging a slider is not connecting an adapter.
+All three are implemented, including the last one being a deliberate two-step:
+connecting the charger does not restart the job on its own, because the manual
+has the operator press ONLINE and a printer that resumed by itself would be a
+surprise. Pressing ONLINE on a flat pack with nothing plugged in does what it
+does on the machine — nothing, and says so in the log.
+
+The buffer is **28,000 characters** (§2.9). Past that it stops growing and says
+so once; a real printer would be holding the host off with flow control.
+
+**Charging** is the manual's **ten hours** from flat, so the adapter's 6.5 V /
+2 A needs no arithmetic done to it. It pauses while printing and resumes after,
+and will not charge with the power off — all §2.10.
+`PEEPEEBOX_PRN_CHARGE=<minutes>` shortens it for testing, and the rate is
+constant, so half a pack is five hours.
 
 **The pack persists** in `nvr/dpu414.nvr` beside the machine's own nvram, written
 at most every couple of seconds while it moves. A pack that starts full every
-boot is not a pack: the point is that it runs down over a session and has to be
-put back, which cannot be felt if closing the window undoes it. Missing or
-unreadable means a new pack, full. Text, because it is one number and reading it
-with an editor is worth more than four saved bytes.
-
-**The Power LED blinks below 60%** — the same threshold at which the ink goes
-white, since both are `CP80_BATT_FLAT`. Once a second while charging, about twice
-a second when low, steady otherwise.
+boot is not a pack. Missing or unreadable means a new one, full.
 
 **The panel**: the Power LED is a lens in the front edge, the dark bar measuring
 x 41..66 by y 411..414 — four pixels tall, which is why it is given as edges
 rather than an origin and a size. `CP80_SCALE(x) + CP80_SCALE(w)` rounds twice
 and the second rounding pushed the lit bar outside a lens that thin; differencing
-two scaled edges rounds once and stays inside. The Power *switch* is on the left-hand side of the machine
-and so is not in the photograph at all, which is why it is a labelled button in
-the row below rather than an invisible one on the picture. **Charge batteries**
-appears beside it once the pack is low.
+two scaled edges rounds once and stays inside. The Power *switch* is on the
+left-hand side of the machine and so is not in the photograph at all, which is
+why it is a labelled button rather than an invisible one on the picture.
+
+There is also a **pack slider**, which is a test control and says so — 3000 lines
+to run down and ten hours to fill are not things to sit through while checking
+what a threshold looks like. `PEEPEEBOX_PRN_DRAIN=<multiplier>` scales the drain
+for the same reason.
 
 ### The 2008 reader had to move
 

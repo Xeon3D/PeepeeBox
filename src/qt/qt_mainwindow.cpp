@@ -1621,15 +1621,47 @@ static size_t   cp80_paper_at = 0;
    PEEPEEBOX_PRN_CHARGE=<minutes> shortens it for testing, since ten hours is not
    a thing anybody will sit through. */
 #define CP80_BATT_FULL     100.0
-#define CP80_BATT_LINES   3000.0    /* a full pack, per the manual */
-#define CP80_BATT_FADE      90.0    /* below this the ink starts going */
-#define CP80_BATT_FLAT      60.0    /* here it is white, and the head crawls */
-#define CP80_LINE_MS_FLAT 1400      /* feed interval on a flat pack */
+
+/* What a pack is worth, in characters at full density.  The manual rates it at
+   3000 lines "of 40 columns of the number 8" -- the worst case, every dot fired
+   -- so a pack is 3000 x 40 = 120,000 such characters.
+
+   Which means the cost of a line is what is *on* it.  A space fires no dots and
+   costs nothing but the motor; a 24-column report line half full of spaces costs
+   about a third of what the manual's line costs.  Draining a flat percentage per
+   line would have a page of blanks cost the same as a page of solid print, and
+   the whole point of the figure is that it is about dots.
+
+   The paper still has to move for a blank line, and the motor comes off the same
+   pack.  The manual does not price that, so it is an assumption and a
+   deliberately visible one: a feed costs what two characters cost, which makes
+   3000 blank feeds about 5% of a pack.
+
+   The capacity counts the motor in, so that 3000 lines of forty 8s comes to
+   exactly one pack and not 105% of one -- the manual's number is the whole line,
+   paper movement included. */
+#define CP80_BATT_COLS      40.0
+#define CP80_BATT_LINES   3000.0
+#define CP80_FEED_COST       2.0
+#define CP80_BATT_CHARS   (CP80_BATT_LINES * (CP80_BATT_COLS + CP80_FEED_COST))
+
+/* The head weakens before it stops.  The manual does not quantify that either;
+   what it does say is that the printer goes OFFLINE when the pack is low, which
+   is what happens at zero here. */
+#define CP80_BATT_FADE      12.0    /* the last stretch, where print goes faint */
+#define CP80_BATT_FLAT       0.0    /* nothing left: offline */
+#define CP80_LINE_MS_FLAT 1400      /* feed interval as the pack gives out */
 #define CP80_CHARGE_MINS   600.0    /* about ten hours, per the manual */
 #define CP80_BLINK_MS      250      /* the LED tick; 1 Hz and 2 Hz divide into it */
 
+/* "about 28000 characters (approx. 28KB)", manual section 2.9.  Data that has
+   arrived and not yet been printed sits here, and the ONLINE lamp blinks while
+   any of it is left -- which is exactly what the manual says happens when the
+   pack gives out mid-job. */
+#define CP80_BUFFER_MAX 28000
+
 static double       cp80_batt     = CP80_BATT_FULL;
-static double       cp80_drain    = CP80_BATT_FULL / CP80_BATT_LINES;
+static double       cp80_drain    = 1.0;     /* multiplier, for testing */
 static double       cp80_charge   = CP80_CHARGE_MINS;
 static bool         cp80_power    = true;    /* the switch on the left side */
 static bool         cp80_charging = false;   /* the AC adapter is plugged in */
@@ -1705,12 +1737,20 @@ cp80_batt_store(void)
     cp80_batt_dirty = false;
 }
 
-/* One line's worth of print, and the head slowing down as it goes. */
+/* What one line costs the pack: the dots on it, plus the motor that moved the
+   paper.  Spaces are free of everything but the motor. */
 static void
-cp80_batt_spend(void)
+cp80_batt_spend(const QString &line)
 {
+    double cells = CP80_FEED_COST;
+
+    for (const QChar &c : line) {
+        if (!c.isSpace())
+            cells += 1.0;
+    }
+
     if (cp80_batt > 0.0) {
-        cp80_batt -= cp80_drain;
+        cp80_batt -= (cells / CP80_BATT_CHARS) * CP80_BATT_FULL * cp80_drain;
         if (cp80_batt < 0.0)
             cp80_batt = 0.0;
         cp80_batt_dirty = true;
@@ -1723,6 +1763,15 @@ cp80_batt_spend(void)
 
         if (cp80_feed->interval() != ms)
             cp80_feed->setInterval(ms);
+    }
+
+    /* Flat.  The manual: the printer goes OFFLINE and the Power LED blinks about
+       twice a second; anything still in the buffer stays there and the ONLINE
+       lamp blinks over it until the adapter is connected and ONLINE pressed. */
+    if ((cp80_batt <= 0.0) && (prn_cp80_connected() != 0)) {
+        prn_cp80_set_connected(0);
+        pclog("CP80: the pack is flat -- offline, %d characters still buffered\n",
+              int(cp80_queued.size()));
     }
 }
 
@@ -1827,29 +1876,40 @@ cp80_render()
        goes OFFLINE. */
     {
         const bool online = cp80_power && (prn_cp80_connected() != 0);
-        const bool low    = (cp80_batt <= CP80_BATT_FLAT);
+        const bool low    = (cp80_batt <= CP80_BATT_FLAT);   /* flat: 0% */
         const bool full   = (cp80_batt >= CP80_BATT_FULL);
 
         g.setRenderHint(QPainter::Antialiasing, true);
         g.setPen(Qt::NoPen);
 
+        /* 250 ms a tick: /4 is once a second, /2 is twice. */
+        const bool half = (((cp80_blink / 2) & 1) == 0);
+
         if (cp80_power) {
-            const int   ly = -top + CP80_SCALE(online ? CP80_LED_ON_Y
-                                                      : CP80_LED_OFF_Y);
-            const QRect led(CP80_SCALE(online ? CP80_LED_ON_X : CP80_LED_OFF_X),
+            /* "The ONLINE LED will blink if there is data left in the memory
+               buffer" -- that is this: a job that arrived and cannot be printed
+               because the pack gave out. */
+            const bool waiting = !online && !cp80_queued.isEmpty();
+            const bool lit     = online || (waiting && half);
+            const bool use_on  = online || waiting;
+            const int  ly = -top + CP80_SCALE(use_on ? CP80_LED_ON_Y
+                                                     : CP80_LED_OFF_Y);
+            const QRect led(CP80_SCALE(use_on ? CP80_LED_ON_X : CP80_LED_OFF_X),
                             ly, CP80_SCALE(CP80_LED_W), CP80_SCALE(CP80_LED_H));
 
-            g.setBrush(online ? QColor(0x35, 0xd0, 0x4a) : QColor(0xe0, 0x22, 0x18));
-            g.drawRoundedRect(led, 1, 1);
+            if (lit || !use_on) {
+                g.setBrush(use_on ? QColor(0x35, 0xd0, 0x4a)
+                                  : QColor(0xe0, 0x22, 0x18));
+                g.drawRoundedRect(led, 1, 1);
+            }
         }
 
-        /* 250 ms a tick: /4 is once a second, /2 is twice. */
         bool pwr_lit = cp80_power;
 
         if (cp80_power && cp80_charging && !full)
             pwr_lit = ((cp80_blink / 4) & 1) == 0;
         else if (cp80_power && low)
-            pwr_lit = ((cp80_blink / 2) & 1) == 0;
+            pwr_lit = half;
 
         if (pwr_lit) {
             const int x0 = CP80_SCALE(CP80_LED_PWR_X0);
@@ -1873,7 +1933,7 @@ cp80_render()
 
     if (cp80_replace != nullptr) {
         cp80_replace->setVisible(cp80_charging
-                                 || (cp80_batt <= CP80_BATT_FLAT));
+                                 || (cp80_batt <= CP80_BATT_FADE));
         cp80_replace->setEnabled(cp80_power && !cp80_charging);
         cp80_replace->setText(cp80_charging ? QObject::tr("Charging…")
                                             : QObject::tr("Charge batteries"));
@@ -1916,7 +1976,11 @@ cp80_render()
 static void
 cp80_feed_line()
 {
-    if (cp80_queued.isEmpty())
+    /* A flat pack prints nothing, and neither does a printer that is off or
+       offline.  What has already arrived stays in the buffer -- that is the
+       state the manual describes, with the ONLINE lamp blinking over it. */
+    if (cp80_queued.isEmpty() || !cp80_power || (cp80_batt <= 0.0)
+        || (prn_cp80_connected() == 0))
         return;
 
     const int at = cp80_queued.indexOf(QLatin1Char('\n'));
@@ -1926,9 +1990,11 @@ cp80_feed_line()
     if (at < 0)
         return;
 
-    cp80_printed += cp80_queued.left(at + 1);
+    const QString line = cp80_queued.left(at + 1);
+
+    cp80_printed += line;
     cp80_queued.remove(0, at + 1);
-    cp80_batt_spend();
+    cp80_batt_spend(line);
     cp80_line_batt.append(cp80_batt);
     cp80_render();
 }
@@ -1960,6 +2026,20 @@ cp80_pump()
             break;
         buf[n] = 0;
         cp80_queued += QString::fromUtf8(buf);
+
+        /* 28 KB of it, per the manual.  Past that a real printer would be
+           holding the host off with its flow control; this at least refuses to
+           grow without limit and says so. */
+        if (cp80_queued.size() > CP80_BUFFER_MAX) {
+            static bool said = false;
+
+            if (!said) {
+                said = true;
+                pclog("CP80: buffer full at %d characters; dropping the rest\n",
+                      CP80_BUFFER_MAX);
+            }
+            cp80_queued.truncate(CP80_BUFFER_MAX);
+        }
     }
 }
 
@@ -2017,10 +2097,20 @@ cp80_show(QWidget *parent)
         cp80_btn_fd->setToolTip(QObject::tr("FEED — one blank line per press"));
 
         QObject::connect(cp80_btn_on, &QPushButton::clicked, cp80_win, []() {
-            if (!prn_cp80_present())
+            if (!prn_cp80_present() || !cp80_power)
                 return;
 
             const bool on = (prn_cp80_connected() == 0);
+
+            /* A flat pack does not come back because the button was pressed.
+               The manual: connect the adapter, then push ONLINE, and the rest of
+               the buffer prints.  Pressing it on a flat pack with nothing plugged
+               in does what it does on the machine -- nothing. */
+            if (on && (cp80_batt <= 0.0) && !cp80_charging) {
+                pclog("CP80: ONLINE pressed on a flat pack with no adapter; "
+                      "still offline\n");
+                return;
+            }
 
             prn_cp80_set_connected(on ? 1 : 0);
             cp80_render();                   /* the lamp follows */
@@ -2030,11 +2120,12 @@ cp80_show(QWidget *parent)
             /* What the button does on the machine: advance the paper by a line.
                It is the printer's own feed, so it goes on the roll and not down
                the wire. */
-            /* The feed motor runs off the same pack as the head. */
-            if (!cp80_power)
+            /* The feed motor runs off the same pack as the head, and a blank
+               line costs only the motor. */
+            if (!cp80_power || (cp80_batt <= 0.0))
                 return;
             cp80_printed += QLatin1Char('\n');
-            cp80_batt_spend();
+            cp80_batt_spend(QString());
             cp80_line_batt.append(cp80_batt);
             cp80_render();
         });
@@ -2099,6 +2190,9 @@ cp80_show(QWidget *parent)
         QObject::connect(cp80_replace, &QPushButton::clicked, cp80_win, []() {
             if (cp80_power)
                 cp80_charging = true;
+            /* Deliberately does not come back online by itself: the manual has
+               the operator connect the adapter and then push ONLINE, and a
+               printer that restarted a job on its own would be a surprise. */
             cp80_render();
         });
 
@@ -2131,7 +2225,8 @@ cp80_show(QWidget *parent)
                 cp80_batt_store();
 
             /* Repaint only when something on the machine is actually moving. */
-            if (was_charging || cp80_charging || (cp80_batt <= CP80_BATT_FLAT))
+            if (was_charging || cp80_charging || (cp80_batt <= CP80_BATT_FLAT)
+                || !cp80_queued.isEmpty())
                 cp80_render();
         });
         cp80_blink_t->start(CP80_BLINK_MS);
