@@ -1533,10 +1533,12 @@ static size_t   cp80_paper_at = 0;
    printer: SII rates normal text at at most 52.5 characters/second.  The head
    uses eight horizontal steps per cell (seven dots and a space), matching the
    420/422 Hz motor tone in both reference recordings.  A line also advances
-   nine character dots plus the default six-dot line spacing; at the measured
-   paper-motor cadence that takes about 100 ms. */
+   nine character dots plus the default six-dot line spacing.  Optical tracking
+   of the roll in both reference videos measures ordinary advances at about
+   0.17--0.20 seconds, consistent with the first recording's 86 Hz low motor
+   group. */
 #define CP80_CHAR_CPS        52.5
-#define CP80_PAPER_MS       100.0
+#define CP80_PAPER_MS       176.5
 #define CP80_FIRST_LINE_MS  400
 
 /* The DPU-414 is a top-exit printer: the paper rises out of the slot on top of

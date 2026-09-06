@@ -79,11 +79,12 @@
 
    A normal line is nine printed dots plus the manual's default six-dot line
    space.  The separate geared paper motor therefore advances fifteen steps.
-   Its roughly 150 Hz pulse train is inferred from the stable 80--190 Hz group
-   and strong 300/600 Hz harmonics in the recordings; unlike the head rate, SII
-   does not publish its drive frequency. */
+   Optical tracking of the exposed paper in both recordings puts an ordinary
+   advance at 0.17--0.20 seconds, and the first recording has a broad motor
+   group around 86 Hz.  85 steps/second satisfies both observations; unlike the
+   head rate, SII does not publish the paper motor's drive frequency. */
 #define CP80_HEAD_STEP_HZ  420.0
-#define CP80_FEED_STEP_HZ  150.0
+#define CP80_FEED_STEP_HZ   85.0
 #define CP80_CHAR_STEPS       8
 #define CP80_FEED_STEPS      15
 
@@ -128,6 +129,31 @@ typedef struct cp80_sound_t {
     double   body2_z1;
     double   body2_z2;
     double   noise_lp;
+
+    /* The roll is its own sound source, rather than more motor harmonics.  Two
+       one-pole filters colour microscopic sliding friction; three short modal
+       resonators give the exposed 64-micron sheet its measured flex/rattle
+       bands.  All are driven from the same deterministic generator. */
+    double   paper_hp_a;
+    double   paper_lp_a;
+    double   paper_texture_a;
+    double   paper_hp_z;
+    double   paper_lp_z;
+    double   paper_texture_z;
+    double   paper_speed;
+    double   paper_gain;
+    double   paper1_c;
+    double   paper1_r2;
+    double   paper1_z1;
+    double   paper1_z2;
+    double   paper2_c;
+    double   paper2_r2;
+    double   paper2_z1;
+    double   paper2_z2;
+    double   paper3_c;
+    double   paper3_r2;
+    double   paper3_z1;
+    double   paper3_z2;
     uint32_t rng;
 } cp80_sound_t;
 
@@ -367,6 +393,8 @@ cp80_sound_rand(cp80_sound_t *sound)
     return x;
 }
 
+static void cp80_sound_paper_speed(cp80_sound_t *sound, double speed);
+
 static void
 cp80_sound_coefficients(cp80_sound_t *sound, int rate)
 {
@@ -386,6 +414,66 @@ cp80_sound_coefficients(cp80_sound_t *sound, int rate)
     r                = exp(-1.0 / ((double) rate * 0.0020));
     sound->body2_c   = 2.0 * r * cos((2.0 * CP80_PI * 2380.0) / (double) rate);
     sound->body2_r2  = r * r;
+
+    /* The feed-over-carriage spectrum in the clean self-test has broad maxima
+       near 1.35, 3.1 and 6--8 kHz.  Very short decays keep these as a sheet
+       rattle instead of three pitched notes. */
+    r                 = exp(-1.0 / ((double) rate * 0.0045));
+    sound->paper1_c   = 2.0 * r * cos((2.0 * CP80_PI * 1350.0) / (double) rate);
+    sound->paper1_r2  = r * r;
+    r                 = exp(-1.0 / ((double) rate * 0.0024));
+    sound->paper2_c   = 2.0 * r * cos((2.0 * CP80_PI * 3100.0) / (double) rate);
+    sound->paper2_r2  = r * r;
+    r                 = exp(-1.0 / ((double) rate * 0.0012));
+    sound->paper3_c   = 2.0 * r * cos((2.0 * CP80_PI * 6900.0) / (double) rate);
+    sound->paper3_r2  = r * r;
+
+    /* Preserve the physical filter frequencies if the host output rate changes
+       while a line is in flight. */
+    if (sound->paper_speed > 0.0)
+        cp80_sound_paper_speed(sound, sound->paper_speed);
+}
+
+static void
+cp80_sound_paper_speed(cp80_sound_t *sound, double speed)
+{
+    double colour;
+
+    if (sound->rate <= 0)
+        return;
+    if (speed < 0.1)
+        speed = 0.1;
+    if (speed > 1.0)
+        speed = 1.0;
+
+    /* Sliding asperities pass more slowly on a weak pack, so their spectrum
+       moves down as well as becoming quieter.  Keeping 35% of the full-speed
+       colour at the lowest emulated drive avoids turning paper into a low hum. */
+    sound->paper_speed     = speed;
+    colour                 = 0.35 + (0.65 * speed);
+    sound->paper_hp_a      = 1.0 - exp((-2.0 * CP80_PI * 720.0 * colour)
+                                      / (double) sound->rate);
+    sound->paper_lp_a      = 1.0 - exp((-2.0 * CP80_PI * 9800.0 * colour)
+                                      / (double) sound->rate);
+    sound->paper_texture_a = 1.0 - exp((-2.0 * CP80_PI * 75.0 * speed)
+                                      / (double) sound->rate);
+    /* Unit-amplitude discrete white noise contains less energy in a fixed-Hz
+       band as the sample rate rises.  This square-root correction keeps the
+       paper level stable at every output rate. */
+    sound->paper_gain      = 250.0 * (0.45 + (0.55 * speed))
+                           * sqrt((double) sound->rate / 48000.0);
+}
+
+static void
+cp80_sound_begin_feed(cp80_sound_t *sound)
+{
+    sound->mode       = CP80_SOUND_FEED;
+    sound->feed_phase = 0.0;
+
+    /* Taking up slack flexes the curved strip over the platen and cutter. */
+    sound->paper1_z1 += 0.62;
+    sound->paper2_z1 -= 0.31;
+    sound->paper3_z1 += 0.16;
 }
 
 static int
@@ -415,6 +503,7 @@ cp80_sound_pop(cp80_t *dev)
     sound->head_phase = 0.0;
     sound->feed_phase = 0.0;
     sound->feed_steps = CP80_FEED_STEPS;
+    cp80_sound_paper_speed(sound, (double) event.speed / 1000.0);
 
     if (event.columns > 0) {
         sound->head_steps = event.columns * CP80_CHAR_STEPS;
@@ -423,7 +512,7 @@ cp80_sound_pop(cp80_t *dev)
     } else {
         sound->head_steps = 0;
         sound->head_total = 0;
-        sound->mode       = CP80_SOUND_FEED;
+        cp80_sound_begin_feed(sound);
     }
 
     /* The carrier taking up the drive is audible before its regular steps. */
@@ -495,6 +584,8 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
         double impulse = 0.0;
         double direct  = 0.0;
         double grain   = 0.0;
+        double paper   = 0.0;
+        double paper_impulse = 0.0;
 
         if (sound->mode == CP80_SOUND_HEAD) {
             const int    done = sound->head_total - sound->head_steps;
@@ -519,8 +610,7 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
                 impulse = 0.70 + (0.16 * sound->head_load);
 
                 if (sound->head_steps <= 0) {
-                    sound->mode       = CP80_SOUND_FEED;
-                    sound->feed_phase = 0.0;
+                    cp80_sound_begin_feed(sound);
                     sound->body1_z1  += 0.45;
                     sound->body2_z1  -= 0.20;
                 }
@@ -536,7 +626,14 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
                 grain = (white - sound->noise_lp) * 115.0 * ramp;
             }
         } else if (sound->mode == CP80_SOUND_FEED) {
-            const double p = sound->feed_phase;
+            const double p        = sound->feed_phase;
+            const double progress = ((double) (CP80_FEED_STEPS - sound->feed_steps)
+                                    + p) / (double) CP80_FEED_STEPS;
+            const double edge     = fmin(1.0, fmin(progress * 12.0,
+                                                   (1.0 - progress) * 9.0));
+            double       white;
+            double       rough;
+            double       texture;
 
             /* The paper path is a slower, more harmonic geared stepper. */
             direct = 1325.0
@@ -544,17 +641,46 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
                       + (0.36 * sin(4.0 * CP80_PI * p + 0.20))
                       + (0.20 * sin(8.0 * CP80_PI * p + 0.55)));
 
+            /* Paper sliding over the rubber platen/cutter is continuous
+               friction, not another oscillator.  Band-limited noise is the
+               standard compact physical proxy for microscopic roughness.  A
+               slow independent noise process varies contact pressure so it
+               rustles instead of sounding like a steady air leak; the 85 Hz
+               motor steps add only a shallow corrugation. */
+            white = ((double) (int32_t) cp80_sound_rand(sound))
+                  / 2147483648.0;
+            sound->paper_hp_z += sound->paper_hp_a * (white - sound->paper_hp_z);
+            rough = white - sound->paper_hp_z;
+            sound->paper_lp_z += sound->paper_lp_a * (rough - sound->paper_lp_z);
+
+            white = ((double) (int32_t) cp80_sound_rand(sound))
+                  / 2147483648.0;
+            sound->paper_texture_z += sound->paper_texture_a
+                                    * (white - sound->paper_texture_z);
+            texture = 0.78 + (2.8 * fabs(sound->paper_texture_z));
+            paper = sound->paper_lp_z * sound->paper_gain * edge * texture
+                  * (0.90 + (0.10 * cos(2.0 * CP80_PI * p)));
+
             sound->feed_phase += sound->feed_hz / (double) rate;
             if (sound->feed_phase >= 1.0) {
+                const double fleck = fabs(((double) (int32_t)
+                                           cp80_sound_rand(sound))
+                                          / 2147483648.0);
+
                 sound->feed_phase -= 1.0;
                 sound->feed_steps--;
                 impulse = 1.10;
+                /* Irregular fibres and the curved roll release a tiny flex on
+                   most platen steps.  Squaring the random value makes quiet
+                   events common and conspicuous ticks rare. */
+                paper_impulse = 0.025 + (0.105 * fleck * fleck);
 
                 if (sound->feed_steps <= 0) {
                     sound->mode       = CP80_SOUND_IDLE;
                     sound->direction = -sound->direction;
                     sound->body1_z1  -= 0.38;
                     sound->body2_z1  += 0.18;
+                    paper_impulse    -= 0.34;
                     cp80_sound_pop(dev);
                 }
             }
@@ -574,7 +700,31 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
             sound->body2_z2 = sound->body2_z1;
             sound->body2_z1 = y2;
 
-            out = (int32_t) (direct + grain + (y1 * 36.0) + (y2 * 18.0));
+            /* The paper modes ring after the feed itself stops, which matters
+               most on a single FEED press. */
+            {
+                const double py1 = (sound->paper1_c * sound->paper1_z1)
+                                 - (sound->paper1_r2 * sound->paper1_z2)
+                                 + paper_impulse;
+                const double py2 = (sound->paper2_c * sound->paper2_z1)
+                                 - (sound->paper2_r2 * sound->paper2_z2)
+                                 - (paper_impulse * 0.58);
+                const double py3 = (sound->paper3_c * sound->paper3_z1)
+                                 - (sound->paper3_r2 * sound->paper3_z2)
+                                 + (paper_impulse * 0.30);
+
+                sound->paper1_z2 = sound->paper1_z1;
+                sound->paper1_z1 = py1;
+                sound->paper2_z2 = sound->paper2_z1;
+                sound->paper2_z1 = py2;
+                sound->paper3_z2 = sound->paper3_z1;
+                sound->paper3_z1 = py3;
+
+                paper += (py1 * 23.0) + (py2 * 15.0) + (py3 * 8.0);
+            }
+
+            out = (int32_t) (direct + grain + paper
+                             + (y1 * 36.0) + (y2 * 18.0));
             buffer[(i << 1)]     += out;
             buffer[(i << 1) + 1] += out;
         }

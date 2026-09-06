@@ -58,19 +58,51 @@ around 3.6–4.0 kHz. Those sounds do not track head motion or paper advance and
 are deliberately excluded. Both videos are AAC camera captures, so their
 absolute loudness and high-frequency balance are not treated as calibration.
 
+The paper was also tracked independently of the soundtrack. Frames were scaled
+to a fixed raster, the exposed printed region was horizontally high-passed to
+remove illumination, and each frame was matched against the preceding frame at
+vertical offsets of zero through five pixels. During the regular part of the
+self-test, ordinary advances occupy **five or six frames at 29.927 fps**
+(0.167–0.200 s). The second video independently has a median detected advance of
+five frames at 30 fps. That makes the earlier 0.100 s feed estimate too short.
+
+Using those optical intervals as a mask against the soundtrack shows that paper
+motion raises the 0.8–1.5 kHz band by about 3 dB and the 4–8 kHz band by about
+4 dB over the preceding carriage interval. The most repeatable broad excesses
+are near 1.35 and 3.1 kHz, with a less stable group between 6 and 8 kHz. The
+salient wide-band transients have a median 35%-height duration of about 7 ms.
+Those figures are relative: camera gain, speech and room noise make absolute
+sound pressure unrecoverable.
+
 ## 3. Procedural model
 
-The implementation in `src/device/prn_cp80.c` has two event-driven oscillators:
+The source/filter split follows established real-time friction synthesis: a
+noise-like contact source drives a resonant object model. Paper-sound research
+also distinguishes sliding friction from discrete buckling events. This roll is
+transported smoothly rather than crumpled, so the model uses continuous friction
+and small start/stop flexes instead of a dense field of artificial crumpling
+pops. See [Avanzini, Serafin and Rocchesso (2005)](https://doi.org/10.1109/TSA.2005.852984)
+and [Cirio et al. (2016)](https://www.cs.columbia.edu/cg/crumpling/).
+
+The implementation in `src/device/prn_cp80.c` has two event-driven motor
+oscillators and a paper source:
 
 - **Head carriage:** 420 Hz at full speed, primarily sinusoidal with small
   second and third harmonics matching the measured harmonic falloff. Each motor
   step excites two damped synthetic case modes at 910 and 2380 Hz. A tiny
   deterministic high-passed noise component represents drive and carriage
   grain without introducing a noise sample.
-- **Paper feed:** a 150 Hz harmonic-rich geared stepper lasting 15 steps: nine
-  vertical character dots plus the manual's default six-dot line spacing. The
-  service manual does not specify this motor's pulse rate, so 150 Hz is an
-  inference from the repeatable 80–190 Hz low-motor group and its harmonics.
+- **Paper feed:** an 85 Hz harmonic-rich geared stepper lasting 15 steps: nine
+  vertical character dots plus the manual's default six-dot line spacing. This
+  produces a 176 ms advance, inside the independently measured video interval
+  and close to the first recording's broad 86 Hz group. The service manual does
+  not specify the paper motor's pulse rate.
+- **Paper:** deterministic noise is high- and low-pass filtered into sliding
+  friction whose colour and level follow paper speed. A separate slow noise
+  process varies contact pressure, the motor steps modulate it shallowly, and
+  small stochastic fibre releases excite short synthetic modes at 1.35, 3.1
+  and 6.9 kHz. Start/stop flexes are larger. No recorded paper, impulse response
+  or wavetable is embedded.
 
 A print event is created only when a rendered line reaches the paper; the FEED
 button creates a feed-only event. Carriage duration is eight steps per occupied
@@ -87,10 +119,10 @@ device configuration and can be suppressed for a run with
 
 ## 4. Confidence and limits
 
-The 420 Hz head rate, line-duration formula, two-motor structure and 15-dot
-default feed distance are high-confidence results supported by independent
-documentation and recording measurements. The paper motor's 150 Hz rate, case
-resonances and relative level are tuned inferences: neither Seiko document gives
-an acoustic spectrum or paper-motor pulse rate. A direct close-miked recording
-or motor tachometer capture would be needed to calibrate those parts more
-precisely.
+The 420 Hz head rate, line-duration formula, two-motor structure, 15-dot default
+feed distance and 0.17–0.20 s paper-motion interval are high-confidence results
+supported by independent documentation and/or both recordings. The chosen 85
+Hz paper-motor rate, paper resonances and relative level remain tuned inferences:
+neither Seiko document gives an acoustic spectrum or paper-motor pulse rate. A
+direct close-miked recording or motor tachometer capture would be needed to
+calibrate those parts more precisely.
