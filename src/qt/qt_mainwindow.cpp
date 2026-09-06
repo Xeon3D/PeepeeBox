@@ -77,6 +77,9 @@ extern bool fast_forward;
 #include <QTimer>
 #include <QThread>
 #include <QKeyEvent>
+#include <QMouseEvent>
+#include <QWheelEvent>
+#include <QCursor>
 #include <QShortcut>
 #include <QMessageBox>
 #include <QFocusEvent>
@@ -104,8 +107,10 @@ extern bool fast_forward;
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QFile>
-#include <QFontDatabase>
+#include <QFontInfo>
 #include <QScrollBar>
+#include <QSlider>
+#include <QStyle>
 #include <QPixmap>
 #include <QPainter>
 #include <QPainterPath>
@@ -1524,6 +1529,10 @@ static QString  cp80_queued;             /* printed by the guest, not yet fed   
 static QString  cp80_printed;            /* what is on the paper                */
 static QTimer  *cp80_feed   = nullptr;
 static size_t   cp80_paper_at = 0;
+static QWidget *cp80_controls = nullptr;
+static QLabel  *cp80_status   = nullptr;
+static QRect    cp80_available_hint;
+static qreal    cp80_dpr_hint = 1.0;
 
 /* A torn receipt remains a visible object long enough to leave the serrated
    bar instead of vanishing on the button click.  Its text and historical ink
@@ -1537,10 +1546,26 @@ static int              cp80_torn_first = 0;
 static int              cp80_tear_frame = 0;
 static bool             cp80_tearing    = false;
 
-/* How much paper is out of the machine at once.  A real roll keeps coming and
-   hangs over the front; twenty lines is the length that still reads as a receipt
-   on screen.  Past that the earliest lines ride up out of sight. */
-#define CP80_MAX_LINES 20
+/* The paper moves continuously during the roughly 200 ms platen advance.  The
+   printer itself remains anchored while the new line emerges from the slot. */
+#define CP80_PAPER_FRAME_MS 16
+#define CP80_PAPER_FRAMES   13
+#define CP80_SCREEN_MARGIN   0
+#define CP80_PAPER_PAD_Y    12
+#define CP80_PAPER_EDGE_ROOM 5
+#define CP80_EMPTY_LIP_H    14
+#define CP80_CRUMPLE_MIN_H  16
+#define CP80_CRUMPLE_MAX_H  38
+#define CP80_HOME_DELAY_MS  1100
+
+static QTimer *cp80_paper_motion = nullptr;
+static int     cp80_paper_frame  = CP80_PAPER_FRAMES;
+static QTimer *cp80_home_timer     = nullptr;
+static QTimer *cp80_manual_feed    = nullptr;
+static unsigned cp80_last_head_columns = 0;
+static unsigned cp80_last_head_speed   = 1000;
+static bool     cp80_head_away         = false;
+static unsigned cp80_edge_generation  = 0;
 
 /* The serial link can fill the 28 KB buffer far faster than the mechanism can
    empty it.  This is a moving-head DPU-414, not a stationary line-thermal
@@ -1624,6 +1649,27 @@ static bool             cp80_tearing    = false;
 #define CP80_PAPER_L  CP80_SCALE(CP80_SLOT_L)
 #define CP80_SLOT_YS  CP80_SCALE(CP80_SLOT_Y)
 
+/* The manual gives enough dimensions to keep the print geometry independent of
+   whichever fixed-pitch UI font happens to be installed.  The 112 mm roll is
+   400 printer dots wide at the specified 0.28 mm pitch.  The head covers the
+   centred 320 dots: forty 8-dot cells, each a 7-dot glyph plus one blank dot.
+   Vertically a normal line is the 9-dot matrix plus the default 6-dot feed.
+   The final 1.2x visual scale is a deliberate concession to screen reading;
+   it enlarges both axes together and recentres all forty columns. */
+#define CP80_PAPER_DOTS       400.0
+#define CP80_PRINT_DOTS       320.0
+#define CP80_TEXT_CELL_DOTS     8.0
+#define CP80_TEXT_LINE_DOTS    15.0
+#define CP80_TEXT_VISUAL_SCALE   1.2
+#define CP80_TEXT_FONT_PX       11
+static constexpr double CP80_TEXT_CELL_W = (double) CP80_PAPER_W
+    * CP80_TEXT_CELL_DOTS / CP80_PAPER_DOTS * CP80_TEXT_VISUAL_SCALE;
+static constexpr int CP80_TEXT_LINE_H = (int) (((double) CP80_PAPER_W
+    * CP80_TEXT_LINE_DOTS / CP80_PAPER_DOTS * CP80_TEXT_VISUAL_SCALE) + 0.5);
+static constexpr int CP80_TEXT_MARGIN_X = (int) ((((double) CP80_PAPER_W
+    - ((CP80_PRINT_DOTS / CP80_TEXT_CELL_DOTS) * CP80_TEXT_CELL_W)) / 2.0)
+    + 0.5);
+
 /* Sampled out of the photograph, so the drawn roll and the real one match. */
 #define CP80_PAPER_RGB 227, 228, 236
 #define CP80_INK_RGB    34,  34,  40
@@ -1703,6 +1749,7 @@ static int          cp80_blink    = 0;       /* CP80_BLINK_MS ticks, for the LED
 static QPushButton *cp80_replace  = nullptr;
 static QPushButton *cp80_pwr_btn  = nullptr;
 static QTimer      *cp80_blink_t  = nullptr;
+static QSlider     *cp80_batt_sl  = nullptr;   /* testing only */
 
 /* The battery level each printed line was printed at.  One entry per line of
    cp80_printed, because the fade belongs to the line and not to the printer: a
@@ -1873,7 +1920,11 @@ cp80_batt_spend(const QString &line, bool pace_queue = true)
 
 static QPushButton *cp80_btn_on = nullptr;   /* ON LINE */
 static QPushButton *cp80_btn_fd = nullptr;   /* FEED    */
-static QScrollBar  *cp80_scroll = nullptr;   /* on the paper, past 20 lines */
+static QScrollBar  *cp80_scroll = nullptr;   /* on the paper, past the viewport */
+static bool         cp80_btn_on_down = false;
+static bool         cp80_btn_fd_down = false;
+static bool         cp80_paper_hover = false;
+static QRect        cp80_paper_hit_rect;
 
 static QStringList
 cp80_lines_on(const QString &paper)
@@ -1894,54 +1945,669 @@ cp80_smoothstep(double t)
     return t * t * (3.0 - (2.0 * t));
 }
 
+static void cp80_render();
+
+static void
+cp80_update_paper_hover()
+{
+    const bool hovering = (cp80_view != nullptr)
+                       && cp80_paper_hit_rect.contains(
+                              cp80_view->mapFromGlobal(QCursor::pos()));
+
+    if (hovering == cp80_paper_hover)
+        return;
+    cp80_paper_hover = hovering;
+    if (cp80_scroll != nullptr)
+        cp80_scroll->setVisible(hovering
+                                && (cp80_scroll->maximum()
+                                    > cp80_scroll->minimum()));
+}
+
+class Cp80PaperEventFilter final : public QObject {
+public:
+    explicit Cp80PaperEventFilter(QObject *parent) : QObject(parent) {}
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if ((event->type() == QEvent::Enter)
+            || (event->type() == QEvent::MouseMove)) {
+            cp80_update_paper_hover();
+        } else if (event->type() == QEvent::Leave) {
+            cp80_paper_hover = false;
+            if ((cp80_scroll != nullptr) && !cp80_scroll->isSliderDown())
+                cp80_scroll->hide();
+        } else if ((event->type() == QEvent::Wheel) && cp80_paper_hover
+                   && (cp80_scroll != nullptr)
+                   && (cp80_scroll->maximum() > cp80_scroll->minimum())) {
+            const int delta = static_cast<QWheelEvent *>(event)->angleDelta().y();
+
+            if (delta != 0) {
+                cp80_scroll->setValue(cp80_scroll->value()
+                    - ((delta > 0) ? 3 : -3));
+                return true;
+            }
+        }
+        return QObject::eventFilter(watched, event);
+    }
+};
+
+/* Use the work area, not a fixed height or the full screen: on Windows the full
+   geometry includes the taskbar, while the old constant left a conspicuous
+   unused strip above it.  The hint covers the first paint, before the dialog has
+   a native window; after that the screen containing the dialog wins. */
+static QRect
+cp80_available_geometry()
+{
+    QScreen *screen = nullptr;
+
+    if ((cp80_win != nullptr) && cp80_win->isVisible())
+        screen = QGuiApplication::screenAt(cp80_win->frameGeometry().center());
+    if ((screen == nullptr) && !cp80_available_hint.isNull())
+        return cp80_available_hint;
+    if (screen == nullptr)
+        screen = QGuiApplication::primaryScreen();
+
+    return (screen != nullptr) ? screen->availableGeometry()
+                               : QRect(0, 0, CP80_HEAD_W + 80, CP80_HEAD_H + 240);
+}
+
+/* The rest of the Qt UI follows the desktop scale.  The physical printer does
+   not: its 460 x 392 raster is deliberately the same number of monitor pixels
+   at 100%, 125% and 150%.  QPixmap's device-pixel ratio lets this one canvas
+   opt out without disabling high-DPI support for the emulator. */
+static qreal
+cp80_device_pixel_ratio()
+{
+    QScreen *screen = nullptr;
+
+    if ((cp80_win != nullptr) && cp80_win->isVisible())
+        screen = QGuiApplication::screenAt(cp80_win->frameGeometry().center());
+    if (screen != nullptr)
+        return qMax<qreal>(1.0, screen->devicePixelRatio());
+    return qMax<qreal>(1.0, cp80_dpr_hint);
+}
+
+static int
+cp80_physical_to_logical(int pixels)
+{
+    if (pixels <= 0)
+        return 0;
+    return qMax(1, qRound((qreal) pixels / cp80_device_pixel_ratio()));
+}
+
+class Cp80BatterySlider final : public QSlider {
+public:
+    explicit Cp80BatterySlider(QWidget *parent)
+        : QSlider(Qt::Horizontal, parent)
+    {
+        setCursor(Qt::PointingHandCursor);
+        setFocusPolicy(Qt::StrongFocus);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        const QRectF body(1.0, 1.0, width() - 8.0, height() - 2.0);
+        const QRectF tip(body.right() + 1.0, body.top() + (body.height() * 0.31),
+                         5.0, body.height() * 0.38);
+        const QRectF level = body.adjusted(3.0, 3.0, -3.0, -3.0);
+        const qreal amount = (maximum() == minimum()) ? 0.0
+            : qBound<qreal>(0.0, (value() - minimum())
+                                  / qreal(maximum() - minimum()), 1.0);
+        QColor charge(75, 176, 86);
+
+        if (value() <= int(CP80_BATT_FLAT))
+            charge = QColor(210, 54, 45);
+        else if (value() <= 20)
+            charge = QColor(216, 153, 45);
+
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(46, 47, 51));
+        p.drawRoundedRect(body, 3.5, 3.5);
+        p.setBrush(QColor(142, 143, 149));
+        p.drawRoundedRect(tip, 1.5, 1.5);
+
+        QPainterPath level_shape;
+        level_shape.addRoundedRect(level, 1.8, 1.8);
+        p.save();
+        p.setClipPath(level_shape);
+        p.fillRect(level, QColor(26, 27, 30));
+        p.fillRect(QRectF(level.left(), level.top(), level.width() * amount,
+                          level.height()), charge);
+        if (cp80_charging) {
+            QLinearGradient sheen(level.topLeft(), level.bottomRight());
+            sheen.setColorAt(0.0, QColor(255, 255, 255, 0));
+            sheen.setColorAt(0.5, QColor(255, 255, 255, 54));
+            sheen.setColorAt(1.0, QColor(255, 255, 255, 0));
+            p.fillRect(level, sheen);
+        }
+        p.restore();
+
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(hasFocus() ? QColor(218, 218, 222)
+                                 : QColor(151, 152, 157), 1.5));
+        p.drawRoundedRect(body, 3.5, 3.5);
+
+        QFont number_font = font();
+        number_font.setBold(true);
+        p.setFont(number_font);
+        p.setPen(QColor(250, 250, 250));
+        p.drawText(body, Qt::AlignCenter,
+                   QStringLiteral("%1%").arg(cp80_batt, 0, 'f', 0));
+    }
+
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (event->button() != Qt::LeftButton) {
+            QSlider::mousePressEvent(event);
+            return;
+        }
+        setSliderDown(true);
+        setFromPosition(eventPosition(event));
+        event->accept();
+    }
+
+    void mouseMoveEvent(QMouseEvent *event) override
+    {
+        if (!(event->buttons() & Qt::LeftButton)) {
+            QSlider::mouseMoveEvent(event);
+            return;
+        }
+        setFromPosition(eventPosition(event));
+        event->accept();
+    }
+
+    void mouseReleaseEvent(QMouseEvent *event) override
+    {
+        if ((event->button() == Qt::LeftButton) && isSliderDown()) {
+            setFromPosition(eventPosition(event));
+            setSliderDown(false);
+            event->accept();
+            return;
+        }
+        QSlider::mouseReleaseEvent(event);
+    }
+
+private:
+    static qreal eventPosition(const QMouseEvent *event)
+    {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        return event->position().x();
+#else
+        return event->localPos().x();
+#endif
+    }
+
+    void setFromPosition(qreal x)
+    {
+        const qreal left = 4.0;
+        const qreal span = qMax<qreal>(1.0, width() - 14.0);
+        const qreal fraction = qBound<qreal>(0.0, (x - left) / span, 1.0);
+
+        setValue(qRound(minimum() + (fraction * (maximum() - minimum()))));
+    }
+};
+
+static int
+cp80_window_frame_height()
+{
+    if ((cp80_win != nullptr) && cp80_win->isVisible()) {
+        const int measured = cp80_win->frameGeometry().height()
+                           - cp80_win->geometry().height();
+
+        if (measured > 0)
+            return measured;
+    }
+
+    if (cp80_win == nullptr)
+        return 32;
+
+    return cp80_win->style()->pixelMetric(QStyle::PM_TitleBarHeight, nullptr,
+                                           cp80_win)
+         + (2 * cp80_win->style()->pixelMetric(QStyle::PM_DefaultFrameWidth,
+                                                nullptr, cp80_win));
+}
+
+/* Height beside the painted machine: layout margins, the real controls below
+   it, and (only on an error) the connection-status label. */
+static int
+cp80_non_canvas_height()
+{
+    if ((cp80_win == nullptr) || (cp80_win->layout() == nullptr))
+        return 56;
+
+    /* Ask the layout rather than reconstructing its height from selected
+       children.  That includes platform-dependent control minima and rounding
+       at fractional desktop scales. */
+    cp80_win->layout()->invalidate();
+    cp80_win->layout()->activate();
+    return qMax(0, cp80_win->sizeHint().height() - cp80_view->height());
+}
+
+static int
+cp80_max_canvas_height()
+{
+    const qreal dpr = cp80_device_pixel_ratio();
+    const QRect available = cp80_available_geometry().adjusted(
+        CP80_SCREEN_MARGIN, CP80_SCREEN_MARGIN,
+        -CP80_SCREEN_MARGIN, -CP80_SCREEN_MARGIN);
+    const int outside = cp80_window_frame_height() + cp80_non_canvas_height();
+    int available_logical;
+
+    if ((cp80_win != nullptr) && cp80_win->isVisible()) {
+        /* The lower edge is the anchor.  Use the actual decorated frame and
+           the actual layout overhead in Qt's logical coordinates.  In
+           particular, never assume the whole work-area height is available:
+           once Windows clamps a title bar at the top, that assumption makes a
+           later resize grow down through the taskbar. */
+        const int minimum_bottom = available.top() + outside
+                                 + cp80_physical_to_logical(CP80_HEAD_H) - 1;
+        const int anchor_bottom = qBound(minimum_bottom,
+                                         cp80_win->frameGeometry().bottom(),
+                                         available.bottom());
+
+        available_logical = anchor_bottom - available.top() + 1 - outside;
+    } else {
+        available_logical = available.height() - outside;
+    }
+
+    return qMax(CP80_HEAD_H,
+                int(std::floor(qMax(0, available_logical) * dpr)));
+}
+
+/* The roll's capacity is a property of the screen it is actually on.  On a
+   short display it scrolls sooner; on a tall one it uses the space all the way
+   down to the printer instead of stopping at an arbitrary twenty lines. */
+static int
+cp80_visible_line_capacity()
+{
+    const int paper_height = CP80_SLOT_YS
+                           + (cp80_max_canvas_height() - CP80_HEAD_H);
+    const int lines = (paper_height - CP80_PAPER_PAD_Y - CP80_PAPER_EDGE_ROOM)
+                    / CP80_TEXT_LINE_H;
+
+    return qBound(1, lines, 200);
+}
+
+static int
+cp80_paper_motion_offset(int line_height)
+{
+    if (cp80_paper_frame >= CP80_PAPER_FRAMES)
+        return 0;
+
+    const double t = (double) cp80_paper_frame
+                   / (double) (CP80_PAPER_FRAMES - 1);
+
+    double offset = (1.0 - cp80_smoothstep(t)) * line_height;
+
+    /* Thin stock carries a little momentum past its resting position.  The
+       one-to-two-pixel lift in the final third then damps back to exactly zero,
+       avoiding both a rubbery bounce and a permanent alignment error. */
+    if (t > 0.58) {
+        const double settle = (t - 0.58) / 0.42;
+
+        offset -= 1.8 * sin(CP80_UI_PI * settle);
+    }
+    return qRound(offset);
+}
+
+static void
+cp80_begin_paper_motion()
+{
+    cp80_paper_frame = 0;
+    if (cp80_paper_motion != nullptr)
+        cp80_paper_motion->start();
+    cp80_render();
+}
+
+static void
+cp80_schedule_home(unsigned columns, unsigned speed, int delay_ms)
+{
+    if (columns > 0) {
+        cp80_last_head_columns = columns;
+        cp80_last_head_speed   = speed;
+    }
+    if (cp80_home_timer != nullptr) {
+        if (cp80_head_away)
+            cp80_home_timer->start(delay_ms);
+        else
+            cp80_home_timer->stop();
+    }
+}
+
+/* A freshly torn roll does not have a mathematically straight leading edge.
+   Keep the profile shallow so it reads as thin thermal paper, not card stock.
+   When the roll reaches the ceiling, the first few centimetres buckle inward;
+   returning the leading path separately lets it be stroked after all surface
+   effects so the ripped edge never disappears into them. */
+static QPainterPath
+cp80_live_paper_shape(const QRect &paper, int crumple_depth,
+                      QPainterPath *leading_edge, QPainterPath *shadow_edge)
+{
+    static const int edge[] = { 2, 1, 3, 1, 2, 0, 2, 1, 3, 1 };
+    const int edge_count = (int) (sizeof(edge) / sizeof(edge[0]));
+    const int edge_phase = (int) ((cp80_edge_generation * 3u) % edge_count);
+    QPainterPath shape;
+    QPainterPath leading;
+
+    shape.moveTo(paper.left(), paper.top() + edge[edge_phase]);
+    leading.moveTo(paper.left(), paper.top() + edge[edge_phase]);
+    for (int x = 0; x <= paper.width(); x += 11) {
+        const int i = ((x / 11) + edge_phase) % edge_count;
+        const QPoint point(paper.left() + x, paper.top() + edge[i]);
+
+        shape.lineTo(point);
+        leading.lineTo(point);
+    }
+    const QPoint top_right(paper.right(), paper.top()
+        + edge[((paper.width() / 11) + edge_phase) % edge_count]);
+    shape.lineTo(top_right);
+    leading.lineTo(top_right);
+    QPainterPath exposed = leading;
+
+    crumple_depth = qBound(0, crumple_depth, qMax(0, paper.height() - 2));
+    if (crumple_depth > 0) {
+        shape.lineTo(paper.right() - 3, paper.top() + (crumple_depth / 3));
+        shape.lineTo(paper.right(), paper.top() + ((crumple_depth * 2) / 3));
+        shape.lineTo(paper.right() - 1, paper.top() + crumple_depth);
+        exposed.lineTo(paper.right() - 3,
+                       paper.top() + (crumple_depth / 3));
+        exposed.lineTo(paper.right(),
+                       paper.top() + ((crumple_depth * 2) / 3));
+        exposed.lineTo(paper.right() - 1, paper.top() + crumple_depth);
+    }
+    shape.lineTo(paper.right(), paper.bottom());
+    exposed.lineTo(paper.right(), paper.bottom());
+    shape.lineTo(paper.left(), paper.bottom());
+
+    QPainterPath left_side;
+    left_side.moveTo(paper.left(), paper.bottom());
+    if (crumple_depth > 0) {
+        shape.lineTo(paper.left() + 2, paper.top() + crumple_depth);
+        shape.lineTo(paper.left(), paper.top() + ((crumple_depth * 2) / 3));
+        shape.lineTo(paper.left() + 3, paper.top() + (crumple_depth / 3));
+        left_side.lineTo(paper.left() + 2,
+                         paper.top() + crumple_depth);
+        left_side.lineTo(paper.left(),
+                         paper.top() + ((crumple_depth * 2) / 3));
+        left_side.lineTo(paper.left() + 3,
+                         paper.top() + (crumple_depth / 3));
+    }
+    left_side.lineTo(paper.left(), paper.top() + edge[edge_phase]);
+    exposed.addPath(left_side);
+    shape.closeSubpath();
+
+    if (leading_edge != nullptr)
+        *leading_edge = leading;
+    if (shadow_edge != nullptr)
+        *shadow_edge = exposed;
+    return shape;
+}
+
+static void
+cp80_draw_crumple(QPainter &g, const QRect &paper, int depth, int excess)
+{
+    if (depth <= 0)
+        return;
+
+    /* Successive ridges compress the surplus roll into a shallow accordion.
+       Their spacing and curvature are deliberately unequal: a perfectly
+       periodic stack reads as a graphic pattern rather than thin paper. */
+    const int folds = qBound(2, 2 + (excess / 4), 5);
+    const int phase = cp80_paper_motion_offset(3);
+
+    QLinearGradient compression(0, paper.top(), 0, paper.top() + depth);
+    compression.setColorAt(0.00, QColor(68, 70, 80, 34));
+    compression.setColorAt(0.28, QColor(255, 255, 255, 26));
+    compression.setColorAt(0.58, QColor(75, 77, 87, 23));
+    compression.setColorAt(1.00, QColor(255, 255, 255, 0));
+    g.fillRect(QRect(paper.left(), paper.top(), paper.width(), depth),
+               compression);
+
+    for (int i = 0; i < folds; i++) {
+        const int y = paper.top() + 5 + phase
+                    + ((i + 1) * (depth - 7) / (folds + 1));
+        const int bend = 2 + ((i * 3 + excess) % 4);
+        QPainterPath ridge;
+
+        ridge.moveTo(paper.left() + 1, y);
+        ridge.cubicTo(paper.left() + (paper.width() * 2 / 9), y - bend,
+                      paper.left() + (paper.width() * 3 / 8), y + bend,
+                      paper.left() + (paper.width() / 2), y);
+        ridge.cubicTo(paper.left() + (paper.width() * 5 / 8), y - bend - 1,
+                      paper.left() + (paper.width() * 7 / 9), y + bend,
+                      paper.right() - 1, y - 1);
+
+        g.setPen(QPen(QColor(66, 68, 78, 34), 3.0));
+        g.drawPath(ridge.translated(0, 2));
+        g.setPen(QPen(QColor(255, 255, 255, 43), 1.0));
+        g.drawPath(ridge);
+    }
+}
+
+/* Redraw the photographed cap two pixels lower while its invisible hit target
+   is held.  A dark strip in the newly exposed recess and a light compression
+   shade make the movement legible without replacing the real button texture. */
+static void
+cp80_draw_pressed_button(QPainter &g, bool down, int image_x, int image_w,
+                         int machine_top)
+{
+    if (!down || (cp80_body == nullptr))
+        return;
+
+    const QRect source(CP80_SCALE(image_x), CP80_SCALE(CP80_BTN_Y),
+                       CP80_SCALE(image_w), CP80_SCALE(CP80_BTN_H));
+    const QRect target = source.translated(0, machine_top);
+
+    g.save();
+    g.setClipRect(target);
+    g.drawPixmap(target.translated(0, 2), *cp80_body, source);
+    g.fillRect(QRect(target.left(), target.top(), target.width(), 2),
+               QColor(28, 29, 34, 92));
+
+    QLinearGradient pressure(0, target.top(), 0, target.bottom());
+    pressure.setColorAt(0.0, QColor(20, 21, 25, 34));
+    pressure.setColorAt(0.55, QColor(20, 21, 25, 12));
+    pressure.setColorAt(1.0, QColor(255, 255, 255, 18));
+    g.fillRect(target, pressure);
+    g.restore();
+}
+
+/* The printer is the stationary object.  As the roll grows, resize the dialog
+   upward around its old lower edge so the machine does not walk toward the
+   taskbar one line at a time. */
+static void
+cp80_resize_to_content()
+{
+    if ((cp80_win == nullptr) || (cp80_win->layout() == nullptr))
+        return;
+
+    const bool  anchored = cp80_win->isVisible() && !cp80_win->isMaximized()
+                         && !cp80_win->isFullScreen();
+    const QRect old_frame = cp80_win->frameGeometry();
+
+    cp80_win->layout()->invalidate();
+    cp80_win->layout()->activate();
+    QSize wanted = cp80_win->sizeHint();
+    const int outside_canvas = qMax(0, wanted.height() - cp80_view->height());
+    const int maximum_client = cp80_physical_to_logical(
+                                   cp80_max_canvas_height()) + outside_canvas;
+
+    wanted.setHeight(qMin(wanted.height(), maximum_client));
+    cp80_win->resize(wanted);
+
+    if (anchored) {
+        const QRect available = cp80_available_geometry().adjusted(
+            CP80_SCREEN_MARGIN, CP80_SCREEN_MARGIN,
+            -CP80_SCREEN_MARGIN, -CP80_SCREEN_MARGIN);
+        const int minimum_frame = cp80_window_frame_height()
+                                + cp80_non_canvas_height()
+                                + cp80_physical_to_logical(CP80_HEAD_H);
+        const int anchor_bottom = qBound(available.top() + minimum_frame - 1,
+                                         old_frame.bottom(),
+                                         available.bottom());
+        const int dy = anchor_bottom - cp80_win->frameGeometry().bottom();
+
+        /* Clamp the anchor itself to the work area.  This also repairs an
+           already-overgrown dialog on the first repaint without moving its
+           lower edge farther down. */
+        if (dy != 0)
+            cp80_win->move(cp80_win->pos() + QPoint(0, dy));
+    }
+}
+
+static void
+cp80_place_initial(QWidget *parent)
+{
+    if (cp80_win == nullptr)
+        return;
+
+    const QRect parent_frame = (parent != nullptr)
+                             ? parent->window()->frameGeometry() : QRect();
+    QScreen *screen = !parent_frame.isNull()
+                    ? QGuiApplication::screenAt(parent_frame.center()) : nullptr;
+
+    if (screen == nullptr)
+        screen = QGuiApplication::screenAt(cp80_win->frameGeometry().center());
+    if (screen == nullptr)
+        screen = QGuiApplication::primaryScreen();
+    if (screen == nullptr)
+        return;
+
+    cp80_available_hint = screen->availableGeometry();
+    cp80_dpr_hint = qMax<qreal>(1.0, screen->devicePixelRatio());
+    cp80_render();                 /* native frame metrics are now available */
+
+    const QRect available = cp80_available_hint.adjusted(
+        CP80_SCREEN_MARGIN, CP80_SCREEN_MARGIN,
+        -CP80_SCREEN_MARGIN, -CP80_SCREEN_MARGIN);
+    const QRect frame = cp80_win->frameGeometry();
+    int x = !parent_frame.isNull() ? parent_frame.right() + 8
+                                   : available.right() - frame.width() + 1;
+
+    if ((x + frame.width() - 1) > available.right())
+        x = !parent_frame.isNull() ? parent_frame.left() - frame.width() - 8
+                                   : available.left();
+    x = qBound(available.left(), x,
+               qMax(available.left(), available.right() - frame.width() + 1));
+    const int y = qMax(available.top(), available.bottom() - frame.height() + 1);
+
+    /* move() and frameGeometry() use slightly different origins on decorated
+       top-level windows.  Moving by the measured delta keeps the outer frame,
+       including its title bar, inside the work area exactly. */
+    cp80_win->move(cp80_win->pos()
+                   + QPoint(x - frame.left(), y - frame.top()));
+
+    /* The compact dialog has now acquired its real bottom anchor.  Repaint
+       once more so a long roll may use exactly the room between that anchor
+       and the work-area top, but no more. */
+    cp80_render();
+}
+
+static QFont
+cp80_print_font()
+{
+    /* Courier New's hinted eleven-pixel strike is a close platform-independent
+       stand-in for the printer ROM's 7 x 9 raster.  Drawing it without text
+       antialiasing is important: ClearType fringes make tiny thermal dots look
+       like ordinary blue/red screen text.  Characters are positioned below at
+       the printer's own eight-dot pitch, so font substitution cannot change
+       the receipt's columns. */
+    QFont font(QStringLiteral("Courier New"));
+
+    font.setStyleHint(QFont::TypeWriter, QFont::PreferMatch);
+    font.setStyleStrategy(QFont::NoAntialias);
+    font.setHintingPreference(QFont::PreferFullHinting);
+    font.setFixedPitch(true);
+    font.setKerning(false);
+    font.setPixelSize(CP80_TEXT_FONT_PX);
+    return font;
+}
+
+static void
+cp80_draw_print_line(QPainter &painter, qreal left, qreal baseline,
+                     const QString &line)
+{
+    const int columns = qMin(line.size(), int(CP80_PRINT_DOTS
+                                               / CP80_TEXT_CELL_DOTS));
+
+    /* Position every glyph explicitly.  This retains the DPU-414's 40-column
+       measure even if Qt has to substitute another typewriter face. */
+    for (int column = 0; column < columns; column++)
+        painter.drawText(QPointF(left + (column * CP80_TEXT_CELL_W), baseline),
+                         line.mid(column, 1));
+}
+
 static void
 cp80_render()
 {
     if ((cp80_view == nullptr) || (cp80_body == nullptr))
         return;
 
-    QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-
-    mono.setPointSize(9);
+    const QFont mono = cp80_print_font();
 
     const QFontMetrics fm(mono);
-    const int          lh = fm.lineSpacing();
+    const int          lh = CP80_TEXT_LINE_H;
 
     const QStringList all = cp80_lines_on(cp80_printed);
 
-    /* Past twenty lines the roll stops growing and the earlier ones ride up out
-       of sight.  The scrollbar is how they are got back; it follows the bottom
-       unless somebody has scrolled away from it. */
-    const int over = qMax(0, all.size() - CP80_MAX_LINES);
+    const int visible_lines = cp80_visible_line_capacity();
+
+    /* Once the roll fills the usable work area, earlier lines ride out of sight.
+       The scrollbar is how they are got back; it follows the bottom unless
+       somebody has deliberately scrolled away from it. */
+    const int over = qMax(0, all.size() - visible_lines);
 
     if (cp80_scroll != nullptr) {
         const bool at_end = (cp80_scroll->value() >= cp80_scroll->maximum());
 
         cp80_scroll->blockSignals(true);
         cp80_scroll->setRange(0, over);
-        cp80_scroll->setPageStep(CP80_MAX_LINES);
+        cp80_scroll->setPageStep(visible_lines);
         cp80_scroll->setSingleStep(1);
         if (at_end)
             cp80_scroll->setValue(over);
         cp80_scroll->blockSignals(false);
-        cp80_scroll->setVisible(over > 0);
+        cp80_scroll->setVisible((over > 0) && cp80_paper_hover);
     }
 
     const int first = (cp80_scroll != nullptr)
                     ? qBound(0, cp80_scroll->value(), over) : over;
-    const QStringList lines = all.mid(first, CP80_MAX_LINES);
+    const bool tail_motion = (cp80_paper_frame < CP80_PAPER_FRAMES)
+                          && (over > 0) && (first == over);
+    const int line_first = tail_motion ? first - 1 : first;
+    const int line_count = visible_lines + (tail_motion ? 1 : 0);
+    const QStringList lines = all.mid(line_first, line_count);
 
-    const int paperH = lines.isEmpty() ? 0 : ((lines.size() * lh) + 12);
+    const bool crumpled = (over > 0);
+    const int paper_rows = qMin(lines.size(), visible_lines);
+    const int paperH = lines.isEmpty() ? CP80_EMPTY_LIP_H
+                                      : ((paper_rows * lh) + CP80_PAPER_PAD_Y);
     const QStringList torn_all   = cp80_tearing ? cp80_lines_on(cp80_torn_text)
                                                : QStringList();
-    const QStringList torn_lines = torn_all.mid(cp80_torn_first, CP80_MAX_LINES);
-    const int tornH = torn_lines.isEmpty() ? 0 : ((torn_lines.size() * lh) + 12);
+    const QStringList torn_lines = torn_all.mid(cp80_torn_first, visible_lines);
+    const int tornH = torn_lines.isEmpty() ? 0
+                                          : ((torn_lines.size() * lh)
+                                             + CP80_PAPER_PAD_Y);
     /* Negative when the roll is longer than the machine is tall, which is the
        whole point of measuring it this way. */
     /* Rotation lifts the free upper corners.  Reserve that room while tearing
        so a long receipt does not lose its top edge against the label bounds. */
     const int tear_room = (tornH > 0) ? 48 : 0;
-    const int top    = qMin(0, CP80_SLOT_YS - qMax(paperH, tornH) - tear_room);
+    const int edge_room = (paperH > 0) ? CP80_PAPER_EDGE_ROOM : 0;
+    const int max_canvas = cp80_max_canvas_height();
+    const int natural_top = qMin(0, CP80_SLOT_YS
+                                    - qMax(paperH, tornH)
+                                    - tear_room - edge_room);
+    /* Once surplus paper has reached the ceiling, keep the canvas at its exact
+       maximum.  The excess now buckles inside it; it must never make the window
+       grow for one animation frame and shrink downward again when that line
+       settles. */
+    const int top    = crumpled ? CP80_HEAD_H - max_canvas
+                               : qMax(CP80_HEAD_H - max_canvas, natural_top);
     const int H      = CP80_HEAD_H - top;
 
     QPixmap out(CP80_HEAD_W, H);
@@ -1952,14 +2618,68 @@ cp80_render()
 
     g.setRenderHint(QPainter::Antialiasing, false);
     g.drawPixmap(0, -top, *cp80_body);
+    cp80_draw_pressed_button(g, cp80_btn_on_down, CP80_BTN_ON_X,
+                             CP80_BTN_ON_W, -top);
+    cp80_draw_pressed_button(g, cp80_btn_fd_down, CP80_BTN_FD_X,
+                             CP80_BTN_FD_W, -top);
 
     if (paperH > 0) {
-        /* No border: it is the same strip as the one in the photograph, and a
-           line around it turns paper back into a widget. */
-        const QRect r(CP80_PAPER_L, (-top + CP80_SLOT_YS) - paperH,
-                      CP80_PAPER_W, paperH);
+        const int slot_y = -top + CP80_SLOT_YS;
+        const QRect final_paper(CP80_PAPER_L, slot_y - paperH,
+                                CP80_PAPER_W, paperH);
+        const int crumple_depth = crumpled
+            ? qMin(CP80_CRUMPLE_MAX_H, CP80_CRUMPLE_MIN_H + (over * 2)) : 0;
+        const int motion_y = (!crumpled && (first == over))
+                           ? cp80_paper_motion_offset(lh) : 0;
+        const QRect r = final_paper.translated(0, motion_y);
+        QPainterPath leading_edge;
+        QPainterPath shadow_edge;
+        const QPainterPath paper_shape = cp80_live_paper_shape(
+            r, crumple_depth, &leading_edge, &shadow_edge);
 
-        g.fillRect(r, QColor(CP80_PAPER_RGB));
+        cp80_paper_hit_rect = QRect(
+            cp80_physical_to_logical(r.left()),
+            cp80_physical_to_logical(r.top()),
+            cp80_physical_to_logical(r.width()),
+            cp80_physical_to_logical(r.height()));
+
+        /* The line rises from behind the slot instead of teleporting upward.
+           Clipping at the slot is also what makes the paper look threaded
+           through the mechanism rather than pasted over the photograph. */
+        g.save();
+        g.setClipRect(0, 0, out.width(), slot_y + 1);
+        g.setRenderHint(QPainter::Antialiasing, true);
+
+        /* Stroke the silhouette itself rather than an offset copy.  The shadow
+           therefore begins on the exact first paper pixel at the torn edge.
+           The lower edge is intentionally absent: it enters the photographed
+           slot and must not acquire a synthetic dark seam across the paper. */
+        g.setPen(QPen(QColor(24, 25, 31, 64), 2.0));
+        g.drawPath(shadow_edge);
+        g.setPen(Qt::NoPen);
+        g.fillPath(paper_shape, QColor(CP80_PAPER_RGB));
+
+        /* Low-contrast edge falloff gives the roll a shallow cross-sheet bow;
+           sparse deterministic fibres stop a long blank receipt looking like a
+           perfectly flat UI rectangle. */
+        QLinearGradient bow(r.left(), 0, r.right(), 0);
+        bow.setColorAt(0.00, QColor(80, 82, 91, 23));
+        bow.setColorAt(0.10, QColor(255, 255, 255, 10));
+        bow.setColorAt(0.52, QColor(255, 255, 255, 23));
+        bow.setColorAt(0.88, QColor(255, 255, 255, 7));
+        bow.setColorAt(1.00, QColor(73, 75, 84, 27));
+        g.fillPath(paper_shape, bow);
+
+        g.setClipPath(paper_shape, Qt::IntersectClip);
+        g.setPen(QColor(255, 255, 255, 16));
+        for (int y = r.top() + 19; y < r.bottom(); y += 37)
+            g.drawLine(r.left() + 3, y, r.right() - 3, y);
+        g.setPen(QColor(102, 104, 113, 10));
+        for (int y = r.top() + 31; y < r.bottom(); y += 53)
+            g.drawLine(r.left() + 5, y, r.right() - 4, y);
+
+        g.setRenderHint(QPainter::Antialiasing, false);
+        g.setRenderHint(QPainter::TextAntialiasing, false);
         g.setFont(mono);
 
         /* Each line in the ink it was printed with.  A receipt that began on a
@@ -1967,22 +2687,50 @@ cp80_render()
            top, gone at the bottom -- which is what the paper would look like.
            Colouring the whole roll from the present level would rewrite the
            earlier lines every time a new one arrived. */
-        int y = r.top() + 6 + fm.ascent();
+        const int text_motion = tail_motion
+                              ? cp80_paper_motion_offset(lh) - lh : 0;
+        int y = r.top() + text_motion + 6 + fm.ascent();
         for (int i = 0; i < lines.size(); i++) {
-            const int    at = first + i;
+            const int    at = line_first + i;
             const double bt = (at < cp80_line_batt.size())
                             ? cp80_line_batt.at(at) : CP80_BATT_FULL;
 
             g.setPen(cp80_mix(QColor(CP80_INK_RGB), QColor(CP80_PAPER_RGB),
                               cp80_fade_at(bt)));
-            g.drawText(r.left() + 8, y, lines.at(i));
+            cp80_draw_print_line(g, r.left() + CP80_TEXT_MARGIN_X, y,
+                                 lines.at(i));
             y += lh;
         }
 
+        cp80_draw_crumple(g, r, crumple_depth, over);
+        g.restore();
+
+        /* Surface effects and folds are allowed to meet the cut, never cover
+           it.  Drawing this last also leaves the leading edge visible after a
+           feed animation has fully settled at the top of the window. */
+        g.save();
+        g.setClipRect(0, 0, out.width(), slot_y + 1);
+        g.setRenderHint(QPainter::Antialiasing, true);
+        g.setPen(QPen(QColor(83, 85, 94, 118), 1.25));
+        g.drawPath(leading_edge);
+        g.restore();
+
         /* Inside the paper, against its right edge -- it belongs to the roll
            rather than to the window. */
-        if ((cp80_scroll != nullptr) && (over > 0))
-            cp80_scroll->setGeometry(r.right() - 12, r.top() + 4, 9, paperH - 8);
+        if ((cp80_scroll != nullptr) && (over > 0)) {
+            const int scroll_h = (visible_lines * lh) + CP80_PAPER_PAD_Y;
+            const QRect scroll_paper(CP80_PAPER_L,
+                                     slot_y - scroll_h,
+                                     CP80_PAPER_W, scroll_h);
+            const int scroll_top = scroll_paper.top() + crumple_depth + 3;
+
+            cp80_scroll->setGeometry(
+                cp80_physical_to_logical(scroll_paper.right() - 12),
+                cp80_physical_to_logical(scroll_top),
+                cp80_physical_to_logical(9),
+                cp80_physical_to_logical(qMax(20, scroll_paper.bottom()
+                                                       - scroll_top - 3)));
+        }
     }
 
     if (tornH > 0) {
@@ -1991,18 +2739,22 @@ cp80_render()
            bar at native size and stays deterministic between repaints. */
         QPixmap      sheet(CP80_PAPER_W, tornH);
         QPainterPath shape;
+        QPainterPath torn_edge;
 
         sheet.fill(Qt::transparent);
         shape.moveTo(0, 0);
         shape.lineTo(CP80_PAPER_W, 0);
         shape.lineTo(CP80_PAPER_W, tornH - 3);
+        torn_edge.moveTo(CP80_PAPER_W, tornH - 3);
         for (int x = CP80_PAPER_W; x >= 0; x -= 7) {
             static const int tooth[] = { 1, 4, 2, 5, 2, 3, 0, 4 };
             const int at = (x / 7) & 7;
 
             shape.lineTo(x, tornH - 1 - tooth[at]);
+            torn_edge.lineTo(x, tornH - 1 - tooth[at]);
         }
         shape.lineTo(0, tornH - 2);
+        torn_edge.lineTo(0, tornH - 2);
         shape.lineTo(0, 0);
         shape.closeSubpath();
 
@@ -2029,6 +2781,7 @@ cp80_render()
             curl.setColorAt(1.0, QColor(80, 84, 96, curl_alpha));
             s.fillPath(shape, curl);
 
+            s.setRenderHint(QPainter::TextAntialiasing, false);
             s.setFont(mono);
             int y = 6 + fm.ascent();
             for (int i = 0; i < torn_lines.size(); i++) {
@@ -2038,13 +2791,14 @@ cp80_render()
 
                 s.setPen(cp80_mix(QColor(CP80_INK_RGB), QColor(CP80_PAPER_RGB),
                                   cp80_fade_at(bt)));
-                s.drawText(8, y, torn_lines.at(i));
+                cp80_draw_print_line(s, CP80_TEXT_MARGIN_X, y,
+                                     torn_lines.at(i));
                 y += lh;
             }
 
             s.setClipping(false);
             s.setPen(QColor(92, 94, 104, 105));
-            s.drawPath(shape);
+            s.drawPath(torn_edge);
         }
 
         const double t       = qBound(0.0, (double) cp80_tear_frame
@@ -2169,7 +2923,7 @@ cp80_render()
 
     if (cp80_win != nullptr)
         cp80_win->setWindowTitle(
-            cp80_power ? QObject::tr("Seiko DPU-414 — pack %1%%2")
+            cp80_power ? QObject::tr("Seiko DPU-414 — %1%%2")
                              .arg(cp80_batt, 0, 'f', 2)
                              .arg(cp80_charging ? QObject::tr(", charging")
                                   : (cp80_ac ? QObject::tr(", on the adapter")
@@ -2186,9 +2940,27 @@ cp80_render()
         cp80_pwr_btn->setText(cp80_power ? QObject::tr("Power: on")
                                          : QObject::tr("Power: off"));
 
+    /* The battery control follows the pack when it moves on its own; blocked so
+       that following it does not read back as the user having dragged it. */
+    if (cp80_batt_sl != nullptr) {
+        const int want = int(cp80_batt + 0.5);
+
+        if (cp80_batt_sl->value() != want) {
+            cp80_batt_sl->blockSignals(true);
+            cp80_batt_sl->setValue(want);
+            cp80_batt_sl->blockSignals(false);
+        }
+        cp80_batt_sl->setToolTip(
+            QObject::tr("Battery pack: %1%. Drag to set the test level.")
+                .arg(cp80_batt, 0, 'f', 1));
+        cp80_batt_sl->update();
+    }
+
     g.end();
+    out.setDevicePixelRatio(cp80_device_pixel_ratio());
     cp80_view->setPixmap(out);
-    cp80_view->setFixedSize(out.size());
+    cp80_view->setFixedSize(cp80_physical_to_logical(out.width()),
+                            cp80_physical_to_logical(out.height()));
 
     /* The panel buttons ride with the picture.  The machine is always flush
        with the bottom of the pixmap, so their offset from the bottom never
@@ -2196,11 +2968,41 @@ cp80_render()
     const int base = out.height() - CP80_HEAD_H;
 
     if (cp80_btn_on != nullptr)
-        cp80_btn_on->setGeometry(CP80_SCALE(CP80_BTN_ON_X), base + CP80_SCALE(CP80_BTN_Y),
-                                 CP80_SCALE(CP80_BTN_ON_W), CP80_SCALE(CP80_BTN_H));
+        cp80_btn_on->setGeometry(
+            cp80_physical_to_logical(CP80_SCALE(CP80_BTN_ON_X)),
+            cp80_physical_to_logical(base + CP80_SCALE(CP80_BTN_Y)),
+            cp80_physical_to_logical(CP80_SCALE(CP80_BTN_ON_W)),
+            cp80_physical_to_logical(CP80_SCALE(CP80_BTN_H)));
     if (cp80_btn_fd != nullptr)
-        cp80_btn_fd->setGeometry(CP80_SCALE(CP80_BTN_FD_X), base + CP80_SCALE(CP80_BTN_Y),
-                                 CP80_SCALE(CP80_BTN_FD_W), CP80_SCALE(CP80_BTN_H));
+        cp80_btn_fd->setGeometry(
+            cp80_physical_to_logical(CP80_SCALE(CP80_BTN_FD_X)),
+            cp80_physical_to_logical(base + CP80_SCALE(CP80_BTN_Y)),
+            cp80_physical_to_logical(CP80_SCALE(CP80_BTN_FD_W)),
+            cp80_physical_to_logical(CP80_SCALE(CP80_BTN_H)));
+
+    cp80_resize_to_content();
+    cp80_update_paper_hover();
+}
+
+static int
+cp80_manual_feed_once()
+{
+    /* Holding FEED is a continuous paper operation, but only while OFFLINE.
+       Each repeated advance still spends the motor's share of the pack and
+       gets its own paper motion. */
+    if (!cp80_can_print() || (prn_cp80_connected() != 0))
+        return 0;
+
+    cp80_printed += QLatin1Char('\n');
+    const int speed = cp80_batt_spend(QString(), false);
+    const int duration = qMax(CP80_PAPER_FRAME_MS * CP80_PAPER_FRAMES,
+                              qRound(CP80_PAPER_MS * 1000.0
+                                     / qMax(speed, 1)));
+
+    prn_cp80_sound_feed(unsigned(speed));
+    cp80_line_batt.append(cp80_drive_level());
+    cp80_begin_paper_motion();
+    return duration;
 }
 
 static void
@@ -2241,7 +3043,12 @@ cp80_feed_line()
 
     prn_cp80_sound_line(unsigned(columns), unsigned(ink), unsigned(speed));
     cp80_line_batt.append(cp80_drive_level());
-    cp80_render();
+    if (columns > 0)
+        cp80_head_away = !cp80_head_away;
+    cp80_schedule_home(unsigned(columns), unsigned(speed),
+        ((cp80_feed != nullptr) ? cp80_feed->interval() : CP80_FIRST_LINE_MS)
+        + CP80_HOME_DELAY_MS);
+    cp80_begin_paper_motion();
 }
 
 static void
@@ -2262,6 +3069,9 @@ cp80_pump()
                                            &reset, buf, sizeof(buf) - 1);
 
         if (reset) {
+            if (cp80_paper_motion != nullptr)
+                cp80_paper_motion->stop();
+            cp80_paper_frame = CP80_PAPER_FRAMES;
             cp80_queued.clear();
             cp80_printed.clear();
             cp80_line_batt.clear();
@@ -2291,18 +3101,54 @@ cp80_pump()
 static void
 cp80_show(QWidget *parent)
 {
+    bool created = false;
+
     if (cp80_win == nullptr) {
+        created = true;
+        if (parent != nullptr) {
+            const QRect parent_frame = parent->window()->frameGeometry();
+            QScreen *screen = QGuiApplication::screenAt(parent_frame.center());
+
+            if (screen != nullptr)
+                cp80_available_hint = screen->availableGeometry();
+            if (screen != nullptr)
+                cp80_dpr_hint = qMax<qreal>(1.0, screen->devicePixelRatio());
+        }
+
         cp80_win = new QDialog(parent);
         cp80_win->setWindowTitle(QObject::tr("Seiko DPU-414"));
+
+        /* Counter-scale this dialog's content font.  Windows still draws its
+           native title bar normally, but the printer UI itself retains its
+           100% physical size on a 125% desktop. */
+        {
+            QFont fixed_font = cp80_win->font();
+            const int pixel_size = QFontInfo(fixed_font).pixelSize();
+
+            if (pixel_size > 0)
+                fixed_font.setPixelSize(qMax(8, cp80_physical_to_logical(
+                                                   pixel_size)));
+            cp80_win->setFont(fixed_font);
+        }
+
+        for (QScreen *screen : QGuiApplication::screens()) {
+            QObject::connect(screen, &QScreen::availableGeometryChanged,
+                             cp80_win, [](const QRect &) {
+                cp80_render();
+            });
+        }
 
         QPixmap dpu(QStringLiteral(":/menuicons/qt/icons/dpu414.png"));
 
         cp80_body = new QPixmap(dpu.scaled(CP80_HEAD_W, CP80_HEAD_H,
                                            Qt::IgnoreAspectRatio,
                                            Qt::SmoothTransformation));
+        cp80_body->setDevicePixelRatio(1.0); /* fixed physical printer raster */
 
         cp80_view = new QLabel(cp80_win);
         cp80_view->setAlignment(Qt::AlignHCenter | Qt::AlignBottom);
+        cp80_view->setMouseTracking(true);
+        cp80_view->installEventFilter(new Cp80PaperEventFilter(cp80_view));
 
         /* The panel's own controls, over the buttons in the photograph.  They
            are children of the picture rather than items in a layout, so they
@@ -2324,32 +3170,60 @@ cp80_show(QWidget *parent)
            and a widget brings the dragging with it. */
         cp80_scroll = new QScrollBar(Qt::Vertical, cp80_view);
         cp80_scroll->setStyleSheet(QStringLiteral(
-            "QScrollBar:vertical { background: transparent; width: 9px; margin: 0; }"
+            "QScrollBar:vertical { background: transparent; width: %1px; margin: 0; }"
             "QScrollBar::handle:vertical { background: rgba(122,118,104,150);"
-            " border-radius: 4px; min-height: 20px; }"
+            " border-radius: %2px; min-height: %3px; }"
             "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
             "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical"
-            " { background: transparent; }"));
+            " { background: transparent; }")
+            .arg(cp80_physical_to_logical(9))
+            .arg(cp80_physical_to_logical(4))
+            .arg(cp80_physical_to_logical(20)));
         cp80_scroll->hide();
 
         QObject::connect(cp80_scroll, &QScrollBar::valueChanged, cp80_win, []() {
             cp80_render();
         });
+        QObject::connect(cp80_scroll, &QScrollBar::sliderReleased,
+                         cp80_win, []() {
+            cp80_update_paper_hover();
+        });
 
         cp80_btn_fd = new QPushButton(cp80_view);
         cp80_btn_fd->setStyleSheet(bare);
         cp80_btn_fd->setCursor(Qt::PointingHandCursor);
-        cp80_btn_fd->setToolTip(QObject::tr("FEED — one blank line per press"));
+        cp80_btn_fd->setToolTip(QObject::tr(
+            "FEED — press or hold to advance paper while OFFLINE"));
 
         /* The physical momentary switches still snap when their electrical
            action is unavailable (power off or an exhausted pack), so trigger
            the synthesized click on depression, before the clicked handlers
-           below decide whether the printer can do anything. */
+           below decide whether the printer can do anything.  Their photographed
+           caps are redrawn two pixels lower until release as well. */
         QObject::connect(cp80_btn_on, &QPushButton::pressed, cp80_win, []() {
+            cp80_btn_on_down = true;
             prn_cp80_sound_button();
+            cp80_render();
         });
         QObject::connect(cp80_btn_fd, &QPushButton::pressed, cp80_win, []() {
+            cp80_btn_fd_down = true;
             prn_cp80_sound_button();
+            const int repeat_ms = cp80_manual_feed_once();
+
+            if ((repeat_ms > 0) && (cp80_manual_feed != nullptr))
+                cp80_manual_feed->start(350);
+            else
+                cp80_render();
+        });
+        QObject::connect(cp80_btn_on, &QPushButton::released, cp80_win, []() {
+            cp80_btn_on_down = false;
+            cp80_render();
+        });
+        QObject::connect(cp80_btn_fd, &QPushButton::released, cp80_win, []() {
+            cp80_btn_fd_down = false;
+            if (cp80_manual_feed != nullptr)
+                cp80_manual_feed->stop();
+            cp80_render();
         });
 
         QObject::connect(cp80_btn_on, &QPushButton::clicked, cp80_win, []() {
@@ -2359,23 +3233,24 @@ cp80_show(QWidget *parent)
             const bool on = (prn_cp80_connected() == 0);
 
             prn_cp80_set_connected(on ? 1 : 0);
+            if (on && (cp80_home_timer != nullptr))
+                cp80_home_timer->stop();
+            else if (!on)
+                cp80_schedule_home(cp80_last_head_columns,
+                                   cp80_last_head_speed,
+                                   CP80_HOME_DELAY_MS);
             cp80_render();                   /* the lamp follows */
         });
 
-        QObject::connect(cp80_btn_fd, &QPushButton::clicked, cp80_win, []() {
-            /* What the button does on the machine: advance the paper by a line.
-               It is the printer's own feed, so it goes on the roll and not down
-               the wire. */
-            /* The feed motor runs off the same pack as the head, and a blank
-               line costs only the motor. */
-            if (!cp80_can_print())
+        cp80_manual_feed = new QTimer(cp80_win);
+        cp80_manual_feed->setSingleShot(true);
+        QObject::connect(cp80_manual_feed, &QTimer::timeout, cp80_win, []() {
+            if (!cp80_btn_fd_down)
                 return;
-            cp80_printed += QLatin1Char('\n');
-            const int speed = cp80_batt_spend(QString(), false);
+            const int repeat_ms = cp80_manual_feed_once();
 
-            prn_cp80_sound_feed(unsigned(speed));
-            cp80_line_batt.append(cp80_drive_level());
-            cp80_render();
+            if ((repeat_ms > 0) && cp80_btn_fd_down)
+                cp80_manual_feed->start(repeat_ms);
         });
 
         if (cp80_feed == nullptr) {
@@ -2394,15 +3269,15 @@ cp80_show(QWidget *parent)
 
         prn_cp80_where(where, sizeof(where));
 
-        auto *lbl = new QLabel(cp80_win);
+        cp80_status = new QLabel(cp80_win);
 
         /* Only when there is no printer, and then only to say why -- a machine
            that cannot be switched on needs to explain itself.  With one present
            the picture says everything the sentence did. */
-        lbl->setText(QString::fromUtf8(where));
-        lbl->setEnabled(false);
-        lbl->setWordWrap(true);
-        lbl->setVisible(prn_cp80_present() == 0);
+        cp80_status->setText(QString::fromUtf8(where));
+        cp80_status->setEnabled(false);
+        cp80_status->setWordWrap(true);
+        cp80_status->setVisible(prn_cp80_present() == 0);
 
         cp80_tear_btn = new QPushButton(QObject::tr("Tear off"), cp80_win);
         auto *save = new QPushButton(QObject::tr("Save paper…"), cp80_win);
@@ -2422,6 +3297,8 @@ cp80_show(QWidget *parent)
             if (!cp80_power) {
                 prn_cp80_set_connected(0);
                 cp80_charging = false;   /* the adapter stays plugged in */
+                if (cp80_home_timer != nullptr)
+                    cp80_home_timer->stop();
             }
             cp80_render();
         });
@@ -2532,31 +3409,56 @@ cp80_show(QWidget *parent)
             cp80_render();
         });
 
+        cp80_paper_motion = new QTimer(cp80_win);
+        cp80_paper_motion->setTimerType(Qt::PreciseTimer);
+        cp80_paper_motion->setInterval(CP80_PAPER_FRAME_MS);
+        QObject::connect(cp80_paper_motion, &QTimer::timeout, cp80_win, []() {
+            cp80_paper_frame++;
+            if (cp80_paper_frame >= CP80_PAPER_FRAMES) {
+                cp80_paper_frame = CP80_PAPER_FRAMES;
+                cp80_paper_motion->stop();
+            }
+            cp80_render();
+        });
+
+        cp80_home_timer = new QTimer(cp80_win);
+        cp80_home_timer->setSingleShot(true);
+        QObject::connect(cp80_home_timer, &QTimer::timeout,
+                         cp80_win, []() {
+            if (!cp80_power || !cp80_head_away
+                || (cp80_last_head_columns == 0))
+                return;
+
+            cp80_head_away = false;
+            prn_cp80_sound_home(cp80_last_head_columns,
+                                cp80_last_head_speed);
+        });
+
         QObject::connect(cp80_tear_btn, &QPushButton::clicked, cp80_win, []() {
             if (cp80_tearing)
                 return;
 
-            /* Freeze only the exposed part of the old roll.  The device and
-               live UI state are cleared immediately, allowing a new job to
-               begin behind the receipt while this one leaves the cutter. */
-            if (!cp80_printed.isEmpty()) {
-                cp80_torn_text  = cp80_printed;
-                cp80_torn_batt  = cp80_line_batt;
-                cp80_torn_first = (cp80_scroll != nullptr) ? cp80_scroll->value() : 0;
-                cp80_tear_frame = 0;
-                cp80_tearing    = true;
-                cp80_tear_btn->setEnabled(false);
-                prn_cp80_sound_tear();
-            }
+            if (cp80_printed.isEmpty())
+                return;
 
-            prn_cp80_clear();
-            cp80_queued.clear();
+            /* Freeze only the exposed part of the old roll.  The queued text,
+               feed timer, parser column and bytes that arrived since the last
+               UI pump all survive: tearing paper is a mechanical action, not a
+               cancel-print command. */
+            cp80_torn_text  = cp80_printed;
+            cp80_torn_batt  = cp80_line_batt;
+            cp80_torn_first = (cp80_scroll != nullptr) ? cp80_scroll->value() : 0;
+            cp80_tear_frame = 0;
+            cp80_tearing    = true;
+            cp80_tear_btn->setEnabled(false);
+            prn_cp80_sound_tear();
+
+            prn_cp80_tear(&cp80_paper_at);
+            cp80_edge_generation++;
             cp80_printed.clear();
             cp80_line_batt.clear();
-            cp80_paper_at = 0;
             cp80_render();
-            if (cp80_tearing)
-                cp80_tear_timer->start();
+            cp80_tear_timer->start();
         });
 
         QObject::connect(save, &QPushButton::clicked, cp80_win, [parent]() {
@@ -2569,7 +3471,7 @@ cp80_show(QWidget *parent)
 
             QFile out(to);
 
-            /* Everything printed, not the twenty lines still showing, and
+            /* Everything printed, not only the lines the current screen shows, and
                whatever is still feeding -- nobody wants to wait for the roll to
                catch up before saving. */
             if (out.open(QIODevice::WriteOnly | QIODevice::Text))
@@ -2579,58 +3481,84 @@ cp80_show(QWidget *parent)
                                      QObject::tr("Could not write %1").arg(to));
         });
 
-        /* There was a pack slider here while the thresholds were being settled.
-           It is gone: the window title carries the level, and PEEPEEBOX_PRN_DRAIN
-           reaches any of it without a control on the machine that the machine
-           does not have. */
-        auto *row = new QHBoxLayout;
+        /* Testing only: the pack takes 3000 lines to run down and ten hours to
+           charge, and neither is a thing to sit through while checking what a
+           threshold looks like.  Dragging this is not something the machine can
+           do, so it says so. */
+        cp80_batt_sl = new Cp80BatterySlider(cp80_win);
+        cp80_batt_sl->setRange(0, 100);
+        cp80_batt_sl->setValue(int(cp80_batt + 0.5));
+        cp80_batt_sl->setFixedSize(cp80_physical_to_logical(132),
+                                   cp80_physical_to_logical(30));
+        cp80_batt_sl->setToolTip(QObject::tr(
+            "Battery pack: drag to set the test level. The machine drains it a "
+            "line at a time and charges it over ten hours."));
+
+        QObject::connect(cp80_batt_sl, &QSlider::valueChanged, cp80_win, [](int v) {
+            cp80_batt       = double(v);
+            cp80_batt_dirty = true;
+            if (cp80_feed != nullptr)
+                cp80_feed->setInterval(int(CP80_FIRST_LINE_MS
+                                           + ((CP80_LINE_MS_FLAT - CP80_FIRST_LINE_MS)
+                                              * cp80_fade_at(cp80_drive_level()))));
+            cp80_batt_store();
+            cp80_render();
+        });
+
+        cp80_controls = new QWidget(cp80_win);
+        auto *row = new QHBoxLayout(cp80_controls);
+
+        row->setContentsMargins(0, 0, 0, 0);
+        row->setSpacing(cp80_physical_to_logical(6));
+
+        const int control_height = cp80_physical_to_logical(27);
+        cp80_pwr_btn->setFixedHeight(control_height);
+        cp80_replace->setFixedHeight(control_height);
+        cp80_tear_btn->setFixedHeight(control_height);
+        save->setFixedHeight(control_height);
 
         row->addWidget(cp80_pwr_btn);
         row->addWidget(cp80_replace);
         row->addStretch(1);
+        row->addWidget(cp80_batt_sl);
         row->addWidget(cp80_tear_btn);
         row->addWidget(save);
 
         auto *box = new QVBoxLayout(cp80_win);
+        const int outer_margin = cp80_physical_to_logical(11);
 
+        box->setContentsMargins(outer_margin, outer_margin,
+                                outer_margin, outer_margin);
         box->setSpacing(0);
-        box->addStretch(1);                /* empty air above the roll */
         box->addWidget(cp80_view, 0, Qt::AlignHCenter | Qt::AlignBottom);
-        box->addSpacing(8);
-        box->addWidget(lbl);
-        box->addLayout(row);
+        box->addSpacing(cp80_physical_to_logical(8));
+        box->addWidget(cp80_status);
+        box->addWidget(cp80_controls);
 
         cp80_render();
-        cp80_win->resize(CP80_HEAD_W + 60, CP80_HEAD_H + 320);
-
-        /* Beside the cabinet rather than on top of it: the printer stood next
-           to the machine and the paper is meant to be watched while the guest
-           is doing something.  Only on the first show -- after that it is
-           wherever it was put. */
-        if (parent != nullptr) {
-            QWidget      *top   = parent->window();
-            const QRect   g     = top->frameGeometry();
-            const QScreen *scr   = QGuiApplication::screenAt(g.center());
-            const QRect   avail = (scr != nullptr) ? scr->availableGeometry()
-                                : QGuiApplication::primaryScreen()->availableGeometry();
-            const QSize   sz    = cp80_win->size();
-
-            int x = g.right() + 8;
-            int y = g.top();
-
-            /* No room on the right; try the left before shoving it off the
-               edge of the desktop. */
-            if ((x + sz.width()) > avail.right())
-                x = g.left() - sz.width() - 8;
-            x = qBound(avail.left(), x, qMax(avail.left(), avail.right() - sz.width()));
-            y = qBound(avail.top(), y, qMax(avail.top(), avail.bottom() - sz.height()));
-
-            cp80_win->move(x, y);
-        }
     }
 
     cp80_win->show();
     cp80_win->raise();
+
+    /* Beside the cabinet, with the printer resting above the taskbar.  Wait one
+       event-loop turn so frameGeometry includes the platform title bar. */
+    if (created)
+        QTimer::singleShot(0, cp80_win, [parent]() {
+            cp80_place_initial(parent);
+
+            if (cp80_win->windowHandle() != nullptr) {
+                QObject::connect(cp80_win->windowHandle(), &QWindow::screenChanged,
+                                 cp80_win, [](QScreen *screen) {
+                    if (screen != nullptr)
+                        cp80_available_hint = screen->availableGeometry();
+                    if (screen != nullptr)
+                        cp80_dpr_hint = qMax<qreal>(1.0,
+                                                   screen->devicePixelRatio());
+                    cp80_render();
+                });
+            }
+        });
 }
 
 void

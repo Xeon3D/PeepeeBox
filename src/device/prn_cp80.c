@@ -96,10 +96,17 @@ enum {
     CP80_SOUND_FEED
 };
 
+enum {
+    CP80_EVENT_LINE = 0,
+    CP80_EVENT_FEED,
+    CP80_EVENT_HOME
+};
+
 typedef struct cp80_sound_event_t {
     uint16_t columns;              /* carriage's logical-seek distance */
     uint16_t ink;                  /* non-blank cells: a small load change */
     uint16_t speed;                /* 1000 at full battery speed */
+    uint8_t  kind;
 } cp80_sound_event_t;
 
 typedef struct cp80_sound_t {
@@ -115,6 +122,8 @@ typedef struct cp80_sound_t {
     int      head_steps;
     int      head_total;
     int      feed_steps;
+    int      head_feeds;
+    int      feed_turns_head;
     double   head_phase;
     double   feed_phase;
     double   head_hz;
@@ -563,11 +572,22 @@ cp80_sound_pop(cp80_t *dev)
     sound->head_phase = 0.0;
     sound->feed_phase = 0.0;
     sound->feed_steps = CP80_FEED_STEPS;
+    sound->head_feeds = 0;
+    sound->feed_turns_head = 0;
     cp80_sound_paper_speed(sound, (double) event.speed / 1000.0);
 
-    if (event.columns > 0) {
+    if (event.kind == CP80_EVENT_HOME) {
+        /* An interval home return is a carriage-only event.  The UI only asks
+           for it when the bidirectional head is away from the left stop. */
+        sound->direction  = -1;
         sound->head_steps = event.columns * CP80_CHAR_STEPS;
         sound->head_total = sound->head_steps;
+        sound->mode       = CP80_SOUND_HEAD;
+    } else if (event.columns > 0) {
+        sound->head_steps = event.columns * CP80_CHAR_STEPS;
+        sound->head_total = sound->head_steps;
+        sound->head_feeds = 1;
+        sound->feed_turns_head = 1;
         sound->mode       = CP80_SOUND_HEAD;
     } else {
         sound->head_steps = 0;
@@ -583,7 +603,7 @@ cp80_sound_pop(cp80_t *dev)
 
 static void
 cp80_sound_enqueue(cp80_t *dev, unsigned columns, unsigned ink,
-                   unsigned speed)
+                   unsigned speed, int kind)
 {
     cp80_sound_t *sound;
     int           next;
@@ -607,6 +627,7 @@ cp80_sound_enqueue(cp80_t *dev, unsigned columns, unsigned ink,
         sound->q[sound->q_tail].columns = (uint16_t) columns;
         sound->q[sound->q_tail].ink     = (uint16_t) ink;
         sound->q[sound->q_tail].speed   = (uint16_t) speed;
+        sound->q[sound->q_tail].kind    = (uint8_t) kind;
         sound->q_tail                   = next;
     }
     thread_release_mutex(dev->lock);
@@ -615,13 +636,21 @@ cp80_sound_enqueue(cp80_t *dev, unsigned columns, unsigned ink,
 void
 prn_cp80_sound_line(unsigned columns, unsigned ink, unsigned speed)
 {
-    cp80_sound_enqueue(cp80_inst, columns, ink, speed);
+    cp80_sound_enqueue(cp80_inst, columns, ink, speed, CP80_EVENT_LINE);
 }
 
 void
 prn_cp80_sound_feed(unsigned speed)
 {
-    cp80_sound_enqueue(cp80_inst, 0, 0, speed);
+    cp80_sound_enqueue(cp80_inst, 0, 0, speed, CP80_EVENT_FEED);
+}
+
+void
+prn_cp80_sound_home(unsigned columns, unsigned speed)
+{
+    if (columns == 0)
+        return;
+    cp80_sound_enqueue(cp80_inst, columns, 0, speed, CP80_EVENT_HOME);
 }
 
 void
@@ -843,9 +872,19 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
                     impulse += (3.20 + (0.55 * sound->head_load)) * ramp;
 
                 if (sound->head_steps <= 0) {
-                    cp80_sound_begin_feed(sound);
-                    sound->body1_z1  += 0.45;
-                    sound->body2_z1  -= 0.20;
+                    if (sound->head_feeds) {
+                        cp80_sound_begin_feed(sound);
+                        sound->body1_z1  += 0.45;
+                        sound->body2_z1  -= 0.20;
+                    } else {
+                        /* The interval return stops at the home switch; it does
+                           not advance paper or reverse the next print pass. */
+                        sound->mode       = CP80_SOUND_IDLE;
+                        sound->direction  = 1;
+                        sound->body1_z1  -= 0.30;
+                        sound->body2_z1  += 0.14;
+                        cp80_sound_pop(dev);
+                    }
                 }
             }
 
@@ -913,7 +952,8 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
 
                 if (sound->feed_steps <= 0) {
                     sound->mode       = CP80_SOUND_IDLE;
-                    sound->direction = -sound->direction;
+                    if (sound->feed_turns_head)
+                        sound->direction = -sound->direction;
                     sound->body1_z1  -= 0.38;
                     sound->body2_z1  += 0.18;
                     paper_impulse    -= 0.34;
@@ -1517,6 +1557,39 @@ prn_cp80_take(int which, size_t *pos, int *reset, char *out, size_t max)
 
     thread_release_mutex(dev->lock);
     return n;
+}
+
+void
+prn_cp80_tear(size_t *paper_pos)
+{
+    cp80_t *dev = cp80_inst;
+    size_t  consumed;
+    size_t  remain;
+
+    if ((dev == NULL) || (paper_pos == NULL))
+        return;
+
+    thread_wait_mutex(dev->lock);
+
+    /* A smaller buffer means somebody else reset it.  Preserve the new bytes
+       instead of treating the stale cursor as permission to discard them. */
+    if (*paper_pos > dev->paper.len) {
+        *paper_pos = 0;
+        thread_release_mutex(dev->lock);
+        return;
+    }
+
+    consumed = *paper_pos;
+    remain   = dev->paper.len - consumed;
+    if ((remain > 0) && (consumed > 0))
+        memmove(dev->paper.s, dev->paper.s + consumed, remain);
+    dev->paper.len  = remain;
+    dev->paper.full = 0;
+    if (dev->paper.s != NULL)
+        dev->paper.s[remain] = '\0';
+    *paper_pos = 0;
+
+    thread_release_mutex(dev->lock);
 }
 
 void

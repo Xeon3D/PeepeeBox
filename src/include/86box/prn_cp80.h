@@ -61,7 +61,12 @@ extern int prn_cp80_dirty(void);
 extern size_t prn_cp80_take(int which, size_t *pos, int *reset,
                             char *out, size_t max);
 
-/* Tear the paper off. */
+/* Remove only the paper bytes the UI has already copied.  Bytes that arrive
+   between its last take and a manual tear stay in the device buffer, and the
+   parser's current line is deliberately untouched. */
+extern void prn_cp80_tear(size_t *paper_pos);
+
+/* Clear the emulated paper and protocol trace completely. */
 extern void prn_cp80_clear(void);
 
 /* Start the sample-free DPU-414 mechanics for a line that has actually reached
@@ -70,6 +75,7 @@ extern void prn_cp80_clear(void);
    (1000 is a healthy pack / AC adapter). */
 extern void prn_cp80_sound_line(unsigned columns, unsigned ink, unsigned speed);
 extern void prn_cp80_sound_feed(unsigned speed);
+extern void prn_cp80_sound_home(unsigned columns, unsigned speed);
 extern void prn_cp80_sound_button(void);
 extern void prn_cp80_sound_tear(void);
 
