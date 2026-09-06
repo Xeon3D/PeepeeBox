@@ -283,18 +283,27 @@ jobs:
           title="Release ${tag#v}"
           headline="PeepeeBox $title — \`${GITHUB_SHA::7}\`"
 
-          {
-            echo "$headline"
-            echo
-            echo "Each archive contains the emulator, the two ROM images it needs, and"
-            echo "the README. Drop your \`HardDisk.img\` in beside the executable and run it."
-            echo
-            echo "| Platform | Notes |"
-            echo "|---|---|"
-            echo "| Windows x64 | Qt 5, statically linked |"
-            echo "| Linux x86_64 | Qt 5; needs the usual runtime libraries |"
-            echo "| macOS arm64 | Qt 5, new dynarec; unsigned, so Gatekeeper will object |"
-          } > notes.md
+          # A release can carry its own notes: docs/release-notes/<tag>.md, verbatim
+          # and nothing else.  What a release says it changed is a thing to write by
+          # hand next to the change, not something a build script can work out -- and
+          # the boilerplate below says the same thing every time, which is worth
+          # having only when there is nothing better to say.
+          if [ -f "docs/release-notes/${tag}.md" ]; then
+            cp "docs/release-notes/${tag}.md" notes.md
+          else
+            {
+              echo "$headline"
+              echo
+              echo "Each archive contains the emulator, the two ROM images it needs, and"
+              echo "the README. Drop your \`HardDisk.img\` in beside the executable and run it."
+              echo
+              echo "| Platform | Notes |"
+              echo "|---|---|"
+              echo "| Windows x64 | Qt 5, statically linked |"
+              echo "| Linux x86_64 | Qt 5; needs the usual runtime libraries |"
+              echo "| macOS arm64 | Qt 5, new dynarec; unsigned, so Gatekeeper will object |"
+            } > notes.md
+          fi
           gh release create "$tag" assets/*.zip \
               --title "$title" \
               --notes-file notes.md \

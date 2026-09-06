@@ -286,10 +286,10 @@ two scaled edges rounds once and stays inside. The Power *switch* is on the
 left-hand side of the machine and so is not in the photograph at all, which is
 why it is a labelled button rather than an invisible one on the picture.
 
-There is also a **pack slider**, which is a test control and says so — 3000 lines
-to run down and ten hours to fill are not things to sit through while checking
-what a threshold looks like. `PEEPEEBOX_PRN_DRAIN=<multiplier>` scales the drain
-for the same reason.
+There was a **pack slider** while the thresholds were being settled; it is gone.
+The window title carries the level, and `PEEPEEBOX_PRN_DRAIN=<multiplier>` and
+`PEEPEEBOX_PRN_CHARGE=<minutes>` reach any state worth testing without putting a
+control on the machine that the machine does not have.
 
 ### The 2008 reader had to move
 
