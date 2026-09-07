@@ -222,3 +222,38 @@ password then `7477/7D57` and `6B91/24A3` parts answer differently and only the 
 carries over. The sweep's *written* bytes are the guest's, so if they differ per release
 the matcher simply will not fire and the old fallback stands — wrong, but no worse than
 before.
+
+## 10. On screen
+
+Run on the rigs at `2f1eb06`.
+
+**I.G.O. 2 (BE, EA881).** The line that had never appeared before:
+
+    PP: picture cipher -- answering the keyed round in software, key 3B227944
+
+It boots to AMORE's attract screen with the artwork drawing, and **Marcos reports FIND IT
+plays correctly** — the photographs decrypt. That closes the chain end to end: the key of
+Phase 31, fitted from I.G.O. 4's plaintext with no dongle, answered through a device that
+matches a real part on every read in the capture, against the shipped archives.
+
+**I.G.O. 3 (DE, GF001).** Also asks now, with its own key:
+
+    PP: picture cipher -- answering the keyed round in software, key AB32E970
+
+and still stops, at `error number 228.250.107, in module MENU, dongle error`. Asking and
+being refused is a narrower failure than never asking, but it is still a failure.
+
+The round is not the suspect. Phase 31 § 5 transformed I.G.O. 3's boot-check block to
+`c:/foto/` under `AB32E970`, which a wrong key does not do. What is unmeasured for this
+part is everything around it:
+
+- **The sweep reply is a `68BB/1329` part's.** If those 64 bits depend on the password,
+  this device is now confidently handing I.G.O. 3 another dongle's answer.
+- **I.G.O. 3's session traffic looks different in kind.** In the logged window its writes
+  are `8A/8B`, `94/95`, `BA/BB`, `DA/DB` — the *cooked* form with bit 7 set — where
+  I.G.O. 2's session layer is bit-7-clear throughout. So § 9's model may not transfer, and
+  those bytes also trip `t_data`'s preamble rule and reset the cipher register, which is
+  right for a round preamble and wrong if they are something else.
+
+That window is 300 writes with repeats collapsed, so it shows the shape of the traffic and
+not the whole boot.
