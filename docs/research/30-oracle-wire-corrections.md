@@ -346,7 +346,7 @@ ends with the round's opening. Issuing our own on top talks over the part mid-tr
 and that alone is the difference between `BDC587AC` and the right answer -- the same run
 with `nopre` matches and without it does not.
 
-### 9.7 Why this is not yet a capture tool, and what the last piece is
+### 9.7 Why this is not yet a capture tool  -- SUPERSEDED, see section 10.1
 
 Replaying the bring-up and then *reconstructing* the preamble from § 9.3 does **not** work:
 
@@ -378,6 +378,81 @@ examples, not another hardware hunt.
 Once it is solved, `dongcap` becomes: replay the bring-up once, then per buffer emit the
 encoded preamble and walk the forty queries -- and `capture-igo2/` does what it was built
 for.
+
+## 10. The capture exists, and it decrypts the photographs
+
+### 10.1 Retraction: the preamble carries nothing
+
+§ 9.7 concluded that the preamble encodes the round's input, on the strength of round 0's
+opening differing from round 1's. It does not. That comparison came from an extractor
+that returned *zero* bytes for round 1, so it was comparing a list against nothing.
+
+Segmented properly -- the first answer of a round is read at site `3372:2C57` and the other
+39 at `3372:2CD5`, which is what broke the segmentation -- **all 118 rounds have a byte-
+identical preamble**:
+
+```
+   46 5A 68 7A 3E 34 58 38 20 32 40 20 2C 16 1C 34 7C 4E     eighteen command bytes
+   84 A4 84 A4 ... 84                                        sixteen SK pulses, bit 5
+   4E                                                        one more command byte
+```
+
+Ninety logical writes, the same every time. § 9.3 recorded only the last three command
+bytes; the first fifteen were missing, and that -- not timing, not contention, not a
+session bring-up -- is the whole reason nothing this project ever sent was answered.
+
+With the full sequence the part answers **from cold**:
+
+```
+base 378   replaying 0 of 99942 captured accesses
+f(504EF2AE) = 32FC6611   *** MATCH ***
+```
+
+No replay, no bring-up. § 9.5 and § 9.6's conclusion that the part needed the state the
+game had put it in was wrong too; it needed eighteen bytes.
+
+### 10.2 The capture
+
+```
+Checking against known answers
+   f(504EF2AE) = 32FC6611   expected 32FC6611   ok
+   f(012C6137) = DF57708B   expected DF57708B   ok
+Done -- DONGCAP.BIN written, 46036 rounds captured in 115 seconds.
+```
+
+23,018 buffers, two keyed rounds each, in under two minutes. A second run produced a
+**byte-identical** file (`d7d3206676e599a5155b6956deeba29d`), so the result does not depend
+on what else the machine was doing.
+
+### 10.3 It decrypts real pictures
+
+The test that matters is not the two calibration values -- those were checked before the
+run -- but whether the captured dwords turn ciphertext into photographs. I.G.O. 4 ships the
+same 1,397 FINDIT/PICS entries as **plaintext** GIF87a, at identical sizes, so the answer is
+a byte comparison rather than an opinion:
+
+| | |
+|---|---|
+| block 0 of the first 12 entries | decrypts to `47 49 46 38 37 61` -- `GIF87a` |
+| dimensions | 300x240, the cabinet's photo size |
+| whole files against I.G.O. 4's plaintext | **99.59% byte-identical** |
+
+Using `scratchpad/softround.py` for the keyless round -- the transcription phase 26 checked
+-- rather than re-deriving it, which got the schedule and the whitening wrong.
+
+### 10.4 What is left, and it is not the dongle
+
+Every difference is in the **last sixteen bytes of each 4096-byte buffer**, the last two
+blocks, in every buffer of every file. The first 4,080 bytes of each buffer are exact.
+Phase 26 saw the same thing and set it aside as "the last two blocks the walker
+deliberately leaves alone", which is a description rather than an explanation: leaving them
+as ciphertext is *worse* (99.578%), and so is keying them from the next buffer (99.590%) or
+dropping the CBC XOR (99.575%).
+
+So the outstanding work is the walker's boundary handling at `0x34CC0` -- pure software,
+offline, and independent of the hardware. The dongle's contribution is complete and
+verified: two dwords per 4 KB buffer, all 46,036 of them, and every byte they are
+responsible for comes out right.
 
 Related: `docs/research/20` § 3, `notes/HANDOFF2001.md` §§ 16, 20, 23-24,
 `tools/dongcap/`.

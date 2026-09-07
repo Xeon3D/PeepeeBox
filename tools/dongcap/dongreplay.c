@@ -74,15 +74,22 @@ static uint8_t query(uint8_t q)
     return (uint8_t) ((inb_(g_base + 1) >> 5) & 1);
 }
 
+/* The whole preamble, off the wire and identical in all 118 captured rounds: eighteen
+   command bytes, sixteen SK pulses, one more command byte.  docs/research/30 § 9.3 had
+   only the last three command bytes -- the first fifteen were missing. */
+static const uint8_t pre_cmds[18] = {
+    0x46, 0x5A, 0x68, 0x7A, 0x3E, 0x34, 0x58, 0x38, 0x20,
+    0x32, 0x40, 0x20, 0x2C, 0x16, 0x1C, 0x34, 0x7C, 0x4E
+};
+
 static void preamble(void)
 {
     int i;
 
-    cmdbyte(0x34);
-    cmdbyte(0x7C);
-    cmdbyte(0x4E);
+    for (i = 0; i < 18; i++)
+        cmdbyte(pre_cmds[i]);
+    raw(0x84);
     for (i = 0; i < 16; i++) {
-        raw(0x84);
         raw(0x84 | 0x20);
         raw(0x84);
     }

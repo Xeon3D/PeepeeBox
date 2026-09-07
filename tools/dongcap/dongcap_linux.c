@@ -165,15 +165,28 @@ static void sk_pulse(void)
    command bytes and all sixteen pulses, and swept a seed byte that does not exist:
    the opening command is the constant 0x34.  That is why 256 seeds against 20 frame
    variants never moved a status line. */
+/* The whole preamble, taken off the wire and identical in all 118 captured rounds:
+   eighteen command bytes, sixteen SK pulses (clocked on bit 5, not bit 0), then one more
+   command byte.  docs/research/30 section 9.3 recorded only the last three command bytes;
+   the first fifteen were missing, which is why nothing this tool sent was ever answered.
+
+   With this the part answers from cold -- no session bring-up is needed. */
+static const unsigned char pre_cmds[18] = {
+    0x46, 0x5A, 0x68, 0x7A, 0x3E, 0x34, 0x58, 0x38, 0x20,
+    0x32, 0x40, 0x20, 0x2C, 0x16, 0x1C, 0x34, 0x7C, 0x4E
+};
+
 static void preamble(void)
 {
     int i;
 
-    cmdbyte(0x34);
-    cmdbyte(0x7C);
-    cmdbyte(0x4E);
-    for (i = 0; i < 16; i++)
-        sk_pulse();
+    for (i = 0; i < 18; i++)
+        cmdbyte(pre_cmds[i]);
+    raw(0x84);
+    for (i = 0; i < 16; i++) {
+        raw(0x84 | 0x20);
+        raw(0x84);
+    }
     cmdbyte(0x4E);
 }
 
@@ -313,9 +326,6 @@ int main(int argc, char **argv)
         fputs("Run as root.\n", stderr);
         return 1;
     }
-
-    /* Take the part through its opening sequence once, before anything else. */
-    session_init();
 
     lst = slurp("DONGCAP.LST", &len);
     if (!lst) {
