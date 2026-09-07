@@ -8,6 +8,11 @@ time, and later ones say plainly where earlier ones turned out to be wrong. Read
 them as a trail, not as a specification — where two disagree, the later one wins,
 and the corrections are usually the most interesting part.
 
+**If you want the specification, it is `docs/research-v2/`.** That folder is the
+distillation of this one: only what has been established and holds today, with the
+superseded framings and the abandoned attempts left behind here. Start there to build
+something; come here to find out why something was tried.
+
 ## Photo Play / I.G.O. — the main sequence
 
 | | |
@@ -41,6 +46,11 @@ and the corrections are usually the most interesting part.
 | `25-igo2-block-function.md` | **E, read out of `FINDIT.EXE` rather than guessed at.** Five call sites, HASP service 61 over 4 KB, and the rule that a buffer of eight bytes or less is left alone -- after 24 refuted the assumed block function by measurement |
 | `26-cipher-broken.md` | **The picture cipher, broken.** The two dwords the dongle contributes to a 4 KB buffer are recovered by search, and 300/300 entries then decrypt with no hardware at all |
 | `27-io-card.md` | **The funworld I/O card: an 8255 at 0x210.** Where the coin acceptor and the two door buttons live, found by answering the card-detection sweep; the C120's six accept lines and its 100 ms pulse; A0 is the setup button |
+| `28-printer.md` | **The DATAPRINT.** The operator's book-keeping printer: how it is wired, and its protocol |
+| `29-dpu414-sound.md` | **The DPU-414's mechanical sound, synthesized.** Cadence and spectrum from four recordings, mechanisms from Seiko's own service documentation |
+| `30-oracle-wire-corrections.md` | **The keyed round, corrected against the binary and then against hardware.** The passthrough rig, the capture, and four retractions on the way |
+| `31-the-part-in-software.md` | **The picture cipher's keyed round, answered in software.** Every release's key fitted -- one of them with no dongle for its password pair in existence |
+| `32-the-part-is-never-asked.md` | **The session layer, modelled.** The measured identity signature, six address bits not eight, and 12,856 of 12,856 reads in a real boot |
 
 Two documents are both numbered `24`: `24-copycontrol.md` and
 `24-known-plaintext-corpus.md`, written for different releases on different
