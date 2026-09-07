@@ -34,7 +34,20 @@ CA, CB = 0x5B2C004A, 0x803425C3
 BUF = 4096
 LST_MAGIC = 0x50414344
 
-ARCHIVES = ['/FINDIT/PICS/FOTOPLAY.WAD', '/AMORE/COMIX/FOTOPLAY.WAD']
+# The photo games, per docs/research/16 -- the ones carrying PCXHeader_decode -- plus
+# AMORE's comics.  An archive that is not on this cipher is skipped automatically (its
+# entries will not share a first ciphertext block), so listing a path that does not apply
+# to a given release costs nothing.  FINDIT and AMORE alone missed I.G.O. 2's QUIZPRO2,
+# which is 80 entries and 2,248 buffers of enciphered photographs.
+ARCHIVES = [
+    '/FINDIT/PICS/FOTOPLAY.WAD',
+    '/AMORE/COMIX/FOTOPLAY.WAD',
+    '/QUIZPRO2/PICS/FOTOPLAY.WAD',
+    '/FQ2/PICS/FOTOPLAY.WAD',
+    '/SAME/PICS/FOTOPLAY.WAD',
+    '/SOLI/PICS/FOTOPLAY.WAD',
+    '/TRIVIA/PICS/FOTOPLAY.WAD',
+]
 
 # I.G.O. 3 stops before the menu on a dongle error: MENU.EXE at 0x41A32 calls EncodeData
 # over 20 bytes at DS:0x50F6 with 6B91/24A3.  DGROUP resolves to 0x42530 (355 of 359

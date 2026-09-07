@@ -498,5 +498,70 @@ block was found in the work list and decoded, and 4,080 of every 4,096 bytes com
 exactly right. The dongle's contribution -- 46,036 keyed rounds -- is complete and verified;
 what remains is which bytes the caller hands it, which is read off a binary, not a part.
 
+## 11. What the other generations need, and one archive that crosses all of them
+
+### 11.1 The work list was missing archives
+
+`mklist.py` listed only `FINDIT/PICS` and `AMORE/COMIX`. I.G.O. 2 also ships an enciphered
+`QUIZPRO2/PICS` -- 80 entries, 2,248 buffers -- so the first capture was incomplete and
+would have been called finished. The list now carries the six photo games of
+`docs/research/16` plus AMORE; paths that do not apply to a release are skipped
+automatically, because their entries will not share a first ciphertext block.
+
+### 11.2 QUIZPRO2 is 2001's archive, carried forward unchanged
+
+Adding it did not help, and the reason is the interesting part. First ciphertext blocks:
+
+| image | archive | first block | container |
+|---|---|---|---|
+| 2001 | FINDIT | `d2 46 3a 28 cf f9 62 d6` | PCX |
+| I.G.O. 2 | FINDIT | `97 36 21 d0 1d 6a 2d c7` | GIF |
+| I.G.O. 2 | **QUIZPRO2** | **`d2 46 3a 28 cf f9 62 d6`** | PCX |
+| I.G.O. 3 | FINDIT | `ec 1a d6 2a e7 9e bc 92` | GIF |
+| I.G.O. 3 | **QUIZPRO2** | **`d2 46 3a 28 cf f9 62 d6`** | PCX |
+
+QUIZPRO2 carries **2001's** block, in both later releases -- the archive was shipped on
+without re-encryption, so it is still under `7477/7D57`. The I.G.O. 2 dongle's answers do
+not decrypt it, and the check shows it: block 0 comes out `a4 df f0 12 c7 fc fc 06` where
+`docs/research/23` § 3 says 2001's plaintext there is the PCX header
+`0a 05 01 08 00 00 00 00`.
+
+So the 2,083 extra buffers in the I.G.O. 2 capture are recorded but useless for that
+archive. They cost ten seconds and are left in rather than special-cased, because the same
+list is what a 2001 capture wants.
+
+### 11.3 Which part unlocks what
+
+| generation | pair | enciphered archives | covered by the part in hand? |
+|---|---|---|---|
+| 2001 | `7477/7D57` | FINDIT, AMORE | no |
+| I.G.O. 2 | `68BB/1329` | FINDIT, AMORE | **yes -- captured** |
+| I.G.O. 3 | `6B91/24A3` | FINDIT, AMORE | no |
+| I.G.O. 5 | `6B91/24A3` | -- (FINDIT is plain) | no |
+| I.G.O. 6, 7 | `68BB/1329` | none -- plain GIF | nothing to unlock |
+| *all of the above* | `7477/7D57` | **QUIZPRO2** | no |
+
+Two conclusions worth acting on:
+
+- **A 2001 part is worth more than its own generation.** It unlocks 2001's FINDIT and AMORE
+  *and* the QUIZPRO2 archive in I.G.O. 2, 3 and 5 -- four releases from one dongle.
+- **One `6B91/24A3` part covers I.G.O. 3 and 5**, and I.G.O. 3 is the bigger prize: it does
+  not merely show black photographs, it refuses to boot (`docs/research/20` § 3 -- it calls
+  `HaspEncodeData` before anything else), which is why the image in the collection is
+  called `IGO3DE-GF001-DOES-NOT-BOOT`.
+
+### 11.4 What transfers, and the one caveat
+
+Everything but the part. The preamble, the query framing and the keyed round are the HASP
+library's, not a per-release invention, so a capture against either dongle should work the
+day it arrives: `mklist.py` already takes `2001` and `igo3`, phase 26's calibration pairs
+for I.G.O. 3 are committed, and the encode direction the tools now implement is exactly
+what I.G.O. 3's boot check needs.
+
+The caveat is the preamble. The cooked writer discards bits 0 and 7, so each of those
+eighteen bytes is really six bits, and they may well carry the password pair. If they do,
+the sequence differs per part and a fresh trace is needed -- which is cheap now that the
+passthrough rig exists, but is not nothing, and should be assumed until one is taken.
+
 Related: `docs/research/20` § 3, `notes/HANDOFF2001.md` §§ 16, 20, 23-24,
 `tools/dongcap/`.
