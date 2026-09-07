@@ -21,6 +21,8 @@ byte-identical photo archives, so any one of them stands in for the rest.
 
     python mklist.py 2001|igo2|igo3 <HardDisk.img> [HardDisk.img ...] [-o out.lst]
 """
+import collections
+import math
 import os
 import struct
 import sys
@@ -57,6 +59,13 @@ IGO3_BOOT = bytes.fromhex('1b2dec7d4e73fe76974a8f2512f3e13819e1bb58')
 
 # 2001's every entry starts with the same plaintext PCX header
 PCX_HEAD = (0x0805050A, 0x00000000)
+
+
+def entropy(b):
+    """Shannon entropy per byte -- how docs/research/22 separates the two schemes."""
+    counts = collections.Counter(b)
+    n = len(b)
+    return -sum(c / n * math.log2(c / n) for c in counts.values())
 
 
 def rol(v, s):
@@ -184,6 +193,17 @@ def main():
             if len(heads) > 1:
                 print('  %-28s %d entries, first blocks differ -- not this cipher, skipped'
                       % (path, len(es)))
+                continue
+            # A shared first block is NOT enough.  docs/research/22 tells the two schemes
+            # apart on entropy as well: the whole-file cipher leaves the body at ~7.9, the
+            # header-only LCG scheme only touches the first 128 bytes and leaves ~5.  An
+            # archive whose LCG key is per-archive rather than per-picture also shares a
+            # first block, and I.G.O. 2's QUIZPRO2 is exactly that -- 80 entries that look
+            # enciphered by the block test and need no dongle at all.
+            body = b''.join(bytes(d[o + 128:o + min(sz, 4096)]) for _, o, sz in es[:12])
+            if body and entropy(body) < 7.5:
+                print('  %-28s %d entries, body entropy %.2f -- header-only scheme, skipped'
+                      % (path, len(es), entropy(body)))
                 continue
             n = new = 0
             for _, off, size in es:

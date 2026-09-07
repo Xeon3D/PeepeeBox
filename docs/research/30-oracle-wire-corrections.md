@@ -500,7 +500,7 @@ what remains is which bytes the caller hands it, which is read off a binary, not
 
 ## 11. What the other generations need, and one archive that crosses all of them
 
-### 11.1 The work list was missing archives
+### 11.1 The work list was missing archives  -- WRONG, see 11.5
 
 `mklist.py` listed only `FINDIT/PICS` and `AMORE/COMIX`. I.G.O. 2 also ships an enciphered
 `QUIZPRO2/PICS` -- 80 entries, 2,248 buffers -- so the first capture was incomplete and
@@ -508,7 +508,7 @@ would have been called finished. The list now carries the six photo games of
 `docs/research/16` plus AMORE; paths that do not apply to a release are skipped
 automatically, because their entries will not share a first ciphertext block.
 
-### 11.2 QUIZPRO2 is 2001's archive, carried forward unchanged
+### 11.2 QUIZPRO2 is 2001  -- WRONG, see 11.5's archive, carried forward unchanged
 
 Adding it did not help, and the reason is the interesting part. First ciphertext blocks:
 
@@ -562,6 +562,42 @@ The caveat is the preamble. The cooked writer discards bits 0 and 7, so each of 
 eighteen bytes is really six bits, and they may well carry the password pair. If they do,
 the sequence differs per part and a fresh trace is needed -- which is cheap now that the
 passthrough rig exists, but is not nothing, and should be assumed until one is taken.
+
+### 11.5 Correction: QUIZPRO2 needs no dongle at all
+
+§ 11.2 said I.G.O. 2's QUIZPRO2 is enciphered under 2001's key and therefore out of reach.
+Marcos pointed out the obvious objection -- QUIZPRO2 plays on an I.G.O. 2 cabinet with the
+I.G.O. 2 dongle -- and he is right. It is not under the 2001 key. It is not under the
+dongle cipher.
+
+`docs/research/22` § 2 separates the two schemes on **two** tests and I used only one.
+Measured:
+
+| archive | distinct first blocks | body entropy | scheme |
+|---|---|---|---|
+| `FINDIT/PICS` | 1 | **8.00** | whole-file, needs the dongle |
+| `AMORE/COMIX` | 1 | **7.99** | whole-file, needs the dongle |
+| `QUIZPRO2/PICS` | 1 | **4.72** | header-only LCG, no dongle |
+| `FINDIT/PICS/PART0` | 40 | 6.89 | header-only LCG, no dongle |
+
+QUIZPRO2's body is plaintext PCX; only its first 128 bytes are scrambled. It shares a first
+block not because a dongle enciphered it but because its LCG key is **per archive** rather
+than per picture -- which is the case § 22 did not have an example of, and the reason the
+block test alone reports it as enciphered.
+
+The shared block with 2001's FINDIT follows from the same thing: identical PCX headers under
+the same LCG key give identical first bytes. No conclusion about keys can be drawn from it,
+and § 11.2's inference that a 2001 part would unlock QUIZPRO2 across four releases is
+withdrawn.
+
+`mklist.py` now applies the entropy test as well, so an archive on the header-only scheme is
+skipped with its reason printed. The list returns to **23,018 buffers** -- FINDIT and AMORE
+-- which is what the first capture already covered. `DONGCAP.BIN` is restored to that run
+(`d7d3206676e599a5155b6956deeba29d`), still 12 of 12 first blocks decrypting to `GIF87a`.
+
+So the capture was complete when it was first called complete, and § 11.1's "the work list
+was missing archives" is wrong too: it was missing an archive that does not belong in it.
+What was really missing was the second half of a test this document already cited.
 
 Related: `docs/research/20` § 3, `notes/HANDOFF2001.md` §§ 16, 20, 23-24,
 `tools/dongcap/`.
