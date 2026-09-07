@@ -176,3 +176,49 @@ Worth stating plainly, because the naming has been confusing:
 All three answer on STATUS bit 5, which is why they were hard to tell apart. The "HASP4
 key" of Phase 31 is the third row only; the second row is a memory read that no key helps
 with, and the first is what is still blocking.
+
+## 9. The session layer, modelled — 12,856 of 12,856
+
+§ 7 left 299 reads unexplained. Taking that layer apart, it does three things and the
+device answered all of them with the ramp rule:
+
+| transaction | occurrences in one boot | what the part does |
+|---|---|---|
+| the identity ramp, `00,02…7E` | 96 | the measured signature — already right |
+| a **64-step sweep** of a fixed byte sequence | 6 | answers the same 64 bits every time |
+| a **2-step liveness probe**, `1E` then `1C` | 59 | answers **1** then **0** |
+
+The sweep's 64 written bytes are identical on all six occurrences and so is the reply:
+`F5 7A 37 E7 8F 8F BD DA`. `dongcap` calls those bits "read and discarded", which was true
+of dongcap and evidently not of the game.
+
+The liveness probe is the interesting one. Address 15 really is clear in the measured
+signature, so the ramp rule answers `0` to `1E` — and `0` to `1C` as well. **That is a line
+stuck at one level, which is exactly what that gate exists to reject**, and the guest ran
+it 59 times in one boot.
+
+One more thing had to change to make any of it work: the session state has to be advanced
+by the *status reads*, not by the writes. Microwire traffic is bit-7-clear too, so a
+tracker driven off DATA alone drifts through every record read.
+
+With the ramp, the sweep and the liveness probe modelled, and the part's own record loaded
+so content cannot flatter the result:
+
+| phase | status reads | agreeing |
+|---|---|---|
+| identity ramp | 6,144 | 6,144 |
+| the 64-step sweep | 384 | 384 |
+| liveness | 59 | 59 |
+| record | 1,488 | 1,488 |
+| the keyed round | 4,722 | 4,722 |
+| everything else | 59 | 59 |
+| **total** | **12,856** | **12,856 — 100.00%** |
+
+Every read a real part answered in that capture, this device now answers the same way.
+
+**What that does not prove.** The capture is one boot of one game on one `68BB/1329` part.
+The sweep reply is measured, not derived, so if those 64 bits are a function of the
+password then `7477/7D57` and `6B91/24A3` parts answer differently and only the framing
+carries over. The sweep's *written* bytes are the guest's, so if they differ per release
+the matcher simply will not fire and the old fallback stands — wrong, but no worse than
+before.

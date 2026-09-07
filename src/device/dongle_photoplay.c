@@ -105,6 +105,28 @@ extern const device_t igo8_reader_device;
    96 ramps in that capture, all identical.  See pp_read_status. */
 #define HD_SIGNATURE 0xCEFF0AFFCECE0A0AULL
 
+/* The session layer does three things and this device used to answer all of them with the
+   ramp rule.  The other two, both measured off the same capture:
+
+   The 64-step sweep.  The library writes this fixed sequence and reads one bit back each
+   time; the part answers the same 64 bits every time, six times over in that run.
+   `dongcap` calls these "read and discarded", which is true of dongcap and evidently not
+   of the game.
+
+   The 2-step liveness probe.  The library writes 1E then 1C, and the part answers 1 then
+   0.  Answering 0 to both -- which the ramp rule does, because address 15 really is clear
+   in the signature -- is precisely the stuck line that gate exists to reject, and it
+   happens 59 times in one boot. */
+static const uint8_t hs_sweep_w[64] = {
+    0x78, 0x6A, 0x56, 0x26, 0x02, 0x18, 0x6E, 0x3C, 0x2E, 0x3A, 0x72, 0x52,
+    0x0C, 0x64, 0x70, 0x74, 0x2E, 0x24, 0x78, 0x36, 0x22, 0x0C, 0x1C, 0x26,
+    0x78, 0x28, 0x68, 0x54, 0x40, 0x0C, 0x70, 0x52, 0x0C, 0x46, 0x44, 0x2E,
+    0x6A, 0x68, 0x70, 0x78, 0x6A, 0x7E, 0x08, 0x40, 0x1C, 0x1C, 0x1A, 0x16,
+    0x12, 0x50, 0x36, 0x0C, 0x58, 0x2C, 0x6C, 0x30, 0x04, 0x3C, 0x4E, 0x12,
+    0x20, 0x14, 0x6A, 0x44
+};
+#define HS_SWEEP_A 0xF57A37E78F8FBDDAULL
+
 enum {
     HD_IDLE = 0, /* deselected, or waiting for a start bit */
     HD_OP,
@@ -198,6 +220,12 @@ typedef struct {
     int      hd_ready;          /* a write finished; DO answers the busy poll */
     int      hd_reads;          /* read instructions decoded, for the log */
     uint16_t hd_mem[HD_WORDS];
+
+    /* Session layer.  Advanced by the status reads, never by the writes: Microwire
+       traffic is bit-7-clear too, so anything driven off DATA alone drifts. */
+    int      hs_ramping;        /* the ascending identity ramp is in progress */
+    uint8_t  hs_ramp_prev;      /* ...and the last step of it answered */
+    int      hs_sweep;          /* how far into the 64-step sweep */
 
     /* The keyed round the picture cipher asks for -- see the section above t_query(). */
     uint32_t t_key;             /* this release's 32 key bits, 0 if it has none */
@@ -2033,8 +2061,9 @@ pp_read_status(void *priv)
            its sixteen clocked values are 2001's plus 0x80, and its ramp runs 80,
            82 ... FE.  The guest accumulates the loop index either way, so masking
            is all that is needed for the same answer to serve both. */
-        const uint8_t addr = (uint8_t) ((dev->last_data >> 1) & 0x3F);
-        const int     hit  = (int) ((HD_SIGNATURE >> addr) & 1u);
+        const uint8_t w    = dev->last_data;
+        const uint8_t addr = (uint8_t) ((w >> 1) & 0x3F);
+        int           bit;
 
         /* The library never reads STATUS in the middle of shifting an instruction --
            only during the sixteen data clocks of a read, which returned above.  So a
@@ -2044,9 +2073,36 @@ pp_read_status(void *priv)
         dev->hd_ph = HD_IDLE;
         dev->hd_n  = 0;
 
-        /* A finished write leaves the part busy until it answers ready, which is what
-           0x385F2 polls for after raising CS again. */
-        st = (dev->hd_ready || hit) ? HD_DO : 0x00;
+        if (dev->hs_ramping && (w == (uint8_t) (dev->hs_ramp_prev + 2))) {
+            dev->hs_ramp_prev = w;                 /* the ramp, continuing */
+            dev->hs_sweep     = 0;
+            bit               = (int) ((HD_SIGNATURE >> addr) & 1u);
+        } else if ((w == 0x00) || (w == 0x80)) {
+            dev->hs_ramping   = 1;                 /* ...or starting, either polarity */
+            dev->hs_ramp_prev = w;
+            dev->hs_sweep     = 0;
+            bit               = (int) ((HD_SIGNATURE >> addr) & 1u);
+        } else if ((dev->hs_sweep < 64) && (w == hs_sweep_w[dev->hs_sweep])) {
+            bit = (int) ((HS_SWEEP_A >> (63 - dev->hs_sweep)) & 1u);
+            dev->hs_sweep++;
+            dev->hs_ramping = 0;
+        } else if (w == hs_sweep_w[0]) {
+            bit             = (int) ((HS_SWEEP_A >> 63) & 1u);
+            dev->hs_sweep   = 1;
+            dev->hs_ramping = 0;
+        } else if (w == 0x1E) {
+            bit             = 1;                   /* the liveness probe's high half */
+            dev->hs_ramping = 0;
+            dev->hs_sweep   = 0;
+        } else {
+            /* A finished write leaves the part busy until it answers ready, which is
+               what 0x385F2 polls for after raising CS again. */
+            bit             = (int) ((HD_SIGNATURE >> addr) & 1u);
+            dev->hs_ramping = 0;
+            dev->hs_sweep   = 0;
+        }
+
+        st = (dev->hd_ready || bit) ? HD_DO : 0x00;
 
         pp_raw(dev, "read_status", st);
         return st;
