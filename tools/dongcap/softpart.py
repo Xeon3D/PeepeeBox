@@ -27,16 +27,19 @@ outright, and a pair either agrees with the others or kills the hypothesis.
 Nine pairs settle the key.  The inputs come from any block whose plaintext is known, so a
 release with a plaintext twin in another year needs no hardware at all:
 
-    I.G.O. 2  ciphertext, I.G.O. 4 plaintext -> 3B227944, seeded 0x7DF from 132968BB
-    I.G.O. 3  ciphertext, I.G.O. 4 plaintext -> AB32E970, seeded 0x5DF from 24A36B91
+    Photo Play 2001 ciphertext, 2000 plaintext    -> CF47CB42, register 0x7DF
+    I.G.O. 2        ciphertext, I.G.O. 4 plaintext -> 3B227944, register 0x7DF
+    I.G.O. 3        ciphertext, I.G.O. 4 plaintext -> AB32E970, register 0x5DF
 
 I.G.O. 2's key was fitted from I.G.O. 4 alone and then checked against all 46,036 rounds
 the real part answered in `capture-igo2/DONGCAP.BIN`: every one agrees.  That capture is
 now a regression test rather than a dependency.
 
-Photo Play 2001 is NOT this cipher.  Its `7477/7D57` archives admit no key under any of
-the thirty-two initial states the model allows, at any block of any entry, while I.G.O. 2
-and 3 lock onto one state on every pair tested.  See `docs/research/31`.
+**2001's stream starts at byte 128, not 0.** Its pictures are a PCX header under a
+separate keystream layer followed by the enciphered body, so a block-0 test against the
+twin's byte 0 compares the wrong things -- which is what made 2001 look like a different
+cipher until the origin was right.  Both of its archives then give the same key
+independently, and the I.G.O. releases start at 0.  `origin_of()` carries that.
 
     python softpart.py verify                       -- against the real capture
     python softpart.py fit igo3 <cipher.img> <plain.img>
@@ -55,12 +58,29 @@ M32 = 0xFFFFFFFF
 POLY = 0x80500062
 CA, CB = 0x5B2C004A, 0x803425C3
 
-# the password is pushed as pass2:pass1 -- FINDIT.EXE pushes 0x132968BB for 68BB/1329
+# The password is pushed as pass2:pass1 -- FINDIT.EXE pushes 0x132968BB for 68BB/1329 --
+# and initial_state() turns it into the register.  It does so correctly for the I.G.O.
+# family; 2001's fitted register is 0x7DF where neither order of its pair gives that
+# (they give 0x55F and 0x5DF), so 2001's is recorded as measured rather than derived.
+# The 2001 library is a different build, and Phase 20 already found it differs in word
+# order, so that is where to look if it ever needs deriving.
 GENERATIONS = {
-    'igo2': dict(password=0x132968BB, key=0x3B227944),
-    'igo3': dict(password=0x24A36B91, key=0xAB32E970),
-    'igo5': dict(password=0x24A36B91, key=0xAB32E970),   # same pair as I.G.O. 3
+    '2001': dict(password=0x7D577477, key=0xCF47CB42, state=0x7DF, origin=128),
+    'igo2': dict(password=0x132968BB, key=0x3B227944, state=None, origin=0),
+    'igo3': dict(password=0x24A36B91, key=0xAB32E970, state=None, origin=0),
+    'igo5': dict(password=0x24A36B91, key=0xAB32E970, state=None, origin=0),
 }
+
+
+def state_of(gen):
+    """the register this generation's preamble leaves behind"""
+    g = GENERATIONS[gen]
+    return g['state'] if g['state'] is not None else initial_state(g['password'])
+
+
+def origin_of(gen):
+    """where the enciphered stream starts inside a picture"""
+    return GENERATIONS[gen]['origin']
 
 
 def rol(v, s):
@@ -200,7 +220,7 @@ def fit_key(pairs, cur0):
     return None, 'did not settle (%d hypotheses left)' % len(live or [])
 
 
-def pairs_from_twin(cipher_img, plain_img, archive, limit=40):
+def pairs_from_twin(cipher_img, plain_img, archive, origin=0, limit=40):
     """(input, output) pairs from an archive whose plaintext ships in another release"""
     dc = wad.read(cipher_img, archive)
     dp = wad.read(plain_img, archive)
@@ -213,7 +233,7 @@ def pairs_from_twin(cipher_img, plain_img, archive, limit=40):
         if name not in plain or plain[name][1] != size:
             continue
         po = plain[name][0]
-        for b in range(0, size, BUF):
+        for b in range(origin, size, BUF):
             if size - b < 64:
                 continue
             c0, c1 = struct.unpack_from('<II', dc, off + b)
@@ -238,7 +258,7 @@ def cmd_verify():
     work = w[ncal * 2: ncal * 2 + count * 2]
     f = struct.unpack_from('<%dI' % ((len(bn) - 16) // 4), bn, 16)
     g = GENERATIONS['igo2']
-    cur = initial_state(g['password'])
+    cur = state_of('igo2')
     bad = n = 0
     for i in range(count):
         L1, R1 = work[i * 2], work[i * 2 + 1]
@@ -258,9 +278,9 @@ def cmd_verify():
 def cmd_fit(gen, cipher_img, plain_img):
     if gen not in GENERATIONS:
         raise SystemExit('unknown generation %r' % gen)
-    cur0 = initial_state(GENERATIONS[gen]['password'])
+    cur0 = state_of(gen)
     for a in ('/FINDIT/PICS/FOTOPLAY.WAD', '/AMORE/COMIX/FOTOPLAY.WAD'):
-        pairs = pairs_from_twin(cipher_img, plain_img, a)
+        pairs = pairs_from_twin(cipher_img, plain_img, a, origin_of(gen))
         if not pairs:
             print('%-28s no entry matches by name and size' % a)
             continue
@@ -275,14 +295,14 @@ def cmd_fit(gen, cipher_img, plain_img):
 
 def cmd_decrypt(gen, img, archive):
     g = GENERATIONS[gen]
-    cur = initial_state(g['password'])
+    cur = state_of(gen)
     d = wad.read(img, archive)
     if not d:
         raise SystemExit('%s not found in %s' % (archive, img))
     es = wad.entries(d)
-    good = 0
+    origin, good = origin_of(gen), 0
     for _name, off, _size in es:
-        c0, c1 = struct.unpack_from('<II', d, off)
+        c0, c1 = struct.unpack_from('<II', d, off + origin)
         p0, p1 = decode_block(c0, c1, g['key'], cur)
         head = struct.pack('<II', p0, p1)
         if head[:6] in (b'GIF87a', b'GIF89a') or head[:2] == b'\x0a\x05':

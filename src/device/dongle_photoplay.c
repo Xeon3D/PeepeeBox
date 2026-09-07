@@ -187,6 +187,15 @@ typedef struct {
     int      hd_reads;          /* read instructions decoded, for the log */
     uint16_t hd_mem[HD_WORDS];
 
+    /* The keyed round the picture cipher asks for -- see the section above t_query(). */
+    uint32_t t_key;             /* this release's 32 key bits, 0 if it has none */
+    uint16_t t_init;            /* the register the preamble leaves behind */
+    uint32_t t_cur;             /* and where it has got to inside the round */
+    uint8_t  t_last;            /* the previous DATA byte, for the clock edges */
+    uint8_t  t_ans;             /* the bit waiting to go out on STATUS */
+    int      t_pending;         /* ...and whether one is */
+    long     t_queries;         /* answered so far, for the log */
+
     cd_t    cd;
 
     uint8_t block[PP_BLOCK];
@@ -1434,13 +1443,20 @@ static const struct {
     int         shape;
     int32_t     v6;    /* the last two dwords vary by generation */
     int32_t     v7;    /* per-unit; no game is known to read it */
+    uint32_t    tkey;  /* the picture cipher's key -- docs/research/31 */
+    uint16_t    tinit; /* and the register its preamble leaves behind */
 } hd_keys[] = {
-    { "Version 2001",  0x7477, 0, 0, HD_R2001, 160678,     -35733698 },
-    { "Version 2002",  0x68BB, 0, 1, HD_RSION, 160678,   -371202944 }, /* I.G.O. 2 */
-    { "Version 2003",  0x6B91, 0, 1, HD_RSION, 160678,   -738037894 }, /* I.G.O. 3 */
-    { "Version 2005",  0x6B91, 0, 1, HD_RVERS,      0,            0 }, /* I.G.O. 5 */
-    { "Version 2006",  0x68BB, 1, 1, HD_RVERS,      0,            0 }, /* I.G.O. 6 */
-    { "Version 2007",  0x68BB, 0, 1, HD_RVERS,      0,            0 }, /* I.G.O. 7 */
+    { "Version 2001",  0x7477, 0, 0, HD_R2001, 160678,     -35733698, 0xCF47CB42, 0x7DF },
+    { "Version 2002",  0x68BB, 0, 1, HD_RSION, 160678,   -371202944, 0x3B227944, 0x7DF }, /* I.G.O. 2 */
+    { "Version 2003",  0x6B91, 0, 1, HD_RSION, 160678,   -738037894, 0xAB32E970, 0x5DF }, /* I.G.O. 3 */
+    /* I.G.O. 5 shares I.G.O. 3's password pair, so it should share the key.  Its FINDIT
+       is plain, so nothing here has been able to check that -- it is the pair talking,
+       not a measurement. */
+    { "Version 2005",  0x6B91, 0, 1, HD_RVERS,      0,            0, 0xAB32E970, 0x5DF }, /* I.G.O. 5 */
+    /* 2006 and later ship plain GIF: there is nothing for the round to decrypt, and a
+       key would only be guessing at a part no game asks. */
+    { "Version 2006",  0x68BB, 1, 1, HD_RVERS,      0,            0,          0,     0 }, /* I.G.O. 6 */
+    { "Version 2007",  0x68BB, 0, 1, HD_RVERS,      0,            0,          0,     0 }, /* I.G.O. 7 */
     /* I.G.O. Italy reports NDONGLE rather than HDONGLE, which was read as meaning it is
        not on this path at all.  It is, and it is not even a special case: MENU.EXE
        0x3C322 is the same filler every other I.G.O. build uses, down to the format
@@ -1453,7 +1469,7 @@ static const struct {
        Its passwords are not literals either -- 0x3C252 is the same probe I.G.O. 6 runs,
        so the key is zero here too.  The 2008 pair is on record for when service 5 can
        tell the two apart. */
-    { "Version 08",    0x68BB, 1, 1, HD_RVERS,      0,            0 }  /* I.G.O. Italy */
+    { "Version 08",    0x68BB, 1, 1, HD_RVERS,      0,            0,          0,     0 }  /* I.G.O. Italy */
 };
 
 /* The row this banner belongs to, or -1 if no release in the table claims it.  That
@@ -1797,6 +1813,68 @@ pp_pass_in(unsigned off)
 }
 #endif
 
+/* ------------------------------------------------------------------------------------
+ * The keyed round, answered here instead of by a physical part.
+ *
+ * From 2001 to I.G.O. 3 the photographs are enciphered with a cipher whose only keyed
+ * step is a byte-to-bit question put to the dongle -- forty of them per eight bytes,
+ * two of those eight-byte blocks per 4 KB buffer.  Everything around it is arithmetic
+ * the game does itself, so this is the whole of what the hardware ever contributed.
+ *
+ * The part is a small shift register.  `t_cur` is seeded by the preamble, the query
+ * carries five bits (the framing drops three), and the answer is
+ * `((t_cur >> 11) ^ key_bit) & 1`.  How the key was recovered without owning three
+ * dongles -- and why the software part reproduces all 46,036 rounds a real one answered
+ * -- is docs/research/31.
+ *
+ * Two clock edges matter, and they are on different lines, which is what keeps this off
+ * the Microwire decoder above:
+ *
+ *   DATA bit 0 rising, bit 7 set   a command byte: the round preamble, so reset
+ *   DATA bit 4 rising, bit 7 set   a query: answer it, and hold the bit for STATUS
+ *
+ * Query payloads never move bit 0, and command bytes never move bit 4, so neither is
+ * mistaken for the other.
+ */
+static void
+t_data(pp_t *dev, uint8_t val)
+{
+    const uint8_t rose = (uint8_t) (val & ~dev->t_last);
+
+    if (!(val & 0x80))
+        goto out;                       /* the 1999/2000 halves keep bit 7 clear */
+
+    if (rose & 0x01) {
+        /* Any command byte means the preamble is running, and it runs once per round. */
+        dev->t_cur     = dev->t_init;
+        dev->t_pending = 0;
+    } else if (rose & 0x10) {
+        const unsigned i5 = (unsigned) (((val >> 1) & 0x07) | ((val >> 2) & 0x18));
+        const unsigned st = (dev->t_key >> i5) & 1;
+        unsigned       b0 = i5 ^ ((st ^ 1) & (i5 >> 3)) ^ (i5 >> 4);
+        uint32_t       pre;
+
+        b0 ^= dev->t_cur >> 10;
+        b0 ^= dev->t_cur >> 7;
+        if (i5 & 2)
+            b0 ^= dev->t_cur >> 5;
+        if (i5 & 4)
+            b0 ^= dev->t_cur >> 8;
+
+        pre        = dev->t_cur ^ (uint32_t) ((i5 & 1) << 2);
+        dev->t_cur = (pre << 1) | (b0 & 1);
+        dev->t_ans = (uint8_t) (((dev->t_cur >> 11) ^ st) & 1);
+
+        dev->t_pending = 1;
+        if (dev->t_queries++ == 0)
+            pp_log("PP: picture cipher -- answering the keyed round in software, "
+                   "key %08X\n", dev->t_key);
+    }
+
+out:
+    dev->t_last = val;
+}
+
 static void
 pp_write_data(uint8_t val, void *priv)
 {
@@ -1813,8 +1891,11 @@ pp_write_data(uint8_t val, void *priv)
         pp_pass_out(0, val);
         return;
     }
-    if (dev->hd_probe)
+    if (dev->hd_probe) {
+        if (dev->t_key)
+            t_data(dev, val);
         hd_write_data(dev, val);
+    }
     cd_write_data(dev, val);
     pp_ack_edge(dev, val);
 }
@@ -1885,6 +1966,17 @@ pp_read_status(void *priv)
        Behind the hd2001 option because driving STATUS bit 5 at all disturbs the 1999
        and 2000 paths, which read this same port for something else. */
     if (dev->hd_probe) {
+        /* A query was just clocked in: that answer owns the line, ahead of everything
+           else.  The picture cipher and the record read share DO, but never at the same
+           moment -- a query is three DATA writes and one STATUS read, with nothing else
+           between them. */
+        if (dev->t_pending) {
+            dev->t_pending = 0;
+            st             = dev->t_ans ? HD_DO : 0x00;
+            pp_raw(dev, "read_status", st);
+            return st;
+        }
+
         /* A read instruction is in progress: the part owns the line and clocks the
            addressed word out, MSB first. */
         if (dev->hd_ph == HD_READ) {
@@ -2484,8 +2576,24 @@ pp_init(const device_t *info)
     const int hd_rel = hd_release_opt(banner);
 
     dev->hd_probe = (hd_opt < 0) ? (hd_rel >= 0) : (hd_opt != 0);
-    if (dev->hd_probe)
+    if (dev->hd_probe) {
+        const int trel = hd_release(banner);
+
         hd_load(dev, banner);
+
+        /* The picture cipher's key, for the releases that have one.  Without it the
+           photographs come back as noise -- the buffer goes in and the same buffer comes
+           out -- and I.G.O. 3 does not reach its menu at all, because its boot check
+           runs the same round before anything else.  docs/research/31. */
+        dev->t_key  = hd_keys[trel].tkey;
+        dev->t_init = hd_keys[trel].tinit;
+        dev->t_cur  = dev->t_init;
+        if (dev->t_key)
+            pp_log("PP: picture cipher key %08X, register %03X (%s)\n",
+                   dev->t_key, dev->t_init, hd_keys[trel].banner);
+        else
+            pp_log("PP: no picture cipher on this release -- its pictures are plain\n");
+    }
 
     /* Say what all of that resolved to, where the user can see it. */
     {

@@ -6,14 +6,15 @@ needs neither a dongle nor its dump. Its key was fitted from data already in the
 collection, and a program with no hardware attached now answers every query the part
 would have.
 
-Two releases are solved, one is not, and one earlier conclusion is withdrawn.
+All three releases behind this cipher are solved, and two earlier conclusions are
+withdrawn — one of them from the first version of this document.
 
 | | password pair | key | initial state | how it was obtained |
 |---|---|---|---|---|
 | I.G.O. 2 | `68BB/1329` | `3B227944` | `0x7DF` | fitted twice — from the capture, and from I.G.O. 4's plaintext |
 | I.G.O. 3 | `6B91/24A3` | `AB32E970` | `0x5DF` | fitted from I.G.O. 4's plaintext; **no dongle exists for this pair here** |
 | I.G.O. 5 | `6B91/24A3` | same as I.G.O. 3 | | shares the pair |
-| Photo Play 2001 | `7477/7D57` | — | — | **not this cipher** — § 6 |
+| Photo Play 2001 | `7477/7D57` | `CF47CB42` | `0x7DF` | fitted from 2000's plaintext, once the stream origin was right — § 6 |
 
 ## 1. The round hands over its own answers
 
@@ -117,25 +118,52 @@ fails. The software part transforms the first block to
 
 A wrong key gives eight random bytes. This one gives a path.
 
-## 6. Photo Play 2001 is a different cipher
+## 6. Photo Play 2001, and the origin that hid it
 
-2001 does not fit, and the failure is not a near miss.
+**This section first said 2001 was a different cipher. It is not, and the correction is
+the useful part.**
 
-A block that really went through the keyed round admits at least one key; a keyless block
-essentially never does. Scanned over every 8-byte block of the first entries, I.G.O. 2 and
-I.G.O. 3 light up at exactly `0, 4096, 8192, 12288, 16384` — the 4 KB stride, and nothing
-else. 2001 lights up nowhere, against either 2000 or 1999 as the plaintext twin, in FINDIT
-or AMORE.
+Reading `FINDIT.EXE` settles the framing: 2001's walker at `0x2EB26` is the same design as
+I.G.O. 2's -- 8-byte blocks, the 26-entry schedule `k[0]=D; k[j]=k[j-1]+acc;
+k[1]^=ROR32(D, k[j-1]&31)`, CBC under a zero IV, and the loop stopping at `nblocks-2`. Its
+decode at `0x2D04C` is the same two stages: six rounds of `ROL32(L ^ 0x5B2C004A, 25..0)`
+then the keyed round, then six of `ROL32(L ^ 0x803425C3, 10..0)` and another. The LFSR at
+`0x2CD0C` builds its polynomial as `[bp-2]=0x8050, [bp-4]=0x0062` -- a `long` whose low
+word is `0x0062`, so **`0x80500062`**, the same one. `notes/HANDOFF2001.md` § 20.1 records
+it as `0x00628050`, which is those two words written in the wrong order.
 
-That is not a password guess: sweeping all 32 initial states the model allows, I.G.O. 2
-takes `0x7DF` on 48 of 48 pairs and I.G.O. 3 takes `0x5DF` on 48 of 48, while 2001's best
-state matches 1 or 2 of 48 — the noise floor. The six word-order variants that Phase 20's
-high-first/low-first split suggests change nothing.
+So the cipher is identical, and what was wrong was where its stream starts. § 8 found
+2001's first 128 bytes are a PCX header under a separate XOR keystream; the picture cipher
+begins **after** it, at byte 128. Every earlier test compared 2001's byte 0 against the
+twin's byte 0 and was comparing two different layers.
 
-The twin is sound: 1999's and 2000's FINDIT and AMORE end in a valid PCX palette marker on
-1397 of 1397 and 332 of 332 entries, so their bodies really are plaintext. So 2001's
-`7477/7D57` archives are on some other transform, and that is the open question — not the
-dongle, which this phase has removed from the problem.
+The test that showed this uses no oracle at all. Block 0's two answers come out of
+`solve_from_plain` whatever the key is; those build the schedule; block 1 is then pure
+software. Landing on the twin's plaintext is a 64-bit coincidence otherwise:
+
+| stream at | plaintext at | FINDIT | AMORE |
+|---|---|---|---|
+| 0 | 0 | 0/25 | 0/25 |
+| 0 | 128 | 0/25 | 0/25 |
+| 128 | 0 | 0/25 | 0/25 |
+| **128** | **128** | **25/25** | **25/25** |
+
+With the origin right, 2001 fits like the others: **`CF47CB42`**, register `0x7DF`, settled
+after nine pairs, and **FINDIT and AMORE give the same key independently**. Decrypting
+whole buffers against the 2000 plaintext -- block 0 through the software part, the rest
+through the soft round and the CBC XOR -- gives 82,094 blocks right and 16 wrong in FINDIT,
+156,509 right and 61 wrong in AMORE, the residue being each entry's final short chunk and
+the two entries whose sizes differ between the releases.
+
+One thing is recorded rather than derived. `initial_state()` turns the password into the
+register correctly for the I.G.O. family, but 2001's fitted `0x7DF` is what neither order
+of `7477/7D57` produces (they give `0x55F` and `0x5DF`). The 2001 library is a different
+build and Phase 20 already found it differs in word order, so that is where to look; until
+then `softpart.py` carries 2001's register as measured.
+
+What made the earlier claim look strong was a control that was itself misaligned: I.G.O. 2
+and 3 lit up at `0, 4096, 8192, ...` and 2001 nowhere, which reads as decisive until you
+notice 2001 was never scanned at the offsets where its blocks actually are.
 
 ## 7. What the dumps contributed, and what they did not
 
@@ -165,3 +193,28 @@ So 2001's photo archives are `[128-byte header under the keystream][body under t
 picture cipher]`, and QUIZPRO2 is the first half alone with a plaintext body — 80 of 80
 entries end in a valid PCX palette marker. § 11.5's conclusion that QUIZPRO2 needs no
 dongle stands. Its reasoning does not, and 2001's header layer is not the dongle's work.
+
+## 9. In the device
+
+`src/device/dongle_photoplay.c` now answers the keyed round itself, so no capture and no
+part is needed at run time. `hd_keys[]` carries each release's key and register beside
+the password it already held, and `t_data()` picks the queries out of the raw DATA stream.
+
+Two clock edges do it, and they are on different lines, which is what keeps this clear of
+the Microwire decoder that shares the same DO:
+
+| edge | meaning |
+|---|---|
+| DATA bit 0 rising, bit 7 set | a command byte — the round preamble, so reset the register |
+| DATA bit 4 rising, bit 7 set | a query — answer it and hold the bit for the next STATUS read |
+
+Query payloads never move bit 0 and command bytes never move bit 4, so neither is taken
+for the other. The answer is latched and consumed by one STATUS read, ahead of the record
+path, because a query is three DATA writes and one read with nothing in between.
+
+Checked by replaying the recorded wire into exactly that logic: **4,720 answers given,
+4,720 agreeing with the real part, none wrong** — and 4,720 is the number of queries in
+the trace, so the edge detection neither invents a query nor misses one.
+
+I.G.O. 6, 7 and Italy carry no key. Their pictures are plain GIF, so there is nothing to
+decrypt and a key there would only be a guess at a part no game asks.
