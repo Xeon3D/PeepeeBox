@@ -81,8 +81,15 @@ extern const device_t igo8_reader_device;
 
 /* The 2001 generation's dongle -- a Microwire EEPROM.  Sizes and pin map here, the
    protocol itself over pp_read_status. */
-#define HD_WORDS  256 /* what the identity answer advertises, so addresses are 8 bits */
-#define HD_ABITS  8
+/* Measured, not chosen.  In the passthrough capture a real part is addressed with
+   twenty-five clocks per read -- a start bit, two opcode bits, **six** address bits and
+   sixteen data bits -- so the device holds 64 words, not 256.  That also explains the
+   record: the library adds HD_START to the caller's word and asks for 56, and 8 + 56 is
+   exactly 64.  Advertising 256 made the guest clock eight address bits, which is why the
+   measured identity answer of docs/research/32 first came out as a garbled banner.  See
+   docs/research/32 section 6. */
+#define HD_WORDS  64
+#define HD_ABITS  6
 #define HD_BANNER 30  /* the banner's column count; the numeric fields follow it */
 #define HD_RECORD 112 /* 56 words, which is what service 0x32 asks for */
 #define HD_START  8   /* the library adds 8 to the caller's start word */

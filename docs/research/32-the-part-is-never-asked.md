@@ -90,7 +90,44 @@ Two further cautions:
   identity it addresses the part in a way this decoder does not follow, so `HD_ABITS` and
   the instruction framing are the next thing the same capture can settle.
 
-## 5. Where that leaves Phase 31
+## 5. The part is 64 words, and that is why § 3 broke the banner
+
+Correcting the identity made I.G.O. 2 report `wrong dongle version` with a garbled banner,
+which is the risk § 4 named. The capture says why, and it is not a guess either.
+
+Splitting the wire on CS (DATA bit 1), clocking on SK (bit 5) and reading DI (bit 6) gives
+189 framed sessions, and only two shapes:
+
+```
+ 9 clocks   1 00 000000                        start, opcode 00, six address bits
+25 clocks   1 10 001000 0011110011101011       start, READ, address 08, sixteen data bits
+25 clocks   1 10 001001 0001101110111010       ...     address 09
+25 clocks   1 10 001010 0000011111010000       ...     address 0A
+```
+
+**Six address bits, not eight.** The part holds 64 words. That also settles the record: the
+library adds `HD_START` to the caller's word and asks for 56, and 8 + 56 is exactly 64 —
+the record is the whole of the part above word 8, with nothing spare.
+
+The device advertised 256 words because `0x1C`'s handler sets that size unconditionally.
+Once the identity answer was the real `0x18`, the guest clocked six address bits into a
+decoder still expecting eight, and every word came back shifted — the garbled banner.
+
+Replaying the capture through the decoder settles it:
+
+| address bits | read instructions decoded |
+|---|---|
+| 8 — what shipped | **0**, over all 12,856 status reads |
+| **6 — measured** | **93**, at addresses 8, 9, 10, 11 … |
+
+`HD_WORDS` is now 64 and `HD_ABITS` 6. The two changes belong together: the measured
+identity is only correct alongside the geometry it selects.
+
+Two of the decoded words can be checked against this device directly. The capture is a PT
+unit and the failing rig is BE, so most words differ, but `09 -> 1BBA` and `0A -> 07D0` are
+what our own log prints for those addresses — the same values from the same layout.
+
+## 6. Where that leaves Phase 31
 
 Untouched. The software part reproduces all 46,036 rounds a real dongle answered, and the
 device's edge detection answers all 4,720 consultations in the capture correctly. Both
