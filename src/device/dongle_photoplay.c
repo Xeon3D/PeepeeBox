@@ -93,6 +93,11 @@ extern const device_t igo8_reader_device;
 #define HD_DI 0x40 /* DATA bit 6 */
 #define HD_DO 0x20 /* STATUS bit 5 */
 
+/* What a real part puts on DO during the identity ramp, one bit per address 0..63,
+   measured off the 68BB/1329 dongle in docs/research/evidence/igo2-dongle-wire-*.log.gz.
+   96 ramps in that capture, all identical.  See pp_read_status. */
+#define HD_SIGNATURE 0xCEFF0AFFCECE0A0AULL
+
 enum {
     HD_IDLE = 0, /* deselected, or waiting for a start bit */
     HD_OP,
@@ -2005,10 +2010,16 @@ pp_read_status(void *priv)
            of the 64 addresses end up set, which also keeps the liveness gate at 0x37EA7
            -- which only rejects a line stuck at one level -- satisfied.
 
-           This signature is synthesised, not measured: what a real 2001 unit puts on DO
-           during that ramp has never been seen.  It picks the size the library then uses
-           to address the part, and every later phase agrees with that choice, so it
-           stands until a physical dongle says otherwise. */
+           A physical dongle has now said otherwise, and this is no longer synthesised.
+           The passthrough capture in docs/research/evidence holds a real 68BB/1329 part
+           answering that ramp 96 times, identically every time, and HD_SIGNATURE is what
+           it puts on DO: 37 of the 64 addresses set, giving acc = 0x18 rather than the
+           0x1C this used to aim for.  Scored against those 96 ramps the measured answer
+           agrees on 6144 of 6144 reads and the old rule on 2880 -- chance.
+
+           0x18's handler is the conditional one, which is why 0x1C was picked in the
+           first place; a real part evidently satisfies that condition.  See
+           docs/research/32. */
         /* The address is DATA bits 1..6, so mask to six bits rather than taking the
            whole byte.  2001 drives the ramp as 00, 02 ... 7E and the top bit never
            appears, but I.G.O. 5 drives the identical sequence with bit 7 set --
@@ -2016,7 +2027,7 @@ pp_read_status(void *priv)
            82 ... FE.  The guest accumulates the loop index either way, so masking
            is all that is needed for the same answer to serve both. */
         const uint8_t addr = (uint8_t) ((dev->last_data >> 1) & 0x3F);
-        const int     hit  = ((addr % 3) == 0) != (addr == 14);
+        const int     hit  = (int) ((HD_SIGNATURE >> addr) & 1u);
 
         /* The library never reads STATUS in the middle of shifting an instruction --
            only during the sixteen data clocks of a read, which returned above.  So a
