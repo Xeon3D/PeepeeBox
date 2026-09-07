@@ -132,3 +132,47 @@ what our own log prints for those addresses — the same values from the same la
 Untouched. The software part reproduces all 46,036 rounds a real dongle answered, and the
 device's edge detection answers all 4,720 consultations in the capture correctly. Both
 still hold — they are simply downstream of a gate that has not opened yet.
+
+## 7. Where the gap actually is now
+
+With `0b6efac` on the rig the banner reads correctly again and 32 words decode, so the
+geometry is right. The cipher line still does not appear: the identity was necessary and
+is not sufficient.
+
+The capture localises what is left. Seeding the model with the part's *own* record — so no
+content difference can account for anything — and replaying the whole wire through the
+device's logic:
+
+| phase | status reads | agreeing |
+|---|---|---|
+| record, over the Microwire framing | 1,488 | **1,488 — exact** |
+| the keyed round | 4,722 | 4,722, answered by Phase 31 |
+| everything else | 6,646 | 6,347 — **299 wrong** |
+
+So two of the three layers on this wire now match a real part exactly, and the gap is
+entirely in the third.
+
+That third layer is not Microwire and not the oracle. It is the bit-0-clocked command byte
+with bit 7 **clear** — `5A 5B 5A`, `3A 3B 3A` and so on — the HASP session and detection
+traffic, which is also where the identity ramp lives. The device answers every read in that
+phase from the ramp signature or the `ready` flag, and for 299 of them a real part says
+something else. The wrong answers cluster on particular bytes (`1E` 59 times, `0C` 30, `78`
+24, `2E` and `70` and `1C` 18 each), so it is structured traffic being answered by a rule
+that does not know about it, not noise.
+
+Modelling that layer is the next step, and the capture already contains every byte of it,
+so it needs no hardware.
+
+## 8. Three protocols, one pair of wires
+
+Worth stating plainly, because the naming has been confusing:
+
+| layer | framing | what it carries | state |
+|---|---|---|---|
+| session / detection | command bytes clocked on DATA bit 0, bit 7 clear | identity, liveness, whatever gates the decode | **299 of 6,646 reads wrong** |
+| memory | Microwire — CS bit 1, SK bit 5, DI bit 6, 6 address bits, 64 words | the 112-byte record: banner, dwords, database keys | exact |
+| transform | payload clocked on DATA bit 4, bit 7 set | the picture cipher's keyed round | exact |
+
+All three answer on STATUS bit 5, which is why they were hard to tell apart. The "HASP4
+key" of Phase 31 is the third row only; the second row is a memory read that no key helps
+with, and the first is what is still blocking.
