@@ -454,5 +454,49 @@ offline, and independent of the hardware. The dongle's contribution is complete 
 verified: two dwords per 4 KB buffer, all 46,036 of them, and every byte they are
 responsible for comes out right.
 
+### 10.5 The walker really does skip two blocks, and that is not the whole story
+
+`0x34CC0` read out, rather than inferred:
+
+```
+    34cc8   dx:ax = len;  ax += 7; adc dx,0;  cl = 3;  call __lrsh
+                                        -> nblocks = (len + 7) / 8
+    34d2f   if nblocks <= 1: return
+    34ea5   ax:dx = nblocks
+    34eab   sub dx,2 / sbb ax,0         -> nblocks - 2
+    34eb1   loop while counter < nblocks - 2
+```
+
+So the last two blocks of whatever length it is handed are genuinely never decoded. Phase
+26's "the walker deliberately leaves them alone" is literal, and counter 0 takes the dongle
+path while 1 .. nblocks-3 take the software round.
+
+That confirms the mechanism and still does not explain the data. With `len = 4096` the two
+untouched blocks stay as ciphertext, and the captured ciphertext there is **not** I.G.O. 4's
+plaintext: for `1.GIF` buffer 0 the stored bytes are `94 c1 22 d3 …` against a true
+`8a b9 0a 6c …`, sharing not one byte of sixteen. Nor is any other reading right -- across
+454 boundary blocks with known plaintext, none of *soft round with the current, next or
+previous buffer's schedule*, *with or without the CBC XOR*, *the dongle path*, or *a
+straight copy* reproduces it, and no choice of chaining predecessor makes `soft_encode`
+return the stored ciphertext. The schedule for those blocks is simply not one we have.
+
+Rendering agrees: decoding faithfully to the walker (last two blocks left as stored) still
+gives ImageMagick `corrupt image ... DecodeImage`, while reporting a well-formed
+`GIF 300x240` header, colour table and image descriptor.
+
+What this points at is the **caller**, not the walker. `notes/HANDOFF2001.md` § 24.12 lists
+"whether `0x2EB26` is entered once per 4 KB chunk" as inferred rather than observed, and the
+stride is the one free variable that would explain a sixteen-byte seam per 4096: a caller
+that reads 4096 but advances 4080 would hand those two blocks to the *next* call, where they
+are no longer last. That cannot be tested against this capture, because the work list was
+built at stride 4096 and so the recorded dwords are only for those buffer starts -- a
+4080-stride reading needs its own capture, which is twenty minutes of hardware time now that
+`dongcap` works.
+
+None of this touches the result. Stride 4096 is confirmed by the data: every buffer's first
+block was found in the work list and decoded, and 4,080 of every 4,096 bytes come out
+exactly right. The dongle's contribution -- 46,036 keyed rounds -- is complete and verified;
+what remains is which bytes the caller hands it, which is read off a binary, not a part.
+
 Related: `docs/research/20` § 3, `notes/HANDOFF2001.md` §§ 16, 20, 23-24,
 `tools/dongcap/`.
