@@ -180,21 +180,29 @@ feature that had never been implemented at all.
 The I.G.O. 2 PT cabinet image is the 230,320-byte build: **it cannot link, with
 or without an adapter.** `IGO2\IGO 2 DE 23B58` and `IGO2\IGO 2 NL 85A99` can.
 
-## 4. What this means for PeepeeBox
+## 4. What PeepeeBox does with it
 
-The emulation problem is small and well shaped, because the bus is ordinary 8250
-traffic:
+The emulation problem turned out to be small and well shaped, because the bus is
+ordinary 8250 traffic. `src/char/char_funlink.c` is the whole of it:
 
-- **The port is free.** ppbox uses COM3 for the touchscreen and COM4 for the
-  modem. COM1 at `0x3F8`/IRQ 4 is unclaimed, and 86Box already has the UART.
-- **The wire can be a socket.** Two ppbox instances joined by a shared byte
-  stream, with every station seeing every byte, reproduces the bus. The DTR
-  toggling can be ignored on the emulated side — arbitration is done in software
-  by the games, and a lossless pipe simply never collides.
-- **115200 8N1** is inside what 86Box's serial emulation does comfortably; the
-  timing tolerance is set by the 50-attempt backoff, which is generous.
-- **More than two cabinets** falls out of the same design: the advert shows four,
-  and nothing in the protocol is limited to two.
+- **The port was free.** ppbox uses COM3 for the touchscreen and COM4 for the
+  modem, so COM1 at `0x3F8`/IRQ 4 was unclaimed and 86Box already had the UART.
+  The adapter is fitted from **Tools → fun.link…**, persisted as `funlink` in
+  `[Photo Play]`.
+- **The wire is a TCP connection.** One instance listens and the others connect;
+  the listener repeats what it hears from one peer to all the others, which is
+  what makes three and four cabinets a bus rather than a pair of pipes. On the
+  default setting an instance tries to connect and becomes the listener if
+  nothing answers, so two copies pointed at the same address find each other
+  whichever starts first.
+- **DTR is ignored.** Gating transmission on it would drop bytes — the byte sits
+  in the emulated THR for a bit-time after the guest has already lowered the
+  line — and the enable only exists to stop two drivers fighting over one pair,
+  which a TCP stream has no equivalent of.
+- **Collisions never happen.** The guests still run their backoff; they just
+  always win first time, which is the good case on real hardware too.
+- **A cabinet does not hear itself**, because that is the guess the box has not
+  been opened to settle. `echo` in the device's options switches it.
 
 What is not yet known, and would need either the box opened or a capture from two
 real cabinets:
@@ -207,9 +215,12 @@ real cabinets:
 - how `MENU.EXE` chooses the `/IPX=` value, and what the invitation handshake
   between stations looks like.
 
-None of that blocks a first attempt: the two cabinets talk to each other, not to
-us, so a transparent pipe between two COM1s is testable without understanding a
-single payload byte.
+None of it blocked the implementation, because the cabinets talk to each other
+rather than to us: a transparent bus between COM1s carries payloads nobody here
+has to understand. What is verified so far is the wire and nothing above it —
+two instances find each other, a third joins, and a frame sent by one arrives at
+the others and not back at its sender. Whether two guests then agree to play is
+the on-screen test, and it needs one of the images from §3.
 
 ## 5. Where the evidence is
 

@@ -63,7 +63,7 @@ number was already cited elsewhere by the time they met. Left as they are:
 - `24-copycontrol.md` and `24-known-plaintext-corpus.md`, for different releases
   on different branches;
 - `34-funlink.md` and `34-funnet-licence.md`, and `35-fn-tables.md` and
-  `35-funnet.md` — two strands of fun.net work landing together.
+  `35-funnet.md` — the fun.link and fun.net strands landing together.
 
 ## Sibling investigation
 
