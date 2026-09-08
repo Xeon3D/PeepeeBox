@@ -697,15 +697,6 @@ funlink_write(uint8_t *buf, size_t len, void *priv)
     return len;
 }
 
-static uint32_t
-funlink_status(UNUSED(void *priv))
-{
-    /* Deliberately constant.  The guest drives this bus off LSR alone and never
-       looks at the modem lines, and a status that moved would make the serial
-       port raise an MSR interrupt nothing in the guest is there to clear. */
-    return CHAR_COM_CTS | CHAR_COM_DSR | CHAR_COM_DCD;
-}
-
 static void
 funlink_control(uint32_t flags, void *priv)
 {
@@ -764,7 +755,14 @@ funlink_init(UNUSED(const device_t *info))
     snprintf(dev->host, sizeof(dev->host), "%s",
              ((s != NULL) && (s[0] != '\0')) ? s : "127.0.0.1");
 
-    dev->port = char_attach(0, funlink_read, funlink_write, funlink_status,
+    /* No status callback, deliberately.  The adapter is a line driver: it does
+       not assert CTS, DSR or DCD, and the link driver reads none of them -- it
+       works off LSR and drives MCR.  Reporting anything at all is worse than
+       useless here, because serial_receive_timer() latches MSR delta bits and
+       re-raises the modem-status interrupt on every tick until the guest reads
+       MSR, which nothing on this port ever does.  COM1 shares IRQ 4 with COM3,
+       so that storm lands on the touchscreen's interrupt and kills touch. */
+    dev->port = char_attach(0, funlink_read, funlink_write, NULL,
                             funlink_control, funlink_port_config, dev);
     dev->log  = char_log_open(dev->port, "fun.link");
 
