@@ -1495,9 +1495,10 @@ pp_funlink_dialog(QWidget *parent)
         "beside this one, or one on another PC. Leave both on the default "
         "under Options and whichever starts first hosts the bus; to link over a "
         "network, set the others to the host's address."
-        "\n\nThe link driver is only in the 1998/99 to I.G.O. 2 releases. From "
-        "I.G.O. 3 onward the disks still carry the artwork and the menu entry, "
-        "but nothing behind them, so fitting the adapter there does nothing."
+        "\n\nOnly the 1998/99, 2000 and 2001 releases can start a linked "
+        "game. I.G.O. 1 and 2 still carry the serial driver, but their menu "
+        "never launches a game in link mode, and I.G.O. 3 onward has neither "
+        "— on those, fitting the adapter does nothing."
         "\n\nChanging this restarts the machine."));
     note->setWordWrap(true);
     form->addRow(note);

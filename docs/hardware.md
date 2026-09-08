@@ -112,12 +112,15 @@ find each other whichever starts first. To link across a network, set one to
 host and point the others at its address. Up to four cabinets share one bus,
 which is what the advert draws.
 
-**Most disk images cannot use it.** The link driver was linked into everything
-from 1998/99 through I.G.O. 2 and then dropped: I.G.O. 3 onward still ships the
-artwork and the "Fun Link" menu entry with nothing behind them. The per-image
-table, the disassembly it all comes from, and the one thing about the real
-adapter that is still a guess — whether a cabinet hears its own transmissions —
-are in [`research/34-funlink.md`](research/34-funlink.md).
+**Most disk images cannot use it.** Only **1998/99, 2000 and 2001** can start a
+linked game. I.G.O. 1 and 2 still carry the serial driver — their binaries
+still hold its error messages — but their menu launches every game with
+`/IPX=0`, and a game started that way never opens COM1; the invitation session is
+missing from the binary entirely. From I.G.O. 3 the driver is gone as well,
+leaving the artwork and the "Fun Link" menu entry with nothing behind them. The
+per-generation table, the disassembly it comes from, and the one thing about the
+real adapter that is still a guess — whether a cabinet hears its own
+transmissions — are in [`research/34-funlink.md`](research/34-funlink.md).
 
 ## The disk
 

@@ -149,9 +149,47 @@ kept the word.
 
 ## 3. Which images can actually do it
 
-Counting `LINK ERROR: No serial-port found` per image is a clean test for whether
-the real driver was linked in, because the string exists only inside the driver.
-Every hit is one executable.
+**Carrying the driver is not enough — the menu has to launch a game in link
+mode.** That is a separate piece of code and it was removed a generation before
+the driver was, so there is a middle band of releases that look linkable and are
+not. Two tests, in this order.
+
+### The menu's side: can a linked game be started at all?
+
+`MENU.EXE` launches a game as `\EXE\<game>.EXE /IPX=<station>`, and the game
+opens COM1 only when that number is non-zero. So the question is whether any of
+the launcher's call sites passes something other than a literal zero.
+
+- **1998/99**: the launcher has four call sites. Two push `66 6A 00` — `push
+  dword 0`, an ordinary launch — and one pushes `dword [bp-0xC]`, a variable.
+  That is the link launch.
+- **I.G.O. 2**: the launcher has **two** call sites and **both push a literal
+  zero**. No game is ever started in link mode.
+
+The link *session* — the invitation, the ringing, the station bookkeeping — goes
+with it. `LINKCOPY`, `\menu\pictures\funlink.pcx` and `\foto\link\phone.wav`
+are all in the 1998/99, 2000 and 2001 menus and all absent from I.G.O. 1 and 2.
+
+| menu link session | |
+|---|---|
+| 1998/99, 2000, 2001 (incl. Masters) | **present** |
+| I.G.O. 1, I.G.O. 2 | gone |
+| I.G.O. 3 onward | gone, and so is the driver |
+
+The `Fun Link` string still in the I.G.O. 2 menu is not an offer, it is a
+**statistics label**. `GAMES.DBF` carries a `PLAYERL` column counting sessions
+played in link mode, displayed beside `PLAYER1`..`PLAYER4` as "Player 1".."Player
+4", "Fun Link". It reads **zero in every image in the collection**, on every
+generation — none of these cabinets ever played a linked game.
+
+(`GAMES.DBF` also has a logical field called `LINK`, and it is a trap. It marks
+rows that alias another executable — `FQ_SPOR`→`FUNQUIZ`, `FS_AT`→`FSCHEIN`,
+`SPACEACE`→`PIZZA` — and has nothing to do with fun.link.)
+
+### The games' side: is the driver linked in?
+
+Counting `LINK ERROR: No serial-port found` per image is a clean test, because
+the string exists only inside the driver. Every hit is one executable.
 
 | generation | executables carrying the driver |
 |---|---|
@@ -177,8 +215,29 @@ do-nothing stubs — the five entry points the game calls are `return 0` and bar
 `retf`. Disassembling that build first is what made this look, wrongly, like a
 feature that had never been implemented at all.
 
-The I.G.O. 2 PT cabinet image is the 230,320-byte build: **it cannot link, with
-or without an adapter.** `IGO2\IGO 2 DE 23B58` and `IGO2\IGO 2 NL 85A99` can.
+The I.G.O. 2 PT cabinet image is the 230,320-byte build. But that distinction
+turns out not to matter: **no I.G.O. 1 or 2 image can link at all**, because
+whichever engine build its games carry, its menu will never launch one in link
+mode. Test on 1998/99, 2000 or 2001.
+
+### Which games
+
+In every release the link screens themselves are engine-wide, so what
+distinguishes a game is link art and code of its own. Diffing each executable's
+link strings against the set shared by all of them isolates that, and the method
+checks out on 1998/99, where `TOUCHDN` is independently known to be a link game
+— it is the only one with a localised `INSTR\LINK.ION`, a head-to-head
+falling-blocks game whose specials are TetriNET's item for item.
+
+| release | games with link code of their own |
+|---|---|
+| 1998/99 | `TOUCHDN`, `AMORE`, `CONCENT`, `PYRAMID`, `JEOPARDY` (and `MASTERS`, which has " Link Diagnostics" — an operator tool) |
+| 2001 | every game references the link screens; these add their own art: `AMORE`, `CONCENT`, `ESCOBA`, `FSCHEIN`, `GUINNESS`, `KREUZ`, `ONE`, `PYRAMID`, `SAME`, `SHANGHAI`, `SWIM`, `TOWERS2` |
+
+Two of them name the mode outright and cannot be anything else: `ESCOBA` has
+`Link-Error, Playerindex above 2!` and `SWIM` has `Link error - wrong cards
+choosen`. Watch for false positives on a bare substring search — `EggBlink.pcx`
+and `Clink.wav` are not link assets.
 
 ## 4. What PeepeeBox does with it
 

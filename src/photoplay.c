@@ -736,10 +736,11 @@ photoplay_com4_irq(void)
    COM-settings", and every build that has the driver opens COM1 at 115200 8N1.
 
    Two things make this a fitted part rather than a fixed one.  Most cabinets
-   never had an adapter, and -- more to the point -- not every disk image can use
-   it: the driver was linked into everything from 1998/99 through I.G.O. 2 and
-   then dropped, so I.G.O. 3 onward carries the artwork and the menu entry with
-   no code behind them.  docs/research/34-funlink.md has the per-image table.
+   never had an adapter, and -- more to the point -- most disk images cannot use
+   one.  Only 1998/99, 2000 and 2001 can start a linked game: I.G.O. 1 and 2 still
+   carry the serial driver, but their menu launches every game with /IPX=0 and so
+   never enters link mode, and from I.G.O. 3 the driver is gone too.
+   docs/research/34-funlink.md has the per-generation table.
 
    Everything past "is it there" is the device's own: who hosts the bus, where it
    is, and which port.  Persisted in [Photo Play]. */
