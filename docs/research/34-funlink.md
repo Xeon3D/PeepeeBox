@@ -346,9 +346,9 @@ ordinary 8250 traffic. `src/char/char_funlink.c` is the whole of it:
 What is not yet known, and would need either the box opened or a capture from two
 real cabinets:
 
-- the DIN pinout, and whether the electrical layer is RS-485 or a current loop;
-- whether the box is passive line drivers or has a microcontroller of its own —
-  if it repeats or re-times frames, an emulated pipe is not equivalent;
+- the DIN pinout;
+- whether the receiver stays enabled while the driver is on — `/RE` on the
+  SN75176B, pin 2, tied to `DE` or tied to ground (below);
 - how `MENU.EXE` chooses the `/IPX=` value;
 - what the two stations are each waiting for once the invitation has been
   accepted — see below.
@@ -391,6 +391,42 @@ That is a bus whose arbitration never settles, and the cause was on this side:
 receive was running at ten times line rate (above). The lobby loop at `0x1CA94`
 gives it 60 seconds — timer 3 against `0x3C`, or an early exit when the byte at
 `[bp-0x141]` reaches 2 — which is the window the two have to agree in.
+
+### What is in the box
+
+Opened, 2026-09-08. Silkscreen `funlink`, part `6 033.5002 00.00`, QC PASS
+sticker, single-sided board, three ICs and nothing else active:
+
+| | |
+|---|---|
+| **SN75176BP** | differential bus transceiver — **the layer is RS-485**, two wire, half duplex |
+| **PAL16L8ACN** (date code 9716) | the only logic; drives the transceiver's enables |
+| **MAX232CPE** | RS-232 levels to and from the cabinet's COM port |
+
+Two DIN sockets wired in parallel — in and out, so cabinets **daisy chain**;
+four electrolytics for the MAX232's charge pumps; a ribbon to the 25-pin plug and
+a two-wire tail for +5 V and ground. So the box is passive in the sense that
+matters: no processor, nothing that repeats or re-times a frame, which is the
+question §4 left open. An emulated pipe **is** equivalent to the wire.
+
+What it settles, and what it does not:
+
+- **Half duplex is real.** One SN75176B on one pair: while a cabinet's driver is
+  enabled nothing else can be on the wire, and two that transmit at once destroy
+  each other's frame. A TCP pipe delivers both, which is the one way this side is
+  still more forgiving than the hardware.
+- **DTR drives the enable through the PAL**, which is why the driver raises and
+  lowers it around a transmission.
+- **Whether a station hears itself is `/RE`**, pin 2 of the SN75176B: tied to the
+  driver enable it goes deaf while transmitting, tied to ground it hears every
+  byte it sends. The PAL is between them, so it can be either. This is the
+  `echo` option, and tracing that one pin would answer it.
+- **The token is not on this board.** No memory part, and a 16L8 is combinatorial
+  — it cannot hold a 64-bit ROM and a 128-byte page. Yet the menu reads one on
+  `0x3F8` and will not open the link without it (§2). So either it is in the
+  cable or a socket the photographs do not show, or the PAL answers a check
+  weaker than the DS1982 transaction it was read as. Nothing here depends on the
+  answer — what ppbox sends satisfies the real software — but it is not resolved.
 
 ## 5. Where the evidence is
 

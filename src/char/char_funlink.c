@@ -184,15 +184,28 @@ typedef struct {
        between them this is the only place to see it. */
     FILE    *cap;
     uint32_t cap_bytes;
+
+    /* What the guest was actually handed, batched a millisecond at a time.  The
+       RX lines are what arrived from the far cabinet; these are what crossed into
+       its UART, which is the difference between "we delivered it" and "it is
+       sitting in our ring". */
+    uint8_t  gr[256];
+    uint32_t gr_len;
+    uint32_t gr_ms;
+    int      dtr; /* last seen, so only the changes are written */
 } char_funlink_t;
 
 #define FUNLINK_CAP_MAX (8u * 1024u * 1024u) /* stop before it eats the disk */
+
+static void funlink_cap_gr_flush(char_funlink_t *dev);
 
 static void
 funlink_cap(char_funlink_t *dev, const char *what, const uint8_t *buf, int len)
 {
     if ((dev->cap == NULL) || (dev->cap_bytes > FUNLINK_CAP_MAX))
         return;
+
+    funlink_cap_gr_flush(dev);
 
     fprintf(dev->cap, "%9u %-3s %4d ", plat_get_ticks(), what, len);
     for (int i = 0; i < len; i++)
@@ -207,8 +220,40 @@ funlink_cap_note(char_funlink_t *dev, const char *note)
 {
     if (dev->cap == NULL)
         return;
+    funlink_cap_gr_flush(dev);
     fprintf(dev->cap, "%9u ---  %s\n", plat_get_ticks(), note);
     fflush(dev->cap);
+}
+
+/* Bytes handed to the guest, written out once the millisecond they belong to is
+   over -- a line each would be a hundred thousand of them.  Called from the two
+   writers above so the file stays in order. */
+static void
+funlink_cap_gr_flush(char_funlink_t *dev)
+{
+    if ((dev->cap == NULL) || (dev->gr_len == 0))
+        return;
+
+    fprintf(dev->cap, "%9u GR  %4u ", dev->gr_ms, dev->gr_len);
+    for (uint32_t i = 0; i < dev->gr_len; i++)
+        fprintf(dev->cap, "%02X", dev->gr[i]);
+    fputc('\n', dev->cap);
+    fflush(dev->cap);
+    dev->cap_bytes += dev->gr_len * 2 + 20;
+    dev->gr_len = 0;
+}
+
+static void
+funlink_cap_guest_read(char_funlink_t *dev, uint8_t val)
+{
+    const uint32_t now = plat_get_ticks();
+
+    if (dev->cap == NULL)
+        return;
+    if ((now != dev->gr_ms) || (dev->gr_len >= sizeof(dev->gr)))
+        funlink_cap_gr_flush(dev);
+    dev->gr_ms             = now;
+    dev->gr[dev->gr_len++] = val;
 }
 
 /* ------------------------------------------- the token: a DS1982 on the bus
@@ -733,6 +778,7 @@ funlink_read(uint8_t *buf, size_t len, void *priv)
 
     buf[0]       = dev->rx[dev->rx_tail];
     dev->rx_tail = (dev->rx_tail + 1) % FUNLINK_RX_SIZE;
+    funlink_cap_guest_read(dev, buf[0]);
 
     return 1;
 }
@@ -769,11 +815,19 @@ static void
 funlink_control(uint32_t flags, void *priv)
 {
     char_funlink_t *dev = (char_funlink_t *) priv;
+    const int       dtr = !!(flags & CHAR_COM_DTR);
 
-    (void) dev; /* the log call compiles away when logging is off */
+    /* DTR is the driver enable on the real adapter -- the box is an SN75176B on
+       a two-wire RS-485 pair -- so the windows it opens are the windows in which
+       this cabinet owns the bus.  Nothing here acts on it yet, but a capture
+       wants them: whether the cabinet raises it once per frame or once per byte
+       decides what half duplex has to mean on this side. */
+    if (dtr != dev->dtr) {
+        dev->dtr = dtr;
+        funlink_cap_note(dev, dtr ? "DTR up (this cabinet is driving the bus)"
+                                  : "DTR down");
+    }
 
-    /* DTR is the transmit enable on the real adapter.  Nothing to do with it
-       here -- see the file comment for why gating on it would lose bytes. */
     char_funlink_log(dev->log, "control(%08X) dtr=%d rts=%d\n", flags,
                      !!(flags & CHAR_COM_DTR), !!(flags & CHAR_COM_RTS));
 }
