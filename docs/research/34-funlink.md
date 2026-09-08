@@ -143,6 +143,46 @@ only constructed and opened when that value is non-zero** — a game started
 without it never touches COM1. The debug line `Linkplayers: %02d` reports how
 many stations answered.
 
+### And what turns *that* on: a second iButton, in the adapter
+
+The station number is not a setting. It comes out of a **DS1982 on COM1** — the
+same port the bus runs on — and the menu will not touch fun.link without it.
+
+Before any link init, the 1998/99 menu constructs a 1-Wire object, points it at
+port **`0x03F8`**, and drives it at divisor 11 (~10.4 kbaud): `0xF0` reset,
+`0x33` READ ROM, `0xFF` read slots. It then makes three checks, and all three
+must pass:
+
+| | |
+|---|---|
+| ROM byte 0 | `0x91` |
+| ROM word at offset 5, `>> 4` | `0x5E7` |
+| memory page byte 0 | `0x37`, with the dword at offset 1 `0x112A` |
+| memory page from offset 5 | the literal blob `Seiringer<CR>Pichler<CR>Hutmacher<CR>Obermair<CR>Lukarsch<CR>` |
+
+Only then is the dword at ROM offset 1 taken as the station id, passed through
+`INT 60h` with `AX=0x0507`, and — if it survives that — used to open the bus at
+115200 and later handed to games as `/IPX=`. Zero at any step and the menu
+silently has no link.
+
+`push dword 0x03F8` into that port setter appears exactly once in the 1998/99,
+2000 and 2001 menus and **not at all** from I.G.O. 1 on, which is the same
+boundary as the rest of the link session.
+
+**This is what the fun.link box is.** It is not a cable with line drivers in it:
+it carries the token that licenses the feature and gives the cabinet its number
+on the bus, on the same wire pair, separated from the 115200 traffic by baud
+rate alone. The cabinet's own DS1982 is a different part at a different address
+(`0x268`, which every generation still uses) — there are two.
+
+**PeepeeBox does not answer this yet.** It emulates the cabinet's iButton at
+`0x268` and puts a plain bus on COM1, so the 1-Wire reset goes out on the wire,
+nothing answers, the checks fail, and no link option appears. Fitting the
+adapter in the emulator is currently only half of it: the other half is a
+DS1982 on COM1 carrying the values above. The state machine to do it already
+exists — `ib_*` in `src/device/dongle_photoplay.c`, validated against real
+software — and would need lifting out and giving this record.
+
 The name is a fossil: there is no IPX stack anywhere on any image — no `IPXODI`,
 no ODI MLID, no `INT 7Ah` in any binary. funworld modelled the API on IPX and
 kept the word.
