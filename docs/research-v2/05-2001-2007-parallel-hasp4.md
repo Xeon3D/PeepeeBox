@@ -278,30 +278,50 @@ chain end to end, from a key fitted with no dongle in the room.
 `error number 228.250.107, in module MENU, dongle error` -- see `5.7` for what
 raises that, and `09` for what is still unknown about it.
 
-## 5.6 I.G.O. 3 puts the same three layers on different lines
+## 5.6 What is different about I.G.O. 3, and what is not
 
-Everything above is I.G.O. 2's arrangement. I.G.O. 3 runs the same three protocols with
-two of them moved, which is why a device built for I.G.O. 2 hears almost nothing from it.
-All of this is read out of I.G.O. 3's own `MENU.EXE`, not inferred from traffic:
+**The oracle framing is not different.** An earlier version of this section said I.G.O. 3
+moved the query clock to DATA bit 0 and marked its preamble with payload `0x46`. That was
+wrong, and the correction is the useful part: those bit-0 triples are **command bytes** —
+the same primitive I.G.O. 2 uses — and their bursts of 14–17 are `0x1B50` sending its
+fifteen password-derived payloads. The clock never moved.
 
-| | I.G.O. 2 | I.G.O. 3 |
+What settles it is counting, with `tools/dongcap/framing.py` over both wires:
+
+| | I.G.O. 2, real part, boots | I.G.O. 3, emulated, fails |
 |---|---|---|
-| oracle query clock | DATA bit 4 | **DATA bit 0** (`0x19FC` masks the payload with `0x7E` and writes `V, V\|1, V`) |
-| oracle round preamble | any bit-0 rise, bit 7 set | **payload `0x46`** (wire `C6`), clocked alone by `0x1A8F` before each service call |
-| session layer | bit 7 **clear** | bit 7 **set** |
-| Microwire | bit 7 clear | bit 7 clear, unchanged |
+| oracle consultations (bit 4) | **4,720**, in **118 rounds of exactly 40** | **zero** |
+| bit-0 triples | 5,455 command bytes | 93, in bursts of 14–17 |
 
-Three consequences for anything emulating this part, each of which cost a build to find:
+A keyed round is forty consultations. **I.G.O. 3 never issues one**, so it never reaches
+EncodeData's use of the part at all — it stops earlier, inside the service exchange
+(`5.7`). Everything about the picture cipher's key is downstream of that and cannot be the
+cause.
 
-1. **The sweep matcher must ignore bit 7** on I.G.O. 3, or it never matches.
-2. **Bit-7-set writes must not reach the Microwire decoder** on I.G.O. 3. Its session
-   payloads move bit 1 and bit 5, which that decoder reads as CS and SK, so it parses the
-   sweep as an instruction and then owns the STATUS reads the sweep was meant to answer.
-3. **A query answer must be held for repeated writes of the same DATA value.** I.G.O. 3's
-   transport repeats every write four times, so one query is followed by several reads;
-   consuming the answer on the first drops the rest through to the session matcher, where
-   query payload `F8` aliases onto `hs_sweep_w[0]` (`0x78`). Hold it until the DATA value
-   changes, which is what the part does anyway — DO stays driven until the next clock.
+The one thing that genuinely differs is **the session layer carries bit 7** — the identity
+ramp, the 64-step sweep and the liveness probe are bit-7-set on I.G.O. 3 and bit-7-clear
+on I.G.O. 2. Three consequences, each of which cost a build to find:
+
+1. **The sweep matcher must ignore bit 7**, or it never matches.
+2. **Bit-7-set writes must not reach the Microwire decoder.** Those payloads move bit 1
+   and bit 5, which that decoder reads as CS and SK, so it parses the sweep as an
+   instruction and then owns the STATUS reads the sweep was meant to answer.
+3. **Query detection must be off for this release.** Its session payloads occupy bits
+   1–6, bit 4 included, so an ordinary payload change (`8A` → `F8`) raises bit 4 with no
+   query involved. Acting on that sets an answer the part then holds, and the hold
+   swallows the reads the sweep was owed. Since the count above says there are no real
+   rounds here, there is nothing to lose by switching it off — and when the service
+   exchange is fixed and rounds appear, they will need a rule that tells them from
+   payload movement.
+
+With those three, I.G.O. 3 is served the session layer exactly as a real part answered it:
+two complete sweeps per boot, replying `F5 7A 37 E7 8F 8F BD DA`, no lost sync. It still
+does not boot, which is what makes `5.7` the live question rather than any of this.
+
+**A caution that outranks all of the above.** That sweep reply is a `68BB/1329` part's, and
+I.G.O. 3 is `6B91/24A3`. Whether the reply depends on the password is unmeasured
+(`09` § 2). If it does, everything in this section is serving I.G.O. 3 another dongle's
+answers, and no amount of transport work gets past that.
 
 ## 5.7 What raises `dongle error` on I.G.O. 3
 

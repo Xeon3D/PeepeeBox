@@ -231,9 +231,10 @@ typedef struct {
 
     /* The keyed round the picture cipher asks for -- see the section above t_query(). */
     uint32_t t_key;             /* this release's 32 key bits, 0 if it has none */
-    uint8_t  t_clk;             /* which line carries the query clock -- hd_keys[] */
+    int      t_sess_hi;         /* this release's session layer carries bit 7 */
     uint8_t  t_hold_val;        /* the DATA value a held answer belongs to */
-    uint8_t  t_pre;             /* and, when that is bit 0, the preamble payload   */
+    int      t_burst;           /* consultations since the last preamble */
+    int      t_bursts;          /* how many bursts have been logged */
     uint16_t t_init;            /* the register the preamble leaves behind */
     uint32_t t_cur;             /* and where it has got to inside the round */
     uint8_t  t_last;            /* the previous DATA byte, for the clock edges */
@@ -1496,20 +1497,31 @@ static const struct {
        with one specific payload.  Read out of I.G.O. 3's own MENU.EXE -- see
        t_data() -- rather than guessed, and kept per release so that the
        generation which already works cannot be disturbed by the other. */
-    uint8_t     tclk;  /* 0x10 = query on bit 4 (2001, I.G.O. 2), 0x01 = bit 0 */
-    uint8_t     tpre;  /* tclk 0x01 only: the payload that means "preamble" */
+    /* Whether this release drives its session layer -- the identity ramp, the 64-step
+       sweep and the liveness probe -- with bit 7 SET.  I.G.O. 3 does; I.G.O. 2 does not.
+       It decides two things: whether the sweep matcher may ignore bit 7, and whether
+       bit-7-set writes must be kept away from the Microwire decoder, whose CS and SK
+       lines those payloads would otherwise clock.
+
+       It is NOT about the oracle clock.  An earlier version of this table carried a
+       per-release query clock, on the strength of I.G.O. 3 showing bit-0 triples and no
+       bit-4 ones.  Measured with tools/dongcap/framing.py, those bit-0 triples are
+       command bytes and I.G.O. 3 simply never enters a keyed round: I.G.O. 2 on real
+       hardware gives 4,720 consultations in 118 rounds of exactly 40, I.G.O. 3 gives
+       zero.  The clock never moved. */
+    int         sess_hi;
 } hd_keys[] = {
-    { "Version 2001",  0x7477, 0, 0, HD_R2001, 160678,     -35733698, 0xCF47CB42, 0x7DF, 0x10, 0 },
-    { "Version 2002",  0x68BB, 0, 1, HD_RSION, 160678,   -371202944, 0x3B227944, 0x7DF, 0x10, 0 }, /* I.G.O. 2 */
-    { "Version 2003",  0x6B91, 0, 1, HD_RSION, 160678,   -738037894, 0xAB32E970, 0x5DF, 0x01, 0x46 }, /* I.G.O. 3 */
+    { "Version 2001",  0x7477, 0, 0, HD_R2001, 160678,     -35733698, 0xCF47CB42, 0x7DF, 0 },
+    { "Version 2002",  0x68BB, 0, 1, HD_RSION, 160678,   -371202944, 0x3B227944, 0x7DF, 0 }, /* I.G.O. 2 */
+    { "Version 2003",  0x6B91, 0, 1, HD_RSION, 160678,   -738037894, 0xAB32E970, 0x5DF, 1 }, /* I.G.O. 3 */
     /* I.G.O. 5 shares I.G.O. 3's password pair, so it should share the key.  Its FINDIT
        is plain, so nothing here has been able to check that -- it is the pair talking,
        not a measurement. */
-    { "Version 2005",  0x6B91, 0, 1, HD_RVERS,      0,            0, 0xAB32E970, 0x5DF, 0x10, 0 }, /* I.G.O. 5 */
+    { "Version 2005",  0x6B91, 0, 1, HD_RVERS,      0,            0, 0xAB32E970, 0x5DF, 0 }, /* I.G.O. 5 */
     /* 2006 and later ship plain GIF: there is nothing for the round to decrypt, and a
        key would only be guessing at a part no game asks. */
-    { "Version 2006",  0x68BB, 1, 1, HD_RVERS,      0,            0,          0,     0, 0x10, 0 }, /* I.G.O. 6 */
-    { "Version 2007",  0x68BB, 0, 1, HD_RVERS,      0,            0,          0,     0, 0x10, 0 }, /* I.G.O. 7 */
+    { "Version 2006",  0x68BB, 1, 1, HD_RVERS,      0,            0,          0,     0, 0 }, /* I.G.O. 6 */
+    { "Version 2007",  0x68BB, 0, 1, HD_RVERS,      0,            0,          0,     0, 0 }, /* I.G.O. 7 */
     /* I.G.O. Italy reports NDONGLE rather than HDONGLE, which was read as meaning it is
        not on this path at all.  It is, and it is not even a special case: MENU.EXE
        0x3C322 is the same filler every other I.G.O. build uses, down to the format
@@ -1522,7 +1534,7 @@ static const struct {
        Its passwords are not literals either -- 0x3C252 is the same probe I.G.O. 6 runs,
        so the key is zero here too.  The 2008 pair is on record for when service 5 can
        tell the two apart. */
-    { "Version 08",    0x68BB, 1, 1, HD_RVERS,      0,            0,          0,     0, 0x10, 0 }  /* I.G.O. Italy */
+    { "Version 08",    0x68BB, 1, 1, HD_RVERS,      0,            0,          0,     0, 0 }  /* I.G.O. Italy */
 };
 
 /* The row this banner belongs to, or -1 if no release in the table claims it.  That
@@ -1902,40 +1914,67 @@ t_data(pp_t *dev, uint8_t val)
        part has been clocked again and whatever it was holding is gone.
        "Until the next bit-7-clear write" was too generous: the 64-step sweep is bit-7-set
        too, so the hold survived into it and swallowed every sweep read. */
-    if (val != dev->t_hold_val)
+    if (dev->t_sess_hi && (val != dev->t_hold_val))
         dev->t_pending = 0;
 
     if (!(val & 0x80))
         goto out;                       /* the 1999/2000 halves keep bit 7 clear */
 
-    if (dev->t_clk == 0x01) {
-        /* I.G.O. 3's library, read out of its own MENU.EXE rather than inferred.
-           0x19FC masks the payload with 0x7E and then writes it three times as
-           `V, V|1, V`, so the clock is DATA bit 0 and the payload is bits 1..6 --
-           the mirror of the arrangement below, where bit 4 clocks and bit 0 is
-           spare.  The part still only has 32 key bits, so bit 4 is carried on the
-           wire and not consulted; `i5` picks the same five bits either way.
+    /* One framing, measured on both generations.  An earlier version of this had a
+       bit-0 query variant for I.G.O. 3, on the strength of seeing bit-0 triples there and
+       no bit-4 ones.  That was the wrong conclusion: those bit-0 triples are COMMAND
+       BYTES -- the same primitive I.G.O. 2 uses, and their bursts of 14-17 match 0x1B50
+       sending fifteen.  Measured with tools/dongcap/framing.py over both wires:
 
-           The preamble is not "any bit-0 rise" here, because bit 0 IS the clock:
-           it is one specific payload, 0x46, which 0x1A8F clocks on its own before
-           every service call (wire C6, and that is exactly what the standalone
-           one- and three-step bursts in a trace are). */
-        const uint8_t pay = (uint8_t) (val & 0x7E);
+           I.G.O. 2, real part   4,720 consultations in 118 rounds of exactly 40
+           I.G.O. 3, emulated    zero
 
-        preamble = (rose & 0x01) && (pay == dev->t_pre);
-        query    = (rose & 0x01) && (pay != dev->t_pre);
-    } else {
-        /* 2001 and I.G.O. 2.  Query payloads never move bit 0, and command bytes
-           never move bit 4, so neither is mistaken for the other. */
-        preamble = (rose & 0x01) != 0;
-        query    = !preamble && ((rose & 0x10) != 0);
-    }
+       So I.G.O. 3 never enters a keyed round at all, and the clock never moved.  Query
+       payloads never move bit 0 and command bytes never move bit 4, so neither is taken
+       for the other. */
+    preamble = (rose & 0x01) != 0;
+    query    = !preamble && !dev->t_sess_hi && ((rose & 0x10) != 0);
+
+    /* Why sess_hi suppresses query detection entirely.
+     *
+     * On I.G.O. 2 a query is the only thing that moves bit 4 while bit 7 is set, so the
+     * edge identifies it.  On I.G.O. 3 the session layer is bit-7-set AND its payloads
+     * occupy bits 1..6 -- bit 4 included -- so an ordinary payload change from 8A to F8
+     * raises bit 4 with no query involved.  Acting on that sets an answer this part then
+     * holds, and the hold swallows the reads the 64-step sweep was owed: measured as
+     * "sync lost" on every burst, plus a spurious "answering the keyed round" line.
+     *
+     * The reason it is safe to switch off rather than refine: I.G.O. 3 issues no rounds
+     * at all.  tools/dongcap/framing.py over both wires gives 4,720 consultations in 118
+     * rounds of exactly 40 for I.G.O. 2 on real hardware, and zero for I.G.O. 3 -- it
+     * stops inside the service exchange, before EncodeData ever consults the part.  So
+     * there is nothing here to detect yet, and pretending otherwise costs the session
+     * layer its answers.  When the service exchange is fixed and rounds do appear, this
+     * needs a rule that tells them from payload movement -- the burst-length log above
+     * is what will show them arriving. */
 
     if (preamble) {
-        /* The preamble runs once per round. */
+        /* A burst's length is what says what the burst WAS, and the two are not the
+           same thing at all:
+
+             40 consultations  a keyed round -- 39 shift steps and one more.  This is
+                               EncodeData actually consulting the part.
+             ~15               0x1B50 sending a service request: fifteen payloads
+                               derived from the passwords, one bit collected each.
+
+           Measured on I.G.O. 3: 17, 17, 16, 16, 14 -- never 40.  So the keyed round is
+           never reached there, the library stops inside the service exchange, and the
+           picture cipher's key has nothing to do with that failure.  Logged because
+           this took several builds to notice and the number is the whole story. */
+        if (dev->t_burst > 0 && dev->t_bursts++ < 24)
+            pp_log("PP: bit-0 burst of %d consultations -- %s\n", dev->t_burst,
+                   (dev->t_burst == 40) ? "a keyed round"
+                                        : "NOT a round; a service request (0x1B50 sends 15)");
+        dev->t_burst   = 0;
         dev->t_cur     = dev->t_init;
         dev->t_pending = 0;
     } else if (query) {
+        dev->t_burst++;
         const unsigned i5 = (unsigned) (((val >> 1) & 0x07) | ((val >> 2) & 0x18));
         const unsigned st = (dev->t_key >> i5) & 1;
         unsigned       b0 = i5 ^ ((st ^ 1) & (i5 >> 3)) ^ (i5 >> 4);
@@ -1992,7 +2031,7 @@ pp_write_data(uint8_t val, void *priv)
            Microwire traffic is bit-7-clear, so gating on that bit separates them
            exactly, and the record read is untouched.  I.G.O. 2 keeps its session layer
            bit-7-clear and is deliberately left alone. */
-        if ((dev->t_clk != 0x01) || !(val & 0x80))
+        if (!dev->t_sess_hi || !(val & 0x80))
             hd_write_data(dev, val);
     }
     cd_write_data(dev, val);
@@ -2074,7 +2113,7 @@ hs_sweep_bit(pp_t *dev, int n)
     if (want < 0)
         want = (getenv("PEEPEEBOX_SWEEP_ZERO") != NULL);
 
-    if (want && (dev->t_clk == 0x01) && (n < 8)) {
+    if (want && dev->t_sess_hi && (n < 8)) {
         if (n == 0)
             pp_log("PP: PEEPEEBOX_SWEEP_ZERO -- answering sweep steps 0..7 with 0 to test"
                    " the 0x20EA gate.  This is an experiment, not a fix.\n");
@@ -2148,7 +2187,7 @@ pp_read_status(void *priv)
                So hold the bit instead, which is what the part does anyway -- DO stays
                driven until the next clock.  t_data() clears it on the next command
                byte, query or bit-7-clear write. */
-            if (dev->t_clk != 0x01)
+            if (!dev->t_sess_hi)
                 dev->t_pending = 0;
             st             = dev->t_ans ? HD_DO : 0x00;
             pp_raw(dev, "read_status", st);
@@ -2208,7 +2247,7 @@ pp_read_status(void *priv)
            clear and I.G.O. 3 with bit 7 set, so the matcher has to ignore that bit --
            but only for the releases that need it, so the generation that already works
            cannot be disturbed.  For I.G.O. 2 sw == w and nothing changes. */
-        const uint8_t sw   = (dev->t_clk == 0x01) ? (uint8_t) (w & 0x7F) : w;
+        const uint8_t sw   = dev->t_sess_hi ? (uint8_t) (w & 0x7F) : w;
         int           bit;
 
         /* The library never reads STATUS in the middle of shifting an instruction --
@@ -2808,14 +2847,11 @@ pp_init(const device_t *info)
         dev->t_key  = hd_keys[trel].tkey;
         dev->t_init = hd_keys[trel].tinit;
         dev->t_cur  = dev->t_init;
-        dev->t_clk  = hd_keys[trel].tclk ? hd_keys[trel].tclk : 0x10;
-        dev->t_pre  = hd_keys[trel].tpre;
+        dev->t_sess_hi = hd_keys[trel].sess_hi;
         if (dev->t_key)
-            pp_log("PP: picture cipher key %08X, register %03X (%s), query clock"
-                   " DATA bit %d%s\n",
+            pp_log("PP: picture cipher key %08X, register %03X (%s)%s\n",
                    dev->t_key, dev->t_init, hd_keys[trel].banner,
-                   (dev->t_clk == 0x01) ? 0 : 4,
-                   (dev->t_clk == 0x01) ? ", preamble payload 46" : "");
+                   dev->t_sess_hi ? ", session layer carries bit 7" : "");
         else
             pp_log("PP: no picture cipher on this release -- its pictures are plain\n");
     }
