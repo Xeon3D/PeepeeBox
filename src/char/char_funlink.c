@@ -84,6 +84,12 @@
 /* Four cabinets is what funworld's own advert draws, so three peers plus us. */
 #define FUNLINK_MAX_PEERS 3
 
+/* The token in the adapter.  Before the menu will so much as open the bus it
+   looks for a DS1982 on this same port and checks what it says; see the 1-Wire
+   section below and docs/research/34-funlink.md § "a second iButton". */
+#define FUNLINK_OW_MEM      128   /* the device's memory page                  */
+#define FUNLINK_OW_RESET_HZ 30000 /* the reset pulse is sent this slowly       */
+
 #define FUNLINK_RX_SIZE   8192 /* one guest's worth of inbound bytes         */
 #define FUNLINK_TX_SIZE   1024 /* coalescing buffer, flushed every poll tick */
 
@@ -98,6 +104,12 @@ enum { /* what we are doing right now */
        FUNLINK_ST_CONNECTING, /* client connect in flight              */
        FUNLINK_ST_CLIENT,   /* connected to a listener                 */
        FUNLINK_ST_LISTENING /* we are the listener; peers may be zero  */
+};
+
+enum { /* the 1-Wire slave's transaction state */
+       FUNLINK_OW_CMD = 0, /* waiting for a ROM or memory command      */
+       FUNLINK_OW_TA,      /* collecting the two address bytes         */
+       FUNLINK_OW_DONE     /* answering, or finished                   */
 };
 
 #ifdef ENABLE_CHAR_FUNLINK_LOG
@@ -117,6 +129,23 @@ char_funlink_log(void *priv, const char *fmt, ...)
 #else
 #    define char_funlink_log(priv, fmt, ...)
 #endif
+
+typedef struct { /* the DS1982 inside the adapter */
+    uint8_t rom[8];
+    uint8_t mem[FUNLINK_OW_MEM];
+
+    uint8_t inbits; /* bits the host has written to us so far  */
+    int     nbits;
+    uint8_t out[FUNLINK_OW_MEM + 8]; /* bytes queued to shift back out */
+    int     out_len;
+    int     out_pos; /* bit cursor into out[]                   */
+
+    int     state;
+    uint8_t ta[2];
+    int     nta;
+    int      active; /* a reset has been seen; slots are 1-Wire */
+    uint32_t last;   /* when the last slot went through            */
+} funlink_ow_t;
 
 typedef struct {
     void        *log;
@@ -144,7 +173,259 @@ typedef struct {
 
     uint8_t  tx[FUNLINK_TX_SIZE];
     uint32_t tx_len;
+
+    funlink_ow_t ow;
+    int          station; /* 0 = work it out from who hosts the bus */
 } char_funlink_t;
+
+/* ------------------------------------------- the token: a DS1982 on the bus
+ *
+ * The menu will not open the link until it has found a 1-Wire device on this
+ * port and liked what it said.  It resets it (0xF0 at ~10 kbaud, so the pulse is
+ * long enough), then runs the slots at 115200 -- one UART byte per bit, 0xFF for
+ * a one and 0x00 for a zero -- and reads two things:
+ *
+ *   READ ROM (0x33): 8 bytes.  Byte 0 must be 0x91, and the word at offset 5
+ *   shifted right by four must be 0x5E7.  The dword at offset 1 is then taken as
+ *   this cabinet's station number on the bus.
+ *
+ *   SKIP ROM (0xCC), READ MEMORY (0xF0) at address 0: the CRC8 of those three
+ *   bytes, then a 128-byte page, then the CRC8 of the page.  Byte 0 of the page
+ *   must be 0x37, the dword at offset 1 must be 0x112A, and from offset 5 it must
+ *   carry a fixed 46-byte blob of funworld staff surnames.  The whole page is
+ *   read twice and the two copies compared.
+ *
+ * Every one of those values is identical in the 1998/99, 2000 and 2001 menus, so
+ * one record serves all three.  None of it is a licence in any cryptographic
+ * sense -- there is no challenge and no secret, just a part that has to be there
+ * and say the right thing, which is what makes the adapter a box rather than a
+ * cable.
+ *
+ * The state machine is the one in dongle_photoplay.c's ib_*, which was validated
+ * against the real software for the cabinet's own iButton at 0x268.  It is a
+ * different part in a different place, so it is written out again here rather
+ * than shared -- with one addition that half does not need: the trailing CRC over
+ * the page, which this reader does check.
+ */
+
+static void funlink_rx_push(char_funlink_t *dev, const uint8_t *buf, int len);
+
+/* Maxim/Dallas CRC8, reflected polynomial 0x8C. */
+static uint8_t funlink_crc8_tab[256];
+static int     funlink_crc8_ready = 0;
+
+static void
+funlink_crc8_init(void)
+{
+    if (funlink_crc8_ready)
+        return;
+    for (int i = 0; i < 256; i++) {
+        uint8_t c = (uint8_t) i;
+
+        for (int b = 0; b < 8; b++)
+            c = (c & 1) ? (uint8_t) ((c >> 1) ^ 0x8C) : (uint8_t) (c >> 1);
+        funlink_crc8_tab[i] = c;
+    }
+    funlink_crc8_ready = 1;
+}
+
+static uint8_t
+funlink_crc8(const uint8_t *d, int n, uint8_t crc)
+{
+    for (int i = 0; i < n; i++)
+        crc = funlink_crc8_tab[crc ^ d[i]];
+    return crc;
+}
+
+/* Build the record.  The station number is the one thing about it that is ours
+   rather than funworld's: the cabinets each had their own adapter and so their
+   own number, and two stations answering to the same one cannot be told apart on
+   the bus.  Left at 0 it follows who ended up hosting -- which is right for the
+   usual pair and wrong for a third cabinet, so the option exists. */
+static void
+funlink_ow_load(char_funlink_t *dev)
+{
+    /* The blob the page has to carry, verbatim, from offset 5. */
+    static const char licence[] = "Seiringer\rPichler\rHutmacher\rObermair\rLukarsch\r";
+    funlink_ow_t     *ow        = &dev->ow;
+    uint32_t          station   = (uint32_t) dev->station;
+
+    if (station == 0)
+        station = (dev->state == FUNLINK_ST_LISTENING) ? 1 : 2;
+
+    memset(ow->rom, 0, sizeof(ow->rom));
+    memset(ow->mem, 0, sizeof(ow->mem));
+
+    ow->rom[0] = 0x91;                            /* checked */
+    ow->rom[1] = (uint8_t) (station & 0xFF);      /* the station number, dword */
+    ow->rom[2] = (uint8_t) ((station >> 8) & 0xFF);
+    ow->rom[3] = (uint8_t) ((station >> 16) & 0xFF);
+    ow->rom[4] = (uint8_t) ((station >> 24) & 0xFF);
+    ow->rom[5] = 0x70;                            /* (rom[5] | rom[6]<<8) >> 4 */
+    ow->rom[6] = 0x5E;                            /*   has to come out 0x5E7   */
+    ow->rom[7] = funlink_crc8(ow->rom, 7, 0);     /* not checked here; correct anyway */
+
+    ow->mem[0] = 0x37;
+    ow->mem[1] = 0x2A; /* the dword at offset 1 is 0x0000112A */
+    ow->mem[2] = 0x11;
+    memcpy(ow->mem + 5, licence, sizeof(licence) - 1);
+}
+
+static void
+funlink_ow_reset(char_funlink_t *dev)
+{
+    funlink_ow_t *ow = &dev->ow;
+
+    ow->inbits  = 0;
+    ow->nbits   = 0;
+    ow->out_len = 0;
+    ow->out_pos = 0;
+    ow->state   = FUNLINK_OW_CMD;
+    ow->nta     = 0;
+}
+
+static void
+funlink_ow_queue(funlink_ow_t *ow, const uint8_t *d, int n)
+{
+    if (n > (int) sizeof(ow->out))
+        n = (int) sizeof(ow->out);
+    memcpy(ow->out, d, (size_t) n);
+    ow->out_len = n;
+    ow->out_pos = 0;
+}
+
+/* a whole byte has been clocked in from the host */
+static void
+funlink_ow_on_byte(char_funlink_t *dev, uint8_t val)
+{
+    funlink_ow_t *ow = &dev->ow;
+
+    switch (ow->state) {
+        case FUNLINK_OW_CMD:
+            if (val == 0x33) { /* READ ROM */
+                funlink_ow_queue(ow, ow->rom, 8);
+                ow->state = FUNLINK_OW_DONE;
+                /* Rare and worth having in an ordinary log: this is the moment
+                   the cabinet learns it has an adapter, and its number. */
+                pclog("fun.link: the cabinet read the adapter's token, station %u\n",
+                      (unsigned) (ow->rom[1] | (ow->rom[2] << 8) |
+                                  (ow->rom[3] << 16) | (ow->rom[4] << 24)));
+            } else if (val == 0xCC) { /* SKIP ROM -- a command follows */
+                ow->state = FUNLINK_OW_CMD;
+            } else if (val == 0xF0) { /* READ MEMORY */
+                ow->nta   = 0;
+                ow->state = FUNLINK_OW_TA;
+            } else {
+                char_funlink_log(dev->log, "1-Wire: unhandled command %02X\n", val);
+                ow->state = FUNLINK_OW_DONE;
+            }
+            break;
+
+        case FUNLINK_OW_TA:
+            ow->ta[ow->nta++] = val;
+            if (ow->nta == 2) {
+                const int ta     = ow->ta[0] | (ow->ta[1] << 8);
+                uint8_t   hdr[3] = { 0xF0, ow->ta[0], ow->ta[1] };
+                uint8_t   buf[FUNLINK_OW_MEM + 2];
+                int       n = 0;
+
+                /* the CRC of command and address, the page from there on, and
+                   then the CRC of what was streamed */
+                buf[n++] = funlink_crc8(hdr, 3, 0);
+                if (ta < FUNLINK_OW_MEM) {
+                    const int len = FUNLINK_OW_MEM - ta;
+
+                    memcpy(buf + n, ow->mem + ta, (size_t) len);
+                    n += len;
+                    buf[n++] = funlink_crc8(ow->mem + ta, len, 0);
+                }
+                funlink_ow_queue(ow, buf, n);
+                ow->state = FUNLINK_OW_DONE;
+                char_funlink_log(dev->log, "1-Wire: READ MEMORY @%04X, %d bytes\n", ta, n);
+            }
+            break;
+
+        default:
+            break;
+    }
+}
+
+/* One UART byte is one bit slot.  Returns what the wire reads back. */
+static uint8_t
+funlink_ow_slot(char_funlink_t *dev, uint8_t host)
+{
+    funlink_ow_t *ow = &dev->ow;
+
+    if (ow->out_pos < (ow->out_len * 8)) {
+        /* we are driving: present the next queued bit, LSB first */
+        const int bit = (ow->out[ow->out_pos >> 3] >> (ow->out_pos & 7)) & 1;
+
+        ow->out_pos++;
+        return bit ? 0xFF : 0x00;
+    }
+
+    if (host)
+        ow->inbits |= (uint8_t) (1 << ow->nbits);
+    if (++ow->nbits == 8) {
+        const uint8_t v = ow->inbits;
+
+        ow->inbits = 0;
+        ow->nbits  = 0;
+        funlink_ow_on_byte(dev, v);
+    }
+    return host ? 0xFF : 0x00;
+}
+
+/* Decide whether a byte the guest just wrote belongs to the token or to the bus,
+   and answer it if it is the token's.  Returns 1 when it was consumed.
+
+   The two cannot be told apart by baud rate -- the reset pulse is slow but the
+   slots run at the bus's own 115200 -- so the rule is what the protocols
+   actually put on the wire.  A reset is 0xF0 sent slowly, and nothing else the
+   cabinet does looks like that.  After one, every slot is 0x00 or 0xFF and
+   nothing else; the first byte that is neither is the link driver starting to
+   talk, and the token steps out of the way. */
+static int
+funlink_ow_consume(char_funlink_t *dev, uint8_t val)
+{
+    funlink_ow_t *ow = &dev->ow;
+
+    if ((val == 0xF0) && (dev->port != NULL) && (dev->port->com.baud <= FUNLINK_OW_RESET_HZ)) {
+        funlink_ow_load(dev); /* the station number may have settled since */
+        funlink_ow_reset(dev);
+        ow->active = 1;
+        ow->last   = plat_get_ticks();
+        /* a present slave corrupts the echo of the reset byte */
+        funlink_rx_push(dev, (const uint8_t[]) { 0xE0 }, 1);
+        char_funlink_log(dev->log, "1-Wire: reset at %u baud\n", dev->port->com.baud);
+        return 1;
+    }
+
+    /* A transaction is a dense burst of slots.  If one has gone quiet, the
+       cabinet has finished with the token and anything arriving now is the bus
+       -- which matters because a slot and a payload byte of 0x00 or 0xFF look
+       exactly alike, and swallowing the first byte of a frame would be a hard
+       fault to find. */
+    if (ow->active && ((plat_get_ticks() - ow->last) > 1000))
+        ow->active = 0;
+
+    if (!ow->active)
+        return 0;
+
+    if ((val != 0x00) && (val != 0xFF)) {
+        char_funlink_log(dev->log, "1-Wire: %02X is not a slot -- back to the bus\n", val);
+        ow->active = 0;
+        return 0;
+    }
+
+    {
+        const uint8_t reply = funlink_ow_slot(dev, val);
+
+        funlink_rx_push(dev, &reply, 1);
+    }
+    ow->last = plat_get_ticks();
+    return 1;
+}
 
 /* --------------------------------------------------------------- the ring */
 
@@ -393,19 +674,25 @@ funlink_write(uint8_t *buf, size_t len, void *priv)
 {
     char_funlink_t *dev = (char_funlink_t *) priv;
 
-    /* Held until the next poll rather than sent a byte at a time: the serial
-       port hands them over one by one, and one TCP write per byte at 115200 is
-       a lot of syscalls for a bus whose backoff is measured in DOS ticks. */
     for (size_t i = 0; i < len; i++) {
+        /* The token lives on this same wire, and while the cabinet is talking to
+           it none of that belongs on the bus -- the other cabinets have tokens
+           of their own. */
+        if (funlink_ow_consume(dev, buf[i]))
+            continue;
+
+        /* Held until the next poll rather than sent a byte at a time: the serial
+           port hands them over one by one, and one TCP write per byte at 115200
+           is a lot of syscalls for a bus whose backoff is in DOS ticks. */
         if (dev->tx_len >= FUNLINK_TX_SIZE)
             funlink_flush_tx(dev);
         dev->tx[dev->tx_len++] = buf[i];
-    }
 
-    /* Whether a station hears itself is the one thing about the real box that is
-       not known.  Off by default; see the file comment. */
-    if (dev->echo)
-        funlink_rx_push(dev, buf, (int) len);
+        /* Whether a station hears itself is the one thing about the real box
+           that is not known.  Off by default; see the file comment. */
+        if (dev->echo)
+            funlink_rx_push(dev, &buf[i], 1);
+    }
 
     return len;
 }
@@ -467,6 +754,11 @@ funlink_init(UNUSED(const device_t *info))
     dev->role      = device_get_config_int("role");
     dev->host_port = device_get_config_int("host_port");
     dev->echo      = device_get_config_int("echo");
+    dev->station   = device_get_config_int("station");
+
+    funlink_crc8_init();
+    funlink_ow_load(dev);
+    funlink_ow_reset(dev);
 
     s = device_get_config_string("host");
     snprintf(dev->host, sizeof(dev->host), "%s",
@@ -543,6 +835,24 @@ static const device_config_t funlink_config[] = {
                reason. */
             .min = 1,
             .max = 32767
+        },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        /* Each cabinet had its own adapter and so its own number, and two
+           stations answering to the same one cannot be told apart on the bus.
+           Automatic follows who hosts, which is right for a pair; a third and
+           fourth cabinet need this set by hand. */
+        .name           = "station",
+        .description    = "Station number",
+        .type           = CONFIG_SPINNER,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = {
+            .min = 0,
+            .max = 255
         },
         .selection      = { { 0 } },
         .bios           = { { 0 } }

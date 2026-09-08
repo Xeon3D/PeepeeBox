@@ -104,7 +104,9 @@ cabinets talk to each other, not to the emulator. Arbitration, framing and the
 invitation handshake all happen inside the guests. What PeepeeBox provides is
 the wire — bytes from each cabinet reaching all the others.
 
-The wire is a TCP connection. Every cabinet is its own PeepeeBox: a second copy
+The adapter is not just a wire. Before the menu will open the bus it looks for a **DS1982 on that same COM1** and checks what it says -- a fixed record, identical in all three releases, whose ROM also carries this cabinet's station number. That is what the box is for, and PeepeeBox answers it as well as carrying the traffic. Each cabinet needs its own number; left automatic, the one hosting the bus takes 1 and a joiner takes 2, which is right for a pair.
+
+The wire itself is a TCP connection. Every cabinet is its own PeepeeBox: a second copy
 beside the first, or one on another PC. **Tools → fun.link…** fits the adapter,
 and its Options decide where the bus is. On the default — *joins if the bus
 exists, else hosts it*, at `127.0.0.1` port 7662 — two copies on one machine

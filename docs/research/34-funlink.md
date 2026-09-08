@@ -175,13 +175,11 @@ on the bus, on the same wire pair, separated from the 115200 traffic by baud
 rate alone. The cabinet's own DS1982 is a different part at a different address
 (`0x268`, which every generation still uses) — there are two.
 
-**PeepeeBox does not answer this yet.** It emulates the cabinet's iButton at
-`0x268` and puts a plain bus on COM1, so the 1-Wire reset goes out on the wire,
-nothing answers, the checks fail, and no link option appears. Fitting the
-adapter in the emulator is currently only half of it: the other half is a
-DS1982 on COM1 carrying the values above. The state machine to do it already
-exists — `ib_*` in `src/device/dongle_photoplay.c`, validated against real
-software — and would need lifting out and giving this record.
+**PeepeeBox answers it.** `char_funlink.c` is the token as well as the wire: a 1-Wire slave carrying exactly the record above, on the same COM1 the bus runs on. The two cannot be told apart by baud -- the reset pulse is slow but the slots run at the bus's own 115200 -- so the rule is what each protocol actually puts on the wire. A reset is `0xF0` sent slowly and nothing else the cabinet does looks like that; after one, every slot is `0x00` or `0xFF` and nothing else, and the first byte that is neither is the link driver starting to talk. A transaction that has gone quiet for a second also releases the port, so a stale 1-Wire mode cannot swallow the first byte of a frame.
+
+The station number is the one part of the record that is ours rather than funworld's, because each cabinet had its own adapter and two stations answering to the same number cannot be told apart on the bus. Left at 0 it follows who ended up hosting -- 1 for the host, 2 for a client, which is right for the usual pair -- and a third and fourth cabinet set it by hand.
+
+Measured: both cabinets read the token, take distinct numbers, and the link driver comes up behind it -- its 8250 probe passes, the port lands on 115200 8N1, and MCR settles at `0x0A`, the driver's idle state. Whether the fifth icon then appears on a game's start screen is the on-screen test.
 
 The name is a fossil: there is no IPX stack anywhere on any image — no `IPXODI`,
 no ODI MLID, no `INT 7Ah` in any binary. funworld modelled the API on IPX and
