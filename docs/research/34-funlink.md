@@ -142,11 +142,25 @@ master, no token, every cabinet equal.
 A frame is built as:
 
 - **16 bytes of `0x55`** — the preamble (`rep stosw` of `0x5555`, 8 words);
-- a 24-byte header beginning with the magic `"PHDR"` (`0x52444850`), carrying a
-  length, the sender's id from the object, a caller-supplied word, and a
-  checksum computed over the payload by a library routine;
-- the payload;
-- a trailer carrying the magic `"PHND"` (`0x444E4850`).
+- a **24-byte header**, which both magics belong to;
+- the payload.
+
+The header, read off the wire and confirmed against the builder at `0x19F86`:
+
+| offset | | |
+|---|---|---|
+| `+0x00` | `"PHDR"` | `0x52444850` |
+| `+0x04` | length | of the payload, not the frame |
+| `+0x08` | station | the sender's own number |
+| `+0x0C` | word | the caller's, unchanged in transit |
+| `+0x10` | checksum | over the payload, from `0x110F:0x0008` |
+| `+0x14` | `"PHND"` | `0x444E4850` |
+
+So `PHND` closes the *header*; there is no trailer. The receiver at `0x19E55`
+collects `length` bytes, checksums them as they arrive, and compares its running
+value against `+0x10`: equal calls the object's `vtable[0x1C]`, different calls
+`vtable[0x10]`. Both ends of a linked Touchdown produce headers that pass this,
+so the framing here is right.
 
 The receiver keeps a rolling 32-bit shift register (`>>= 8` per byte) and matches
 the magics out of the byte stream, which is why the `0x55` preamble is there — it
@@ -315,6 +329,17 @@ ordinary 8250 traffic. `src/char/char_funlink.c` is the whole of it:
   which a TCP stream has no equivalent of.
 - **Collisions never happen.** The guests still run their backoff; they just
   always win first time, which is the good case on real hardware too.
+- **Received bytes are paced at a character time each**, which is not a detail.
+  `serial_receive_timer()` asks the attached device for a byte once per *bit*
+  time and writes whatever it gets straight into the receive register, so a
+  device that answers every call feeds the guest ten bytes for every one a
+  115200 line carries. A modem never notices. This bus does: it is CSMA with no
+  master, and a cabinet decides the wire is free by watching how long its own
+  receiver has been quiet. Delivered ten times too fast, a 473-byte frame that
+  should hold the wire for 41 ms clears in four, the other 37 look idle, and both
+  cabinets transmit into each other. `funlink_read()` therefore counts bit times
+  and hands over one byte per character, from the port's own `data_bits`,
+  `stop_bits` and parity.
 - **A cabinet does not hear itself**, because that is the guess the box has not
   been opened to settle. `echo` in the device's options switches it.
 
@@ -324,10 +349,9 @@ real cabinets:
 - the DIN pinout, and whether the electrical layer is RS-485 or a current loop;
 - whether the box is passive line drivers or has a microcontroller of its own —
   if it repeats or re-times frames, an emulated pipe is not equivalent;
-- the exact 24-byte `PHDR` layout and the checksum — enough was read to describe
-  the frame, not to generate a valid one;
-- how `MENU.EXE` chooses the `/IPX=` value, and what the invitation handshake
-  between stations looks like.
+- how `MENU.EXE` chooses the `/IPX=` value;
+- what the two stations are each waiting for once the invitation has been
+  accepted — see below.
 
 None of it blocked the implementation, because the cabinets talk to each other
 rather than to us: a transparent bus between COM1s carries payloads nobody here
@@ -335,6 +359,38 @@ has to understand. What is verified so far is the wire and nothing above it —
 two instances find each other, a third joins, and a frame sent by one arrives at
 the others and not back at its sender. Whether two guests then agree to play is
 the on-screen test, and it needs one of the images from §3.
+
+### What two cabinets actually said to each other
+
+The device can write a timestamped trace of both directions to
+`funlink-capture.txt` beside the executable (`capture` in its options). A linked
+Touchdown between the two 1999 rigs, taken to the point where both screens go
+black, produced this — the first thing here that is a measurement of the
+protocol above the wire rather than of the wire.
+
+Station 1 invites. Every ~79 ms it puts out the same 433-byte payload: a `0x0907`
+word, its own station number, `"TOUCHDN"`, the player's name, and twenty name
+slots of which nineteen are the game's `UNKNOWN` placeholder, followed by a table
+of the dwords 0..15. Nothing in it changes, before or after the other cabinet
+answers.
+
+Station 2 receives all 133 of them intact, and 6.5 s in — the player pressing
+accept — begins replying, also every ~79 ms, with the same six bytes: `97 57`
+then its own station number. That never changes either.
+
+So both ends are framing correctly, both are being heard, every header passes its
+own checksum, and neither state machine moves. Two things in the trace say why
+the timing is what is wrong rather than the content:
+
+- **both stations transmit at once**, repeatedly, with receive and transmit
+  bursts sharing a millisecond — which a half-duplex pair cannot do;
+- **a station abandons its own frame mid-header** and restarts from the preamble
+  28 bytes in, twice, each time while a burst from the other cabinet is landing.
+
+That is a bus whose arbitration never settles, and the cause was on this side:
+receive was running at ten times line rate (above). The lobby loop at `0x1CA94`
+gives it 60 seconds — timer 3 against `0x3C`, or an early exit when the byte at
+`[bp-0x141]` reaches 2 — which is the window the two have to agree in.
 
 ## 5. Where the evidence is
 
@@ -349,7 +405,10 @@ is the richest build of the library.
 | MCR `0x0B` / `0x0A` around each byte | `0x19A73`; MCR writer at `0x1713E` |
 | LSR accessors (DR `0x01`, TEMT `0x40`) | `0x17100`, `0x17111` |
 | CSMA backoff, 50 attempts | `0x19B34` |
-| `0x55` preamble, `PHDR`, `PHND` | `0x19F8B` onwards |
+| `0x55` preamble, header builder | `0x19F86` onwards |
+| header check and checksum compare | `0x19E55`–`0x19F1F` |
+| the link lobby loop, and its 60 s | `0x1CA94`–`0x1CCBA` |
+| its step names (`SEND NETGAME DATAS` …) | `0x29CA7` onwards; DGROUP at `0x24C20` |
 | receive ISR and 1024-byte ring | `0x19D86`, ISR tail at `0x1988C` |
 | port / IRQ table | `DS:0x1C5E` / `DS:0x1C68` (`f803 f802 f802 e802 .. 0400 0300 0400 0300`) |
 | init call, port 1 at 115200 | `0x1CEAE`; the same byte sequence appears in the 2000, 2001, I.G.O. 1 and I.G.O. 2 builds |

@@ -1464,8 +1464,10 @@ pp_modem_dialog(QWidget *parent)
         const int dev_id = char_get_from_internal_name(
             combo->currentData().toString().toUtf8().constData(), DEVICE_COM);
 
+        /* Instance, not 0 -- see the fun.link dialog below. COM4 is instance 4. */
         if (dev_id > 0)
-            inner_changed |= DeviceConfig::ConfigureDevice(char_get_device(dev_id), 0, &dlg);
+            inner_changed |= DeviceConfig::ConfigureDevice(char_get_device(dev_id),
+                                                           PHOTOPLAY_MODEM_PORT + 1, &dlg);
     });
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
@@ -1539,8 +1541,12 @@ pp_funlink_dialog(QWidget *parent)
     QObject::connect(opts, &QPushButton::clicked, [&]() {
         const int dev_id = char_get_from_internal_name(PHOTOPLAY_FUNLINK, DEVICE_COM);
 
+        /* Instance, not 0: serial.c builds the port's device with char_init(..,
+           port + 1), so its options live in "<name> #1" for COM1.  Configuring
+           instance 0 writes a section the device never reads. */
         if (dev_id > 0)
-            inner_changed |= DeviceConfig::ConfigureDevice(char_get_device(dev_id), 0, &dlg);
+            inner_changed |= DeviceConfig::ConfigureDevice(char_get_device(dev_id),
+                                                           PHOTOPLAY_FUNLINK_PORT + 1, &dlg);
     });
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
