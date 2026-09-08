@@ -201,6 +201,9 @@ pp_apply_ports(void)
         com_ports[i].device  = 0;
     }
 
+    pp_profile_log("PP: COM3 touchscreen: %s (0x%04X, IRQ %d)\n",
+                   photoplay_touchscreen(), COM3_ADDR, photoplay_com3_irq());
+
     /* COM4 exists only when a modem is fitted.  An empty port would be harmless
        in itself, but the cabinet's own NET.CFG puts the modem at 0x2E8 on IRQ 10,
        and an idle UART sitting on IRQ 10 is not what the machine was.
@@ -659,7 +662,39 @@ photoplay_set_cdrom_enabled(int enabled)
 int
 photoplay_com3_irq(void)
 {
-    return COM3_IRQ;
+    /* It stops being a constant the moment fun.link is fitted.  funworld's link
+       driver takes the vector for its own IRQ -- 4, from their port table -- and
+       throws the old one away rather than chaining to it, so whatever else was on
+       IRQ 4 stops being serviced.  In this machine that is the touchscreen, and
+       the symptom is touch dying silently the moment the menu opens the bus.
+
+       The cabinets clearly did not all run COM3 on 4: the calibration paths in
+       AUTOPTS.BAT are `monitor /c3 /i12`, `/i10`, `/i4` and `/i3`, so funworld
+       shipped it on any of four interrupts and an operator with an adapter fitted
+       would have moved it.  So this is a setting, defaulting to what the rigs
+       here were measured on.
+
+       Changing it only helps if the guest agrees -- its own driver installs on
+       whatever interrupt it believes COM3 is on.  That is why the default does
+       not move on its own when fun.link is fitted: guessing for the guest would
+       trade one silent failure for another. */
+    const int irq = config_get_int(PHOTOPLAY_SECTION, "touch_irq", COM3_IRQ);
+
+    switch (irq) {
+        case 3:
+        case 4:
+        case 10:
+        case 12:
+            return irq;
+        default:
+            return COM3_IRQ;
+    }
+}
+
+void
+photoplay_set_com3_irq(int irq)
+{
+    config_set_int(PHOTOPLAY_SECTION, "touch_irq", irq);
 }
 
 /* The optional modem on COM4, by device internal name; "" when none is fitted.
