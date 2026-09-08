@@ -154,6 +154,14 @@ constants inside each executable.
 | I.G.O. 4, 5, 6, 7 | none — plain `GIF87a` | — |
 | 2008 | content databases, keys compiled in | — |
 
+**Having the key is not the same as booting.** I.G.O. 3's key is known and correct, and
+I.G.O. 3 still does not start: it stops in the dongle check long before any picture is
+decrypted, and never enters a keyed round at all (`05.6`, `09.1`). The content key and the
+boot check are independent — a release can have one without the other, and diagnosing a
+boot failure by reasoning about the picture cipher is a wasted trail. `16` in the older
+notes makes the same point for the two photo-game mechanisms; this is the third instance
+of the same shape.
+
 The LCG is the one the whole product leans on:
 
 ```c

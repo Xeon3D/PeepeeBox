@@ -5,50 +5,68 @@ complement: the gaps, stated as gaps so nobody has to rediscover that they are g
 
 ## 9.1 I.G.O. 3 does not boot
 
-Its transport is now right — see `05.6`. The device answers its queries from the key, and
-both 64-step sweeps complete cleanly with the measured reply. It still stops at
+Its transport is now right (`05.6`): the session layer is served exactly as a real part
+answered it — two complete 64-step sweeps a boot, replying `F5 7A 37 E7 8F 8F BD DA`, no
+lost sync, no spurious rounds. It still stops at
 `error number 228.250.107, in module MENU, dongle error`.
 
 **What raises that is known** (`05.7`): `p3 != 0` after service `0x3C`, HaspEncodeData.
-What is *not* known is what makes the library set `p3` non-zero. That library ships inside
-`MENU.EXE` at segment `0x3AE3` and writes status codes such as `0xFC19` and `0xFFF4`, so
-this is readable static work rather than a property of the part — it has simply not been
-read yet. **That is the next step, and it needs no hardware.**
+The library sets `p3` to zero in exactly one place, `lib+0x183`, reached only when its
+internal status `[bp-6]` comes back zero from the dispatcher. What makes that non-zero has
+not been read yet. The library ships inside `MENU.EXE` at segment `0x3AE3`, so this is
+static work — but it is the HASP library's internals rather than the wire, and a bigger
+job than the transport was.
 
-The round is not the suspect — `AB32E970` transforms I.G.O. 3's boot-check block to
-`c:/foto/`, which a wrong key does not do.
+**And I.G.O. 3 never enters a keyed round at all.** Counted with
+`tools/dongcap/framing.py`: I.G.O. 2 on real hardware gives 4,720 consultations in 118
+rounds of exactly 40; I.G.O. 3 gives **zero**. It stops inside the 15-step service
+exchange, before EncodeData ever consults the part. So the picture cipher's key is not the
+suspect and never was — `AB32E970` is right (it turns the boot-check block into
+`c:/foto/`, which a wrong key does not do), and it is downstream of a gate that never
+opens.
 
-One trail recorded so it is not followed twice: the gate at `0x20BB`, which folds 64 sweep
-bits into eight bytes and compares them against `DS:0x4C86`, is **not** this failure.
-`DS:0x4C86` is eight zero bytes and is written nowhere, so the check reads as "any folded
-byte is zero" — and serving a fold whose first byte is `00`, verified on the wire, changes
-nothing on screen. Four builds went into that before the error string was located, which
-took one search.
+**The live unknown is what the part should answer during that service exchange.** That is
+not in the binary: it is the dongle's side of the conversation. Which is why `09.2` is not
+a footnote here but the thing actually blocking progress — the sweep reply this device
+serves belongs to a `68BB/1329` part and I.G.O. 3 is `6B91/24A3`.
 
-Beyond the library, what is unmeasured is everything around the round:
+Two trails recorded so they are not followed twice:
 
-- **The session layer's sweep reply is a `68BB/1329` part's** (`05.3`). If those 64 bits
-  depend on the password, this device is handing I.G.O. 3 another dongle's answer.
-- **I.G.O. 3's session traffic looks different in kind.** Its writes in the logged window
-  are `8A/8B`, `94/95`, `BA/BB`, `DA/DB` — the *cooked* form with bit 7 **set** — where
-  I.G.O. 2's session layer is bit-7-clear throughout. So the model may not transfer, and
-  those bytes also trip the keyed round's preamble rule and reset its register, which is
-  right for a round preamble and wrong if they are something else.
-
-That window is 300 writes with repeats collapsed, so it shows the shape of the traffic
-and not the whole boot. **A passthrough capture of an I.G.O. 3 boot would settle it**, the
-way the I.G.O. 2 capture settled I.G.O. 2.
+- **The gate at `0x20BB` is not this failure.** It folds 64 sweep bits into eight bytes
+  and compares them against `DS:0x4C86`, which is eight zero bytes written nowhere — so it
+  reads as "any folded byte is zero". Serving a fold whose first byte is `00`, verified on
+  the wire, changes nothing on screen. Four builds went into that before the error string
+  was located, which took one search.
+- **The oracle clock does not move on I.G.O. 3.** Its bit-0 triples are command bytes, not
+  queries; see `05.6`. Reading them as a relocated query clock made the device answer
+  service-request bits with picture-cipher key bits.
 
 ## 9.2 Whether the session layer generalises
 
-The whole session model (`05.3`) comes from **one boot of one game on one `68BB/1329`
-part**. Three specific things are unverified beyond it:
+**This is the question actually blocking I.G.O. 3**, not a footnote. The whole session
+model (`05.3`) comes from one boot of one game on one **`68BB/1329`** part, and it is
+being served to a **`6B91/24A3`** release. Two things are unverified:
 
-- Whether a `7477/7D57` or `6B91/24A3` part answers the identity ramp with the same 64
-  bits. It looks like a property of the model rather than the key, but nothing shows it.
-- Whether the 64-step sweep's *reply* is a function of the password.
-- Whether the sweep's *written* bytes are the same in every release. If they differ the
-  matcher simply will not fire and the old fallback stands — wrong, but no worse.
+- Whether a `7477/7D57` or `6B91/24A3` part answers the identity ramp and the 64-step
+  sweep with the same bits. It looks like a property of the design rather than the key,
+  but nothing shows that.
+- Whether the sweep's *written* bytes are the same in every release. Settled in one
+  direction already: they are generated by an LCG rather than chosen (`05.3`), and
+  I.G.O. 2's measured `hs_sweep_w[]` and I.G.O. 3's `0x24FB` produce identical output. So
+  the questions are the same 64 for both, and only the answers are in doubt.
+
+**One command closes it**, and any dongle will do because what the program sends is fixed:
+
+```
+SESSION.COM          (tools/dongcap/mksession_dos.py builds it; run under real DOS)
+```
+
+It asks a part the identity ramp, the sweep in both bit-7 forms, and the liveness probe —
+194 questions, eight bytes out — and prints the `68BB/1329` answers underneath for
+comparison. If a different password pair replies differently, the session layer is keyed
+by the password and this device has been handing I.G.O. 3 another dongle's answers through
+every experiment so far. If it replies identically, the model transfers and the fault is
+elsewhere. Either result is worth more than further work on the emulated side.
 
 ## 9.3 The 166-byte crypto table in the dumps
 

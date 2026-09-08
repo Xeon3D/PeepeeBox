@@ -6,7 +6,7 @@ single most useful thing to know before writing this device.
 
 | layer | how it is framed | what it carries | state |
 |---|---|---|---|
-| **session / detection** | command bytes clocked on DATA **bit 0**, **bit 7 clear** | identity, the sweep, liveness — the gates | modelled; 12,856 of 12,856 reads in a real boot |
+| **session / detection** | command bytes clocked on DATA **bit 0**; bit 7 clear on I.G.O. 2, **set** on I.G.O. 3 (`5.6`) | identity, the sweep, liveness — the gates | modelled; 12,856 of 12,856 reads in a real boot |
 | **memory** | Microwire: CS = DATA bit 1, SK = bit 5, DI = bit 6, DO = STATUS bit 5 | the 112-byte record | exact |
 | **transform** | payload clocked on DATA **bit 4**, **bit 7 set** | the picture cipher's keyed round | exact; 46,036 of 46,036 rounds |
 
@@ -274,9 +274,11 @@ like the others, and FINDIT and AMORE give the same key independently.
 **I.G.O. 2 (BE)** boots, and FIND IT plays with the photographs decrypting — the whole
 chain end to end, from a key fitted with no dongle in the room.
 
-**I.G.O. 3 (DE)** now *asks* the round with its own key and still stops at
-`error number 228.250.107, in module MENU, dongle error` -- see `5.7` for what
-raises that, and `09` for what is still unknown about it.
+**I.G.O. 3 (DE)** is served the session layer exactly as a real part answers it — two
+complete sweeps a boot, no lost sync — and still stops at
+`error number 228.250.107, in module MENU, dongle error`. It never enters a keyed round at
+all. See `5.6` for what is and is not different about it, `5.7` for what raises the error,
+and `09.2` for the measurement that would unblock it.
 
 ## 5.6 What is different about I.G.O. 3, and what is not
 

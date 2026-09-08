@@ -21,7 +21,7 @@ for that type, not that the cabinet has one.
 | Photo Play 2000 | `Version 2000` | CDONGLE / PDONGLE | DS1982 | **complete** — all four images boot, play, pictures decrypt |
 | Photo Play 2001 / I.G.O. 1 | `Version 2001` | HASP4, pass `7477/7D57` | — | transport complete; picture key `CF47CB42` fitted and verified offline |
 | I.G.O. 2 | `Version 2002` | HASP4, pass `68BB/1329` | — | **complete** — boots, FIND IT plays, photographs decrypt on screen |
-| I.G.O. 3 | `Version 2003` | HASP4, pass `6B91/24A3` | — | boots as far as `dongle error`; key `AB32E970` is right, the gate is not open |
+| I.G.O. 3 | `Version 2003` | HASP4, pass `6B91/24A3` | — | **does not boot.** Transport complete and the session layer served as a real part answers it; stops at `dongle error` inside the service exchange, before the keyed round is ever entered |
 | I.G.O. 4 | `Version 2004` | a parallel dongle, **not** HASP — no HASP library in any of its 43 executables | — | its pictures are plain GIF87a, so nothing on the image needs a content key |
 | I.G.O. 5 | `Version 2005B` | HASP4, pass `6B91/24A3` | — | transport complete; pictures are plain |
 | I.G.O. 6 | `Version 2006A` | HASP4, pass `68BB/1329` (from the dumps) | — | transport complete; pictures are plain |
