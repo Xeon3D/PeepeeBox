@@ -322,8 +322,11 @@ a first real session.
 
 ## What was built
 
-`tools/funnetd/` — a server the emulated modem dials, in Python 3 with no
-third-party modules, about 1,500 lines over five files:
+[**fun.net-server**](https://github.com/Xeon3D/fun.net-server) — a server the emulated modem dials, in Python 3
+with no third-party modules, about 1,500 lines over five files.  It lives in a
+repository of its own rather than in this tree, because nothing in it is
+86Box-specific: it speaks to a byte pipe, so a real cabinet on a real modem
+would work the same way.
 
 * `ppp.py` — HDLC framing with FCS-16, LCP, PAP, CHAP, IPCP. Sends the first
   Configure-Request because the cabinet will not, rejects VJ compression,
@@ -345,7 +348,7 @@ third-party modules, about 1,500 lines over five files:
 
 ## What is verified, and what is not
 
-**Verified mechanically**, by `tools/funnetd/selftest.py`, which stands a second
+**Verified mechanically**, by that repository's `selftest.py`, which stands a second
 PPP peer and IP stack on the other end of a real socket and makes it behave the
 way `CLIENT.EXE` does — 34 checks, all passing: LCP and IPCP come up, DNS
 answers `ftp.nl.funsys.com` and the hard-coded backup name, all three time
