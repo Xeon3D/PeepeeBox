@@ -104,6 +104,8 @@
         <file>qt/icons/note_4.ico</file>
         <file>qt/icons/calibrate.ico</file>
         <file>qt/icons/printer.ico</file>
+        <file>qt/icons/modem.ico</file>
+        <file>qt/icons/funlink.ico</file>
         <file>qt/icons/plug.ico</file>
         <file>qt/icons/dpu414.png</file>
         <file>qt/icons/floppy_35.ico</file>

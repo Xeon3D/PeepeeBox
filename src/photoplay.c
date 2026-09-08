@@ -191,14 +191,45 @@ pp_apply_input(void)
         joystick_type[i] = 0;
 }
 
-/* Pin the ports: COM1-3 present because the touchscreen sits on COM3, and the
-   protection dongle on LPT1. */
+/* Pin the ports: COM1-3 present because the touchscreen sits on COM3, the
+   optional modem on COM4, and the protection dongle on LPT1. */
 static void
 pp_apply_ports(void)
 {
     for (int i = 0; i < SERIAL_MAX; i++) {
         com_ports[i].enabled = (i < 3);
         com_ports[i].device  = 0;
+    }
+
+    /* COM4 exists only when a modem is fitted.  An empty port would be harmless
+       in itself, but the cabinet's own NET.CFG puts the modem at 0x2E8 on IRQ 10,
+       and an idle UART sitting on IRQ 10 is not what the machine was.
+
+       photoplay_modem() has already dropped a name this build does not have, so
+       the lookup here cannot fail. */
+    const char *modem_name = photoplay_modem();
+
+    if (modem_name[0] != '\0') {
+        com_ports[PHOTOPLAY_MODEM_PORT].enabled = 1;
+        com_ports[PHOTOPLAY_MODEM_PORT].device  = char_get_from_internal_name(modem_name, DEVICE_COM);
+        pp_profile_log("PP: COM4 modem: %s (0x%04X, IRQ %d)\n", modem_name,
+                       COM4_ADDR, photoplay_com4_irq());
+    }
+
+    /* COM1 is the port nothing else in the cabinet uses -- COM3 is the
+       touchscreen and COM4 the modem -- and it is where fun.link goes.  Not a
+       guess: every release that carries the link driver opens it with funworld's
+       port index 1, which their own table maps to 0x3F8 on IRQ 4, at 115200.
+       See docs/research/34-funlink.md.
+
+       The port itself exists either way, because the cabinets had it; the
+       adapter is what is optional. */
+    if (photoplay_funlink_enabled()) {
+        com_ports[PHOTOPLAY_FUNLINK_PORT].device = char_get_from_internal_name(PHOTOPLAY_FUNLINK,
+                                                                              DEVICE_COM);
+        if (!com_ports[PHOTOPLAY_FUNLINK_PORT].device)
+            fatal("PeepeeBox: the %s device is missing from this build\n", PHOTOPLAY_FUNLINK);
+        pp_profile_log("PP: COM1 fun.link (0x%04X, IRQ %d)\n", COM1_ADDR, COM1_IRQ);
     }
 
     const char *dongle_name = PHOTOPLAY_DONGLE;
@@ -629,6 +660,99 @@ int
 photoplay_com3_irq(void)
 {
     return COM3_IRQ;
+}
+
+/* The optional modem on COM4, by device internal name; "" when none is fitted.
+
+   The cabinets that were on fun.net had an external modem hanging off COM4, and
+   the modem database on the disk itself -- \FN_SYS\DATABASE\NETWORK\MD_NAME.CSV
+   -- names the two these machines are found with: an ELSA MicroLink 56k and a
+   Diamond SupraExpress 56e PRO.  Plenty of cabinets never had either and every
+   game runs without one, so this is a part that is fitted rather than a part
+   that is.  A name, not an index, because indices move when the device table
+   does.  Persisted in [Photo Play]; chosen from the toolbar. */
+const char *
+photoplay_modem(void)
+{
+    static char name[64];
+    const char *s = config_get_string(PHOTOPLAY_SECTION, "modem", "");
+
+    /* A name this build does not have reads as "no modem" rather than being
+       fatal.  An ini file is easy to mistype, and a cabinet with no modem is
+       what most of them were -- so that is the safe way to be wrong. */
+    if ((s == NULL) || !char_get_from_internal_name(s, DEVICE_COM))
+        return "";
+    snprintf(name, sizeof(name), "%s", s);
+    return name;
+}
+
+void
+photoplay_set_modem(const char *internal_name)
+{
+    config_set_string(PHOTOPLAY_SECTION, "modem",
+                      (char *) ((internal_name != NULL) ? internal_name : ""));
+}
+
+/* The parts to offer, in the order MD_NAME.CSV lists them.  Two of the thirty
+   modems in funworld's table are the ones these cabinets are actually found
+   with; the rest are ISDN terminal adapters, GSM modules and parts for other
+   funworld machines.  Adding a third is a line here and a row in the model table
+   in char_modem.c. */
+const char *
+photoplay_modem_list(int index)
+{
+    static const char *const modems[] = {
+        PHOTOPLAY_MODEM_ELSA,
+        PHOTOPLAY_MODEM_SUPRA,
+        NULL
+    };
+
+    if ((index < 0) || (index >= (int) ((sizeof(modems) / sizeof(modems[0])) - 1)))
+        return NULL;
+    return modems[index];
+}
+
+/* Which IRQ COM4 is wired to: 10, not the PC-standard 3.
+
+   This is not a preference either.  An IGO 6 image still carries the NET.CFG its
+   last dial session wrote, and it says `PORT 02E8` / `INT 10`.  The ODI PPP
+   driver takes both from that file, installs an ISR on the interrupt it names
+   and then stops polling -- so a modem on IRQ 3 answers the AT interrogation
+   perfectly, the cabinet reports the part as found, and the link dies the moment
+   PPP starts.  The same failure shape as the touchscreen's COM3; see
+   photoplay_com3_irq(). */
+int
+photoplay_com4_irq(void)
+{
+    return PHOTOPLAY_MODEM_IRQ;
+}
+
+/* Whether the fun.link adapter is fitted to COM1.
+
+   fun.link is the box that joins cabinets into one bus so their games can play
+   each other -- funworld's own advert for it draws four machines in a ring.  It
+   is a serial bus, not the parallel link its 25-pin plug suggests: the games
+   themselves say "LINK ERROR: No serial-port found !!!!. Please check mainboard
+   COM-settings", and every build that has the driver opens COM1 at 115200 8N1.
+
+   Two things make this a fitted part rather than a fixed one.  Most cabinets
+   never had an adapter, and -- more to the point -- not every disk image can use
+   it: the driver was linked into everything from 1998/99 through I.G.O. 2 and
+   then dropped, so I.G.O. 3 onward carries the artwork and the menu entry with
+   no code behind them.  docs/research/34-funlink.md has the per-image table.
+
+   Everything past "is it there" is the device's own: who hosts the bus, where it
+   is, and which port.  Persisted in [Photo Play]. */
+int
+photoplay_funlink_enabled(void)
+{
+    return !!config_get_int(PHOTOPLAY_SECTION, "funlink", 0);
+}
+
+void
+photoplay_set_funlink_enabled(int enabled)
+{
+    config_set_int(PHOTOPLAY_SECTION, "funlink", !!enabled);
 }
 
 /* Which touchscreen is attached.

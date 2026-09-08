@@ -16,17 +16,108 @@ than a preference.
 | Disk | `HardDisk.img` beside the executable, IDE primary master | Geometry derived from file size. |
 | LPT1 | Photo Play protection dongle | See below. |
 | I/O card | funworld ISA card: NEC D71055C (8255) at **0x210** | The coin acceptor and the two buttons behind the door. See [`research/27-io-card.md`](research/27-io-card.md). |
+| COM4 | An external modem, IRQ 10 | Optional — only the cabinets on fun.net had one. See below. |
+| COM1 | The **fun.link** adapter, IRQ 4 | Optional — the bus that joins cabinets together. See below. |
 
-Two things are optional, because service and installation media exist even though
-no cabinet shipped with a drive. Both are off by default and both are toggled
-from the **Tools** menu:
+Four things are optional. All are off by default, all are switched on from the
+**Tools** menu, and all restart the machine when changed, because each changes
+what hardware is present. Their settings live in a `[Photo Play]` section of
+`86box.cfg`.
 
-- A generic **52× ATAPI CD-ROM** as secondary master.
-- A **3.5" 1.44 MB floppy** as drive A:.
+- A generic **52× ATAPI CD-ROM** as secondary master. No cabinet shipped with a
+  drive, but service and installation media exist.
+- A **3.5" 1.44 MB floppy** as drive A:, for the same reason.
+- The **modem on COM4** — an ELSA MicroLink 56k or a Diamond SupraExpress 56e
+  PRO, the two parts the cabinets on fun.net are found with.
+- The **fun.link adapter on COM1**, which joins this cabinet to others.
 
-Neither is configurable beyond existing. Toggling either restarts the machine,
-because it changes what hardware is present. The setting lives in a
-`[Photo Play]` section of `86box.cfg`.
+None of them is configurable beyond existing, except the modem and fun.link:
+the modem's telephone line is a choice because there is no longer a telephone
+network to attach it to, and fun.link's is a choice because the cabinet at the
+other end is now another copy of PeepeeBox somewhere.
+
+## The modem
+
+Cabinets on **fun.net** — funworld's dial-up network for statistics, updates and
+the online games — had an external modem on COM4. Which one is not a guess: the
+disk carries funworld's own modem database in `\FN_SYS\DATABASE\NETWORK\`, and
+the operator shell identifies the fitted part by sending the `ATI` command that
+table names and looking for the substring beside it. Two of its rows are the
+parts these machines turn up with, and PeepeeBox emulates both:
+
+| | recognised by | firmware from |
+|---|---|---|
+| **ELSA MicroLink 56k** (row 2) | `MicroLink` and `56`, both in `ATI6` | `ATI3` |
+| **Diamond SupraExpress 56e PRO** (row 3) | `SupraExpress` in `ATI3` | `ATI7` |
+
+| | |
+|---|---|
+| Port | **COM4 at 0x02E8, IRQ 10** — not the PC-standard 3 |
+| Line | 57600 8N1, RTS/CTS |
+| Dial | `ATDT`, then Novell ODI PPP and WATTCP on top |
+
+The port and interrupt come from real dial sessions: two images — a 2001 NL
+machine and a 2006 DE one — still carry the `NET.CFG` their last connection
+wrote, and both say `PORT 02E8` / `INT 10` / `BAUD 57,600`. All three are
+literals in `FN_SYS.EXE`, so they are the same on every cabinet. The IRQ matters for the same reason COM3's does — the PPP
+driver installs an ISR on the interrupt that file names and then stops polling,
+so a modem on IRQ 3 would identify perfectly and then die the moment the link
+came up.
+
+**There is nothing to dial.** fun.net is gone, so the emulated line is dead by
+default: the cabinet finds the modem, reports what it is, accepts every init
+string in its tables, dials, and gets the failure a real modem would give into a
+dead socket. **Tools → Modem…** can point it at a TCP host instead, in which case
+dialling anything connects there and the modem becomes a transparent pipe —
+which is what would be needed to stand a fun.net replacement up.
+
+Full detail, including where every `ATI` answer comes from and why it cannot be
+mistaken for one of the other twenty-nine modems in the table, is in
+[`research/33-modem.md`](research/33-modem.md).
+
+## fun.link
+
+**fun.link** is funworld's cabinet-to-cabinet link: an adapter with a 25-pin
+D-sub to the machine's I/O connector and a DIN onward to the next cabinet, and
+funworld's own advert for it draws four machines joined in a ring. The 25-pin
+plug makes the parallel port the obvious guess. It is the wrong one — the games
+say so themselves:
+
+```
+LINK ERROR: No serial-port found !!!!. Please check mainboard COM-settings
+LINK ERROR: Unable to send on BUS. Please check LINK-adaptor and LINK-cable
+```
+
+It is a multi-drop serial bus, and every release that carries the driver opens
+it the same way.
+
+| | |
+|---|---|
+| Port | **COM1 at 0x03F8, IRQ 4** — the one port nothing else in the cabinet uses |
+| Line | 115200 8N1 |
+| Transmit enable | MCR bit 0 (DTR), raised around each byte |
+| Arbitration | CSMA in software: back off `rand()%90+10` ticks, fifty tries |
+| Frame | 16 × `0x55` preamble, `PHDR` header, payload, `PHND` trailer |
+
+None of that has to be understood to emulate it, and that is the point: the
+cabinets talk to each other, not to the emulator. Arbitration, framing and the
+invitation handshake all happen inside the guests. What PeepeeBox provides is
+the wire — bytes from each cabinet reaching all the others.
+
+The wire is a TCP connection. Every cabinet is its own PeepeeBox: a second copy
+beside the first, or one on another PC. **Tools → fun.link…** fits the adapter,
+and its Options decide where the bus is. On the default — *joins if the bus
+exists, else hosts it*, at `127.0.0.1` port 7662 — two copies on one machine
+find each other whichever starts first. To link across a network, set one to
+host and point the others at its address. Up to four cabinets share one bus,
+which is what the advert draws.
+
+**Most disk images cannot use it.** The link driver was linked into everything
+from 1998/99 through I.G.O. 2 and then dropped: I.G.O. 3 onward still ships the
+artwork and the "Fun Link" menu entry with nothing behind them. The per-image
+table, the disassembly it all comes from, and the one thing about the real
+adapter that is still a guess — whether a cabinet hears its own transmissions —
+are in [`research/34-funlink.md`](research/34-funlink.md).
 
 ## The disk
 

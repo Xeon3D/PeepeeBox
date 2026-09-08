@@ -86,6 +86,8 @@ private slots:
     void on_actionFullscreen_triggered();
     void on_actionSettings_triggered();
     void on_actionTouchscreen_triggered();
+    void on_actionModem_triggered();
+    void on_actionFunlink_triggered();
     void on_actionInsert_coin_1_triggered();
     void on_actionInsert_coin_2_triggered();
     void on_actionInsert_coin_3_triggered();

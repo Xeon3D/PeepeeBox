@@ -1139,7 +1139,8 @@ serial_init(const device_t *info)
         else if (next_inst == 4)
             serial_setup(dev, COM5_ADDR, COM5_IRQ);
         else if (next_inst == 3)
-            serial_setup(dev, COM4_ADDR, COM4_IRQ);
+            /* Not COM4_IRQ: the cabinet decides.  See photoplay_com4_irq(). */
+            serial_setup(dev, COM4_ADDR, photoplay_com4_irq());
         else if (next_inst == 2)
             /* Not COM3_IRQ: the cabinet decides.  See photoplay_com3_irq(). */
             serial_setup(dev, COM3_ADDR, photoplay_com3_irq());

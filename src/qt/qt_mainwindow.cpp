@@ -51,6 +51,7 @@ extern "C" {
 #include <86box/nvr.h>
 #include <86box/renderdefs.h>
 #include <86box/lpt.h>
+#include <86box/char.h>
 #include <86box/photoplay.h>
 #include <86box/funworld_io.h>
 #include <86box/prn_cp80.h>
@@ -1360,6 +1361,169 @@ pp_touchscreen_dialog(QWidget *parent)
     const QString chosen = combo->currentData().toString();
     if (chosen != QString::fromUtf8(current)) {
         photoplay_set_touchscreen(chosen.toUtf8().constData());
+        return 1;
+    }
+    return inner_changed;
+}
+
+/* PeepeeBox: the modem, and whether there is one at all.
+
+   The cabinets that were on fun.net had an external modem on COM4 -- the port
+   the cabinet's own NET.CFG names, at 0x2E8 on IRQ 10, 57600 with hardware flow
+   control.  Which modem is not a guess either: the disk carries funworld's modem
+   database in \FN_SYS\DATABASE\NETWORK\, and the part this emulates is row 3 of
+   it, a Diamond SupraExpress 56e PRO.  See docs/research/33-modem.md.
+
+   Most cabinets never had one and no game needs one, so unlike the touchscreen
+   this is a part that is fitted rather than a part that is -- hence None as the
+   first entry and the default.  Everything past that choice belongs to the
+   device, so Options hands off to its own config dialog the way the touchscreen
+   does.
+
+   Returns 1 when something changed and the machine has to be restarted for it:
+   fitting the modem creates COM4, which is emulated hardware appearing. */
+static int
+pp_modem_dialog(QWidget *parent)
+{
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Modem"));
+    dlg.setWindowFlags(dlg.windowFlags() & ~Qt::WindowContextHelpButtonHint);
+
+    const QString current = QString::fromUtf8(photoplay_modem());
+
+    auto *form  = new QFormLayout();
+    auto *combo = new QComboBox();
+
+    /* None first, and the default: most cabinets never had one. */
+    combo->addItem(QObject::tr("None"), QString());
+    for (int i = 0; photoplay_modem_list(i) != nullptr; i++) {
+        const char *internal = photoplay_modem_list(i);
+        const int   dev_id   = char_get_from_internal_name(internal, DEVICE_COM);
+
+        if (dev_id <= 0)
+            continue;
+        combo->addItem(QString::fromUtf8(char_get_device(dev_id)->name),
+                       QString::fromUtf8(internal));
+        if (current == QString::fromUtf8(internal))
+            combo->setCurrentIndex(combo->count() - 1);
+    }
+    form->addRow(QObject::tr("Modem on COM4:"), combo);
+
+    auto *opts = new QPushButton(QObject::tr("&Options..."));
+    opts->setEnabled(!combo->currentData().toString().isEmpty());
+    form->addRow(QString(), opts);
+
+    auto *note = new QLabel(QObject::tr(
+        "The cabinets that were on fun.net had an external modem on COM4, at "
+        "0x2E8 on IRQ 10 — one of these two parts. Fitting one lets the operator "
+        "menu's data transmission find it and report what it is; the line behind "
+        "it is dead unless a host is set under Options."
+        "\n\nChanging any of this restarts the machine."));
+    note->setWordWrap(true);
+    form->addRow(note);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    auto *outer   = new QVBoxLayout(&dlg);
+    outer->addLayout(form);
+    outer->addWidget(buttons);
+
+    /* Options are the chosen part's own, so the combo has to be read at click
+       time -- otherwise picking the ELSA and pressing Options would configure
+       the Supra.  Same reasoning as the touchscreen dialog above. */
+    int inner_changed = 0;
+    QObject::connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                     [opts, combo](int) {
+                         opts->setEnabled(!combo->currentData().toString().isEmpty());
+                     });
+    QObject::connect(opts, &QPushButton::clicked, [&]() {
+        const int dev_id = char_get_from_internal_name(
+            combo->currentData().toString().toUtf8().constData(), DEVICE_COM);
+
+        if (dev_id > 0)
+            inner_changed |= DeviceConfig::ConfigureDevice(char_get_device(dev_id), 0, &dlg);
+    });
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    if (dlg.exec() != QDialog::Accepted)
+        return inner_changed;   /* the device dialog saves its own, Cancel here cannot undo it */
+
+    const QString chosen = combo->currentData().toString();
+    if (chosen != current) {
+        photoplay_set_modem(chosen.toUtf8().constData());
+        return 1;
+    }
+    return inner_changed;
+}
+
+/* PeepeeBox: fun.link, the adapter that joins cabinets together.
+
+   funworld's own advert for it draws four machines in a ring, and the box on the
+   bench has a 25-pin plug to the cabinet's I/O connector and a DIN onward -- but
+   it is a *serial* bus, not a parallel one, whatever the 25-pin end suggests.
+   The games say so: "LINK ERROR: No serial-port found !!!!. Please check
+   mainboard COM-settings".  COM1 at 0x3F8 / IRQ 4, 115200 8N1.  See
+   docs/research/34-funlink.md.
+
+   Fitting it is the only thing this dialog decides; where the bus is and who
+   hosts it belongs to the device, so Options hands off to its own config the way
+   the modem and touchscreen dialogs do.
+
+   Returns 1 when something changed and the machine has to be restarted for it:
+   fitting the adapter is a device appearing on COM1. */
+static int
+pp_funlink_dialog(QWidget *parent)
+{
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("fun.link"));
+    dlg.setWindowFlags(dlg.windowFlags() & ~Qt::WindowContextHelpButtonHint);
+
+    const bool current = photoplay_funlink_enabled();
+
+    auto *form  = new QFormLayout();
+    auto *fitted = new QCheckBox(QObject::tr("fun.link adapter fitted to COM1"));
+    fitted->setChecked(current);
+    form->addRow(fitted);
+
+    auto *opts = new QPushButton(QObject::tr("&Options..."));
+    opts->setEnabled(current);
+    form->addRow(QString(), opts);
+
+    auto *note = new QLabel(QObject::tr(
+        "fun.link joins cabinets into one bus so their games can play each "
+        "other. Every machine on the bus is its own PeepeeBox — a second copy "
+        "beside this one, or one on another PC. Leave both on the default "
+        "under Options and whichever starts first hosts the bus; to link over a "
+        "network, set the others to the host's address."
+        "\n\nThe link driver is only in the 1998/99 to I.G.O. 2 releases. From "
+        "I.G.O. 3 onward the disks still carry the artwork and the menu entry, "
+        "but nothing behind them, so fitting the adapter there does nothing."
+        "\n\nChanging this restarts the machine."));
+    note->setWordWrap(true);
+    form->addRow(note);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    auto *outer   = new QVBoxLayout(&dlg);
+    outer->addLayout(form);
+    outer->addWidget(buttons);
+
+    int inner_changed = 0;
+    QObject::connect(fitted, &QCheckBox::toggled,
+                     [opts](bool on) { opts->setEnabled(on); });
+    QObject::connect(opts, &QPushButton::clicked, [&]() {
+        const int dev_id = char_get_from_internal_name(PHOTOPLAY_FUNLINK, DEVICE_COM);
+
+        if (dev_id > 0)
+            inner_changed |= DeviceConfig::ConfigureDevice(char_get_device(dev_id), 0, &dlg);
+    });
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    if (dlg.exec() != QDialog::Accepted)
+        return inner_changed;   /* the device dialog saves its own, Cancel here cannot undo it */
+
+    if (fitted->isChecked() != current) {
+        photoplay_set_funlink_enabled(fitted->isChecked());
         return 1;
     }
     return inner_changed;
@@ -3590,6 +3754,39 @@ MainWindow::on_actionTouchscreen_triggered()
 
     plat_pause(1);
     if (pp_touchscreen_dialog(this)) {
+        config_changed = 2;
+        config_save();
+        pc_reset_hard();
+    }
+    plat_pause(currentPause);
+}
+
+/* PeepeeBox: the modem on COM4.  Same shape as the touchscreen and dongle
+   buttons -- pause, ask, and hard reset if the answer changed, because fitting
+   the modem is a COM port appearing rather than a setting being adjusted. */
+void
+MainWindow::on_actionModem_triggered()
+{
+    const int currentPause = dopause;
+
+    plat_pause(1);
+    if (pp_modem_dialog(this)) {
+        config_changed = 2;
+        config_save();
+        pc_reset_hard();
+    }
+    plat_pause(currentPause);
+}
+
+/* PeepeeBox: fun.link on COM1.  Same shape again -- pause, ask, and hard reset if
+   the answer changed, because fitting the adapter puts a device on a COM port. */
+void
+MainWindow::on_actionFunlink_triggered()
+{
+    const int currentPause = dopause;
+
+    plat_pause(1);
+    if (pp_funlink_dialog(this)) {
         config_changed = 2;
         config_save();
         pc_reset_hard();

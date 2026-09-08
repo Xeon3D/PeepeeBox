@@ -1,4 +1,4 @@
-"""Draw the two toolbar icons this fork needs and write them as 32bpp ICOs.
+"""Draw the toolbar icons this fork needs and write them as 32bpp ICOs.
 
 16x16 and 32x32, BGRA, bottom-up DIB inside an ICO container -- the same shape
 the rest of src/qt/icons uses, and small enough to keep in the repository.
@@ -76,6 +76,72 @@ def crosshair(n):
     return px
 
 
+def modem(n):
+    """An external modem: a low box with a row of indicators and a phone cord."""
+    px = blank(n)
+    case = (170, 196, 208, 255)     # B,G,R,A -- the warm beige plastic of the era
+    edge = (60, 62, 70, 255)        # dark enough to hold up on a light toolbar
+    dark = (120, 142, 152, 255)     # an unlit lamp
+    lit = (80, 225, 110, 255)       # the carrier-detect green
+    cord = (150, 152, 158, 255)
+
+    y0, y1 = int(n * 0.34), int(n * 0.72)
+    x0, x1 = int(n * 0.09), int(n * 0.91)
+
+    # the telephone cord, leaving the back of the case for the wall
+    steps = max(2, int(n * 0.20))
+    for t in range(steps + 1):
+        x = int(n * 0.60 + t)
+        y = y0 - 1 - t
+        if (0 <= x < n) and (0 <= y < y0):
+            px[y][x] = cord
+
+    # the case
+    for y in range(y0, y1 + 1):
+        hline(px, y, x0, x1, case if (y0 < y < y1) else edge)
+    vline(px, x0, y0, y1, edge)
+    vline(px, x1, y0, y1, edge)
+
+    # the indicator row, one lamp lit
+    ly = (y0 + y1) // 2
+    step = max(2, n // 7)
+    wide = max(0, (n // 10) - 1)
+    for i, x in enumerate(range(x0 + step, x1 - step + 1, step)):
+        hline(px, ly, x, x + wide, lit if i == 1 else dark)
+
+    return px
+
+
+def funlink(n):
+    """Two cabinets on one bus: the fun.link adapter."""
+    px = blank(n)
+    case = (150, 120, 60, 255)      # B,G,R,A -- the fun.link box's blue
+    edge = (100, 70, 25, 255)
+    glass = (235, 225, 190, 255)    # a lit screen
+    wire = (70, 175, 215, 255)      # the loom between them
+
+    w = max(3, int(n * 0.34))
+    top = int(n * 0.14)
+    bot = int(n * 0.86)
+    mid = (top + bot) // 2
+
+    # the cable joining the two, drawn first so the cases sit on top of it
+    for y in (mid, mid + 1) if n > 16 else (mid,):
+        hline(px, y, 0, n - 1, wire)
+
+    for x0 in (0, n - w):
+        x1 = x0 + w - 1
+        for y in range(top, bot + 1):
+            hline(px, y, x0, x1, case if (top < y < bot) else edge)
+        vline(px, x0, top, bot, edge)
+        vline(px, x1, top, bot, edge)
+        # the screen
+        for y in range(top + max(1, n // 12), bot - max(1, n // 8)):
+            hline(px, y, x0 + max(1, n // 14), x1 - max(1, n // 14), glass)
+
+    return px
+
+
 def dib(px):
     n = len(px)
     hdr = struct.pack('<IiiHHIIiiII', 40, n, n * 2, 1, 32, 0, n * n * 4, 0, 0, 0, 0)
@@ -102,3 +168,5 @@ def write_ico(path, draw):
 
 write_ico(os.path.join(OUT, 'coin.ico'), coin)
 write_ico(os.path.join(OUT, 'calibrate.ico'), crosshair)
+write_ico(os.path.join(OUT, 'modem.ico'), modem)
+write_ico(os.path.join(OUT, 'funlink.ico'), funlink)

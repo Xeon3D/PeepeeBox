@@ -1564,7 +1564,26 @@ static void
 hd_load(pp_t *dev, const char *banner)
 {
     const int      rel  = hd_release(banner);
-    const uint16_t key  = hd_keys[rel].probe ? 0x0000 : hd_keys[rel].pass1;
+    /* A probing release descrambles with the FIRST pair its probe tries, not with zero.
+     *
+     * I.G.O. 6 and I.G.O. Italy write their passwords at runtime and hunt: try
+     * 7477/7D57, fall back to 68BB/1329, and if service 5 answers neither, set both to
+     * zero.  This used to serve them a record scrambled with 0x0000, on the reasoning
+     * that this part answers service 5 for none of the pairs and so the guest ends up at
+     * that last branch.  That was an inference and the screen disproves it.
+     *
+     * Measured: I.G.O. 6 DE puts `" EDGB (31)` where `Version 2006 (DE)` belongs.  Undo
+     * our scramble with each candidate and only one reproduces it --
+     *
+     *     guest uses 0x0000   ->  "Version 2006 (DE)"    what we assumed
+     *     guest uses 0x68BB   ->  ">...... .X.^. (.-)"   its own dumped pair
+     *     guest uses 0x7477   ->  "\"...... EDGBw (31)"  <- what is on screen
+     *
+     * -- so the probe accepts 7477/7D57, the pair it tries first, and the record has to
+     * be scrambled with that.  The dumped pair for these releases (0x68BB/0x1329) stays
+     * on record in the table; it is what the hardware holds, and it is what this should
+     * switch back to if service 5 is ever modelled well enough to tell the pairs apart. */
+    const uint16_t key  = hd_keys[rel].probe ? 0x7477 : hd_keys[rel].pass1;
     const int      swap = hd_keys[rel].swap;
 
     uint8_t rec[HD_RECORD];
@@ -2867,8 +2886,8 @@ pp_init(const device_t *info)
             snprintf(how, sizeof(how), "no parallel HASP part on the port%s",
                      (hd_opt < 0) ? " (Auto: this release does not use one)" : " (switched off)");
         else if (hd_keys[hd_rel < 0 ? 0 : hd_rel].probe)
-            snprintf(how, sizeof(how), "parallel HASP, record key 0000"
-                                       " (this release probes for its passwords and finds none)");
+            snprintf(how, sizeof(how), "parallel HASP, record key 7477"
+                                       " (this release probes, and takes the first pair)");
         else
             snprintf(how, sizeof(how), "parallel HASP, record key %04X",
                      hd_keys[hd_rel < 0 ? 0 : hd_rel].pass1);

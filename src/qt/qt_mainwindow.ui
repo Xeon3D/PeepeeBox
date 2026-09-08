@@ -97,6 +97,8 @@
     <addaction name="separator"/>
     <addaction name="actionSettings"/>
     <addaction name="actionTouchscreen"/>
+    <addaction name="actionModem"/>
+    <addaction name="actionFunlink"/>
     <addaction name="actionNetwork"/>
     <addaction name="actionCDROM_drive"/>
     <addaction name="actionFloppy_drive"/>
@@ -241,6 +243,8 @@
    <addaction name="separator"/>
    <addaction name="actionSettings"/>
    <addaction name="actionTouchscreen"/>
+   <addaction name="actionModem"/>
+   <addaction name="actionFunlink"/>
    <addaction name="actionNetwork"/>
    <addaction name="actionCDROM_drive"/>
    <addaction name="actionFloppy_drive"/>
@@ -492,6 +496,36 @@
    </property>
    <property name="toolTip">
     <string>Touchscreen</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionModem">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/modem.ico</normaloff>:/menuicons/qt/icons/modem.ico</iconset>
+   </property>
+   <property name="text">
+    <string>&amp;Modem…</string>
+   </property>
+   <property name="toolTip">
+    <string>Modem on COM4</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionFunlink">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/funlink.ico</normaloff>:/menuicons/qt/icons/funlink.ico</iconset>
+   </property>
+   <property name="text">
+    <string>fun.&amp;link…</string>
+   </property>
+   <property name="toolTip">
+    <string>fun.link on COM1</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>

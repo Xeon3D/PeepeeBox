@@ -29,6 +29,12 @@ extern "C" {
 #define PHOTOPLAY_TABLET_ELO  "elo_touchscreen"  /* Elo TouchSystems SmartSet       */
 #define PHOTOPLAY_TABLET_PORT 2                  /* COM3                            */
 #define PHOTOPLAY_DONGLE      "dongle_photoplay"
+#define PHOTOPLAY_MODEM_SUPRA "modem_supra"      /* Diamond SupraExpress 56e PRO */
+#define PHOTOPLAY_MODEM_ELSA  "modem_elsa"       /* ELSA MicroLink 56k           */
+#define PHOTOPLAY_MODEM_PORT  3                  /* COM4, 0x02E8               */
+#define PHOTOPLAY_MODEM_IRQ   10                 /* what the cabinet's NET.CFG says */
+#define PHOTOPLAY_FUNLINK     "funlink"          /* the fun.link adapter        */
+#define PHOTOPLAY_FUNLINK_PORT 0                 /* COM1, 0x03F8, IRQ 4         */
 
 #define PHOTOPLAY_DISK_IMAGE  "HardDisk.img"
 
@@ -59,6 +65,33 @@ extern void photoplay_set_fdd_enabled(int enabled);
 /* The IRQ the cabinet wires COM3 to: the PC-standard 4.  See photoplay.c.  Called
    from serial_init() when the standalone COM3 is created. */
 extern int photoplay_com3_irq(void);
+
+/* Which modem is fitted to COM4, by device internal name, and the IRQ that port
+   runs on.  The cabinets that were on fun.net had one of two parts there -- a
+   Diamond SupraExpress 56e PRO or an ELSA MicroLink 56k -- and the rest had
+   nothing, which is the default and what an empty string means.  Chosen from the
+   Tools menu, persisted in [Photo Play].  See photoplay.c for why the IRQ is 10
+   and not 3.
+
+   photoplay_modem_list() enumerates the parts the dialog offers, returning NULL
+   past the end; the list lives here rather than in the UI because "which parts
+   these cabinets had" is this file's question. */
+extern const char *photoplay_modem(void);
+extern void        photoplay_set_modem(const char *internal_name);
+extern const char *photoplay_modem_list(int index);
+extern int         photoplay_com4_irq(void);
+
+/* Whether the fun.link adapter is fitted.  fun.link joins cabinets together so
+   they can play each other, over a multi-drop serial bus on COM1 at 115200 --
+   not the parallel port, whatever the 25-pin plug on the box suggests.  See
+   docs/research/34-funlink.md.
+
+   A part that is fitted rather than a part that is: most cabinets never had one,
+   and the games only reach for it when the menu launches them with a non-zero
+   /IPX=.  Everything past "is it there" -- who hosts the bus, at what address --
+   belongs to the device's own options.  Persisted in [Photo Play]. */
+extern int  photoplay_funlink_enabled(void);
+extern void photoplay_set_funlink_enabled(int enabled);
 
 /* Which touchscreen is wired to the cabinet, by device internal name.  The
    machines shipped a 3M MicroTouch and that stays the default, but an Elo

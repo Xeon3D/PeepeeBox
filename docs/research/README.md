@@ -51,10 +51,19 @@ something; come here to find out why something was tried.
 | `30-oracle-wire-corrections.md` | **The keyed round, corrected against the binary and then against hardware.** The passthrough rig, the capture, and four retractions on the way |
 | `31-the-part-in-software.md` | **The picture cipher's keyed round, answered in software.** Every release's key fitted -- one of them with no dongle for its password pair in existence |
 | `32-the-part-is-never-asked.md` | **The session layer, modelled.** The measured identity signature, six address bits not eight, and 12,856 of 12,856 reads in a real boot |
+| `33-modem.md` | **The modem on COM4, named by the cabinet itself.** funworld's modem database is on the disk, and two of its rows are the parts these machines are found with -- an ELSA MicroLink 56k and a Diamond SupraExpress 56e PRO, each recognised by one substring of one `ATI` answer. 0x2E8 on IRQ 10, confirmed by two real cabinets' `NET.CFG` five years apart |
+| `34-funlink.md` | **fun.link is a serial bus, not a parallel one.** COM1 at 115200 8N1, DTR as the transmit enable, CSMA with random backoff and a `PHDR`/`PHND` frame -- and which images still carry the driver at all (1998/99 to I.G.O. 2 yes, I.G.O. 3 onward no) |
+| `34-funnet-licence.md` | **The fun.net licence number, and a generator for it.** `NL-893-VISS-461OFK`: three check letters over the other twelve, XOR by position and mod 26, with nothing of the machine in it -- reproduced exactly on a real registered cabinet's stored number, and byte-identical from 2001 to I.G.O. 6 |
+| `35-fn-tables.md` | **The fun.net database format.** One flat fixed-record format for all forty-odd `.TAB` tables, with the record size compiled into the binaries rather than stored in the file -- read out of seven of them, agreeing; `PLAYER` fully mapped, and joined to `LOGIN` by member id |
+| `35-funnet.md` | **What was on the other end of the call, and a server that stands in for it.** PPP, then WATTCP, then one FTP session -- the whole of fun.net. A Dutch 2001 MASTERS cabinet kept its account (`ftp.nl.funsys.com`, `pp` / `92tx45dt`), its tournament state, 2 MB of downloaded rankings, and a log of the **twenty-nine updates it was sent down the telephone between 2001 and 2002, games included** -- and it went on dialling the dead service until 2016. `tools/funnetd` is the stand-in; the script grammar and the `.upd` cipher are what remain |
 
-Two documents are both numbered `24`: `24-copycontrol.md` and
-`24-known-plaintext-corpus.md`, written for different releases on different
-branches. Left as they are, because both numbers are cited elsewhere.
+Some numbers are used twice, where documents were written in parallel and each
+number was already cited elsewhere by the time they met. Left as they are:
+
+- `24-copycontrol.md` and `24-known-plaintext-corpus.md`, for different releases
+  on different branches;
+- `34-funlink.md` and `34-funnet-licence.md`, and `35-fn-tables.md` and
+  `35-funnet.md` — two strands of fun.net work landing together.
 
 ## Sibling investigation
 

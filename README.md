@@ -57,9 +57,9 @@ dongles (`docs/research/20`), not from inference.
 | Photo Play 2.0 | Microcosm CopyControl (disk layout) | plain PCX | **runs** — games and photo games |
 | Photo Play 99 | funworld two-chip, parallel | encrypted, per-picture key | **runs** — games and photo games |
 | Photo Play 2000 | CDONGLE, parallel | encrypted, per-picture key | **runs** — games and photo games |
-| Photo Play 2001 / I.G.O. 1 | HASP4 `7477/7D57` | encrypted, dongle-computed | boots and plays; **pictures scramble** |
-| I.G.O. 2 (2002) | HASP4 `68BB/1329` | encrypted, dongle-computed | boots and plays; **pictures scramble** |
-| I.G.O. 3 (2003) | HASP4 `6B91/24A3` | encrypted, dongle-computed | **fails at boot** — needs the cipher to start |
+| Photo Play 2001 / I.G.O. 1 | HASP4 `7477/7D57` | encrypted, dongle-computed | boots and plays; key solved, **pictures not retested yet** |
+| I.G.O. 2 (2002) | HASP4 `68BB/1329` | encrypted, dongle-computed | **runs** — games and photo games |
+| I.G.O. 3 (2003) | HASP4 `6B91/24A3` | encrypted, dongle-computed | **fails at boot** — cipher solved, the check still refuses |
 | I.G.O. 4 (2004) | CDONGLE, parallel | plain GIF | **runs** — games and photo games |
 | I.G.O. 5 (2005) | HASP4 `6B91/24A3` | plain GIF | menu and photo games run; **menu buttons garbled** |
 | I.G.O. 6 (2006) | HASP4, probed | plain GIF | **runs** — games and photo games |
@@ -104,22 +104,40 @@ the probe always reaches that last branch and the descramble key is `0x0000`. Th
 device serves the key the guest will use, and keeps the dumped password on record
 (`docs/research/21`).
 
-**The picture cipher**, which is not.  2001 through I.G.O. 3 encrypt their photo
-archives with a cipher the dongle itself computes -- the library shifts a byte out
-and reads one bit back, forty times per eight bytes. funworld stopped encrypting
-pictures from I.G.O. 4 on, which is why the later generations need only the record.
-I.G.O. 3 is the worst case: it asks the dongle to encrypt 20 bytes before it will
-boot at all.
+**The picture cipher**, which used to be the wall and is now solved.  2001 through
+I.G.O. 3 encrypt their photo archives with a cipher the dongle itself computes --
+the library shifts a byte out and reads one bit back, forty times per eight bytes.
+PeepeeBox computes that round itself.  The keyed step is a small shift register
+whose only secret is 32 bits, and each generation's 32 bits were fitted from
+archives whose plaintext ships in *another* release -- I.G.O. 4 carries in the
+clear what I.G.O. 2 and 3 carry enciphered, and Photo Play 2000 does the same for
+2001 -- so no dongle was needed to recover any of them (`docs/research/31`).
+
+The check on that is I.G.O. 2's: its key was fitted from I.G.O. 4's plaintext
+alone, then run against all **46,036 rounds a real dongle answered** over a
+passed-through parallel port.  It agrees on every one.  I.G.O. 2 now plays FIND IT
+with its photographs decrypting, which is what that table row means.
+
+funworld stopped encrypting pictures from I.G.O. 4 on, which is why the later
+generations need only the record.
+
+I.G.O. 3 is still the worst case: it asks the dongle to encrypt 20 bytes before it
+will boot at all.  It now *asks* -- where before it never got that far -- and is
+refused.  The round itself is not the suspect, since that block comes out as
+`c:/foto/` under the fitted key; what is unverified is the session exchange around
+it, which has only ever been measured on a `68BB/1329` part while I.G.O. 3 is
+`6B91/24A3` (`docs/research/32`).
 
 What you *can* change
 ---------------------
 
-Five things, all under the **Tools** menu:
+Six things, all under the **Tools** menu:
 
 | Item | What it does |
 |---|---|
 | **Dongle…** | The version banner and territory the dongle reports, and whether the iButton is present. The banner must match `MAIN.SET["Version"]` for the image you are running. |
 | **Touchscreen…** | Which part is fitted — a 3M MicroTouch or an Elo SmartSet — and its port, IRQ and speed. The cabinets shipped a MicroTouch on COM3, IRQ 4, 9600 baud, and that is the default. Move it and touch stops working with nothing on screen saying so. |
+| **Modem…** | Which modem is fitted to COM4, at 0x2E8 on IRQ 10 — an ELSA MicroLink 56k or a Diamond SupraExpress 56e PRO, the two parts the fun.net cabinets are found with — and what its telephone line is attached to. None by default; the line is dead unless you point it at a TCP host. |
 | **Network…** | Network card selection, as upstream. The cabinets are offline, but adding a NIC is harmless. |
 | **CD-ROM drive** | Attaches a generic 52× ATAPI CD-ROM as secondary master. Off by default. |
 | **Floppy drive** | Attaches a 3.5" 1.44 MB drive as A:. Off by default. |
