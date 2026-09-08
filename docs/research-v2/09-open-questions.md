@@ -5,12 +5,27 @@ complement: the gaps, stated as gaps so nobody has to rediscover that they are g
 
 ## 9.1 I.G.O. 3 does not boot
 
-It now asks the keyed round with its own key `AB32E970` and stops at
-`error number 228.250.107, in module MENU, dongle error`. Asking and being refused is a
-narrower failure than never asking, but it is still a failure.
+Its transport is now right — see `05.6`. The device answers its queries from the key, and
+both 64-step sweeps complete cleanly with the measured reply. It still stops at
+`error number 228.250.107, in module MENU, dongle error`.
+
+**What raises that is known** (`05.7`): `p3 != 0` after service `0x3C`, HaspEncodeData.
+What is *not* known is what makes the library set `p3` non-zero. That library ships inside
+`MENU.EXE` at segment `0x3AE3` and writes status codes such as `0xFC19` and `0xFFF4`, so
+this is readable static work rather than a property of the part — it has simply not been
+read yet. **That is the next step, and it needs no hardware.**
 
 The round is not the suspect — `AB32E970` transforms I.G.O. 3's boot-check block to
-`c:/foto/`, which a wrong key does not do. What is unmeasured is everything around it:
+`c:/foto/`, which a wrong key does not do.
+
+One trail recorded so it is not followed twice: the gate at `0x20BB`, which folds 64 sweep
+bits into eight bytes and compares them against `DS:0x4C86`, is **not** this failure.
+`DS:0x4C86` is eight zero bytes and is written nowhere, so the check reads as "any folded
+byte is zero" — and serving a fold whose first byte is `00`, verified on the wire, changes
+nothing on screen. Four builds went into that before the error string was located, which
+took one search.
+
+Beyond the library, what is unmeasured is everything around the round:
 
 - **The session layer's sweep reply is a `68BB/1329` part's** (`05.3`). If those 64 bits
   depend on the password, this device is handing I.G.O. 3 another dongle's answer.

@@ -226,9 +226,14 @@ typedef struct {
     int      hs_ramping;        /* the ascending identity ramp is in progress */
     uint8_t  hs_ramp_prev;      /* ...and the last step of it answered */
     int      hs_sweep;          /* how far into the 64-step sweep */
+    uint8_t  hs_fold[8];        /* the sweep answers, folded the way 0x24FB does */
+    int      hs_fold_next;      /* ...and which step is expected next, to spot lost sync */
 
     /* The keyed round the picture cipher asks for -- see the section above t_query(). */
     uint32_t t_key;             /* this release's 32 key bits, 0 if it has none */
+    uint8_t  t_clk;             /* which line carries the query clock -- hd_keys[] */
+    uint8_t  t_hold_val;        /* the DATA value a held answer belongs to */
+    uint8_t  t_pre;             /* and, when that is bit 0, the preamble payload   */
     uint16_t t_init;            /* the register the preamble leaves behind */
     uint32_t t_cur;             /* and where it has got to inside the round */
     uint8_t  t_last;            /* the previous DATA byte, for the clock edges */
@@ -1485,18 +1490,26 @@ static const struct {
     int32_t     v7;    /* per-unit; no game is known to read it */
     uint32_t    tkey;  /* the picture cipher's key -- docs/research/31 */
     uint16_t    tinit; /* and the register its preamble leaves behind */
+    /* Which line the guest clocks an oracle query on, and what a round preamble
+       looks like.  I.G.O. 2 clocks on DATA bit 4 and preambles with any bit-0
+       rise; I.G.O. 3's library clocks on bit 0 instead and marks the preamble
+       with one specific payload.  Read out of I.G.O. 3's own MENU.EXE -- see
+       t_data() -- rather than guessed, and kept per release so that the
+       generation which already works cannot be disturbed by the other. */
+    uint8_t     tclk;  /* 0x10 = query on bit 4 (2001, I.G.O. 2), 0x01 = bit 0 */
+    uint8_t     tpre;  /* tclk 0x01 only: the payload that means "preamble" */
 } hd_keys[] = {
-    { "Version 2001",  0x7477, 0, 0, HD_R2001, 160678,     -35733698, 0xCF47CB42, 0x7DF },
-    { "Version 2002",  0x68BB, 0, 1, HD_RSION, 160678,   -371202944, 0x3B227944, 0x7DF }, /* I.G.O. 2 */
-    { "Version 2003",  0x6B91, 0, 1, HD_RSION, 160678,   -738037894, 0xAB32E970, 0x5DF }, /* I.G.O. 3 */
+    { "Version 2001",  0x7477, 0, 0, HD_R2001, 160678,     -35733698, 0xCF47CB42, 0x7DF, 0x10, 0 },
+    { "Version 2002",  0x68BB, 0, 1, HD_RSION, 160678,   -371202944, 0x3B227944, 0x7DF, 0x10, 0 }, /* I.G.O. 2 */
+    { "Version 2003",  0x6B91, 0, 1, HD_RSION, 160678,   -738037894, 0xAB32E970, 0x5DF, 0x01, 0x46 }, /* I.G.O. 3 */
     /* I.G.O. 5 shares I.G.O. 3's password pair, so it should share the key.  Its FINDIT
        is plain, so nothing here has been able to check that -- it is the pair talking,
        not a measurement. */
-    { "Version 2005",  0x6B91, 0, 1, HD_RVERS,      0,            0, 0xAB32E970, 0x5DF }, /* I.G.O. 5 */
+    { "Version 2005",  0x6B91, 0, 1, HD_RVERS,      0,            0, 0xAB32E970, 0x5DF, 0x10, 0 }, /* I.G.O. 5 */
     /* 2006 and later ship plain GIF: there is nothing for the round to decrypt, and a
        key would only be guessing at a part no game asks. */
-    { "Version 2006",  0x68BB, 1, 1, HD_RVERS,      0,            0,          0,     0 }, /* I.G.O. 6 */
-    { "Version 2007",  0x68BB, 0, 1, HD_RVERS,      0,            0,          0,     0 }, /* I.G.O. 7 */
+    { "Version 2006",  0x68BB, 1, 1, HD_RVERS,      0,            0,          0,     0, 0x10, 0 }, /* I.G.O. 6 */
+    { "Version 2007",  0x68BB, 0, 1, HD_RVERS,      0,            0,          0,     0, 0x10, 0 }, /* I.G.O. 7 */
     /* I.G.O. Italy reports NDONGLE rather than HDONGLE, which was read as meaning it is
        not on this path at all.  It is, and it is not even a special case: MENU.EXE
        0x3C322 is the same filler every other I.G.O. build uses, down to the format
@@ -1509,7 +1522,7 @@ static const struct {
        Its passwords are not literals either -- 0x3C252 is the same probe I.G.O. 6 runs,
        so the key is zero here too.  The 2008 pair is on record for when service 5 can
        tell the two apart. */
-    { "Version 08",    0x68BB, 1, 1, HD_RVERS,      0,            0,          0,     0 }  /* I.G.O. Italy */
+    { "Version 08",    0x68BB, 1, 1, HD_RVERS,      0,            0,          0,     0, 0x10, 0 }  /* I.G.O. Italy */
 };
 
 /* The row this banner belongs to, or -1 if no release in the table claims it.  That
@@ -1880,15 +1893,49 @@ static void
 t_data(pp_t *dev, uint8_t val)
 {
     const uint8_t rose = (uint8_t) (val & ~dev->t_last);
+    int           query;
+    int           preamble;
+
+    /* The held answer (see pp_read_status) lasts exactly as long as the DATA value that
+       produced it.  The transport repeats every write, so repeats of the same byte must
+       all read back the same bit -- but the moment the guest writes anything else, the
+       part has been clocked again and whatever it was holding is gone.
+       "Until the next bit-7-clear write" was too generous: the 64-step sweep is bit-7-set
+       too, so the hold survived into it and swallowed every sweep read. */
+    if (val != dev->t_hold_val)
+        dev->t_pending = 0;
 
     if (!(val & 0x80))
         goto out;                       /* the 1999/2000 halves keep bit 7 clear */
 
-    if (rose & 0x01) {
-        /* Any command byte means the preamble is running, and it runs once per round. */
+    if (dev->t_clk == 0x01) {
+        /* I.G.O. 3's library, read out of its own MENU.EXE rather than inferred.
+           0x19FC masks the payload with 0x7E and then writes it three times as
+           `V, V|1, V`, so the clock is DATA bit 0 and the payload is bits 1..6 --
+           the mirror of the arrangement below, where bit 4 clocks and bit 0 is
+           spare.  The part still only has 32 key bits, so bit 4 is carried on the
+           wire and not consulted; `i5` picks the same five bits either way.
+
+           The preamble is not "any bit-0 rise" here, because bit 0 IS the clock:
+           it is one specific payload, 0x46, which 0x1A8F clocks on its own before
+           every service call (wire C6, and that is exactly what the standalone
+           one- and three-step bursts in a trace are). */
+        const uint8_t pay = (uint8_t) (val & 0x7E);
+
+        preamble = (rose & 0x01) && (pay == dev->t_pre);
+        query    = (rose & 0x01) && (pay != dev->t_pre);
+    } else {
+        /* 2001 and I.G.O. 2.  Query payloads never move bit 0, and command bytes
+           never move bit 4, so neither is mistaken for the other. */
+        preamble = (rose & 0x01) != 0;
+        query    = !preamble && ((rose & 0x10) != 0);
+    }
+
+    if (preamble) {
+        /* The preamble runs once per round. */
         dev->t_cur     = dev->t_init;
         dev->t_pending = 0;
-    } else if (rose & 0x10) {
+    } else if (query) {
         const unsigned i5 = (unsigned) (((val >> 1) & 0x07) | ((val >> 2) & 0x18));
         const unsigned st = (dev->t_key >> i5) & 1;
         unsigned       b0 = i5 ^ ((st ^ 1) & (i5 >> 3)) ^ (i5 >> 4);
@@ -1905,7 +1952,8 @@ t_data(pp_t *dev, uint8_t val)
         dev->t_cur = (pre << 1) | (b0 & 1);
         dev->t_ans = (uint8_t) (((dev->t_cur >> 11) ^ st) & 1);
 
-        dev->t_pending = 1;
+        dev->t_pending  = 1;
+        dev->t_hold_val = val;
         if (dev->t_queries++ == 0)
             pp_log("PP: picture cipher -- answering the keyed round in software, "
                    "key %08X\n", dev->t_key);
@@ -1934,7 +1982,18 @@ pp_write_data(uint8_t val, void *priv)
     if (dev->hd_probe) {
         if (dev->t_key)
             t_data(dev, val);
-        hd_write_data(dev, val);
+        /* Three protocols share these wires and only one of them is Microwire.  On
+           I.G.O. 3 the session layer is driven with bit 7 SET, and its payloads move
+           bit 1 and bit 5 -- which this decoder reads as CS and SK, so it clocks the
+           sweep in as instruction bits, reaches HD_READ, and then owns the STATUS reads
+           that the sweep was supposed to answer.  Measured: the sweep matcher reported
+           "sync lost" on every burst because it never saw those reads at all.
+
+           Microwire traffic is bit-7-clear, so gating on that bit separates them
+           exactly, and the record read is untouched.  I.G.O. 2 keeps its session layer
+           bit-7-clear and is deliberately left alone. */
+        if ((dev->t_clk != 0x01) || !(val & 0x80))
+            hd_write_data(dev, val);
     }
     cd_write_data(dev, val);
     pp_ack_edge(dev, val);
@@ -1987,6 +2046,71 @@ pp_strobe(uint8_t old, uint8_t val, void *priv)
         pp_latch_nibble(dev);
 }
 
+/* What we answer step `n` of the 64-step sweep with.
+ *
+ * Normally the measured reply: HS_SWEEP_A is what a real 68BB/1329 part put on DO,
+ * identically on all six occurrences in the capture.
+ *
+ * PEEPEEBOX_SWEEP_ZERO exists to settle one question that reading I.G.O. 3's MENU.EXE
+ * could not.  Its gate at 0x20EA folds these 64 bits into eight bytes and passes if any
+ * one of them equals the corresponding byte of DS:0x4C86 -- which is eight zero bytes in
+ * the image and is written nowhere.  Taken at face value that means a part passes only
+ * if its reply contains a zero byte, which a measured reply (F5 7A 37 E7 8F 8F BD DA)
+ * does not, and which a pseudorandom reply would manage about three times in a hundred.
+ * That is not a plausible gate, so one of the readings is wrong.
+ *
+ * Setting this variable answers the first eight steps with 0, making the first folded
+ * byte 00 while leaving the rest measured, so the fold is neither all-zero nor all-ones.
+ * If I.G.O. 3 then boots, the gate really is "any byte equal" and the expected value
+ * really is zero.  If it does not, the fault is upstream of the compare and this whole
+ * reading needs revisiting.  Either outcome is worth one boot; neither is a fix, and it
+ * is off unless asked for. */
+static int
+hs_sweep_bit(pp_t *dev, int n)
+{
+    static int want = -1;
+    int        bit;
+
+    if (want < 0)
+        want = (getenv("PEEPEEBOX_SWEEP_ZERO") != NULL);
+
+    if (want && (dev->t_clk == 0x01) && (n < 8)) {
+        if (n == 0)
+            pp_log("PP: PEEPEEBOX_SWEEP_ZERO -- answering sweep steps 0..7 with 0 to test"
+                   " the 0x20EA gate.  This is an experiment, not a fix.\n");
+        bit = 0;
+    } else
+        bit = (int) ((HS_SWEEP_A >> (63 - n)) & 1u);
+
+    /* Record what the guest is actually being handed, in its own terms.
+     *
+     * I.G.O. 3's 0x24FB folds these bits into four words -- bit of step i into word
+     * i>>4, most significant first -- byte-swaps each word at 0x2621, and compares the
+     * eight bytes against DS:0x4C86.  Reproducing that fold here means the log shows the
+     * exact eight bytes the gate will see, so a reading of that gate can be checked
+     * without parsing a wire trace, and a sweep that loses sync shows up as a step index
+     * that does not advance by one. */
+    if (n != dev->hs_fold_next) {
+        if (dev->hs_fold_next != 0)
+            pp_log("PP: sweep answered step %d after step %d -- sync lost, so the eight"
+                   " bytes below are not what the guest folds\n", n, dev->hs_fold_next - 1);
+        memset(dev->hs_fold, 0, sizeof(dev->hs_fold));
+        dev->hs_fold_next = 0;
+    }
+    if (n < 64) {
+        dev->hs_fold[n >> 3] = (uint8_t) ((dev->hs_fold[n >> 3] << 1) | (bit & 1));
+        dev->hs_fold_next    = n + 1;
+        if (n == 63) {
+            pp_log("PP: 64-step sweep served, the eight bytes 0x24FB folds:"
+                   " %02X %02X %02X %02X %02X %02X %02X %02X\n",
+                   dev->hs_fold[0], dev->hs_fold[1], dev->hs_fold[2], dev->hs_fold[3],
+                   dev->hs_fold[4], dev->hs_fold[5], dev->hs_fold[6], dev->hs_fold[7]);
+            dev->hs_fold_next = 0;
+        }
+    }
+    return bit;
+}
+
 static uint8_t
 pp_read_status(void *priv)
 {
@@ -2011,7 +2135,21 @@ pp_read_status(void *priv)
            moment -- a query is three DATA writes and one STATUS read, with nothing else
            between them. */
         if (dev->t_pending) {
-            dev->t_pending = 0;
+            /* The answer is consumed by one read on I.G.O. 2, where a query is three
+               writes and one read with nothing between them.
+
+               I.G.O. 3's transport repeats every write four times, so a query is
+               followed by SEVERAL reads.  Clearing on the first one drops the rest
+               through to the session matcher below -- where they alias onto the sweep
+               table, because query payload F8 masks to 0x78 which is hs_sweep_w[0].
+               That is what produced "sync lost" on every burst: the sweep was never
+               involved, the queries were being answered as sweep step 0.
+
+               So hold the bit instead, which is what the part does anyway -- DO stays
+               driven until the next clock.  t_data() clears it on the next command
+               byte, query or bit-7-clear write. */
+            if (dev->t_clk != 0x01)
+                dev->t_pending = 0;
             st             = dev->t_ans ? HD_DO : 0x00;
             pp_raw(dev, "read_status", st);
             return st;
@@ -2063,6 +2201,14 @@ pp_read_status(void *priv)
            is all that is needed for the same answer to serve both. */
         const uint8_t w    = dev->last_data;
         const uint8_t addr = (uint8_t) ((w >> 1) & 0x3F);
+        /* The 64-step sweep is the same sixty-four payloads in every generation --
+           they are the output of the LCG `x = x*0x1989 + 5` seeded with 100, masked
+           0x7E, which is what I.G.O. 3's MENU.EXE computes at 0x24FB and what
+           hs_sweep_w[] was measured to be.  I.G.O. 2 puts them on the wire with bit 7
+           clear and I.G.O. 3 with bit 7 set, so the matcher has to ignore that bit --
+           but only for the releases that need it, so the generation that already works
+           cannot be disturbed.  For I.G.O. 2 sw == w and nothing changes. */
+        const uint8_t sw   = (dev->t_clk == 0x01) ? (uint8_t) (w & 0x7F) : w;
         int           bit;
 
         /* The library never reads STATUS in the middle of shifting an instruction --
@@ -2082,12 +2228,12 @@ pp_read_status(void *priv)
             dev->hs_ramp_prev = w;
             dev->hs_sweep     = 0;
             bit               = (int) ((HD_SIGNATURE >> addr) & 1u);
-        } else if ((dev->hs_sweep < 64) && (w == hs_sweep_w[dev->hs_sweep])) {
-            bit = (int) ((HS_SWEEP_A >> (63 - dev->hs_sweep)) & 1u);
+        } else if ((dev->hs_sweep < 64) && (sw == hs_sweep_w[dev->hs_sweep])) {
+            bit = hs_sweep_bit(dev, dev->hs_sweep);
             dev->hs_sweep++;
             dev->hs_ramping = 0;
-        } else if (w == hs_sweep_w[0]) {
-            bit             = (int) ((HS_SWEEP_A >> 63) & 1u);
+        } else if (sw == hs_sweep_w[0]) {
+            bit             = hs_sweep_bit(dev, 0);
             dev->hs_sweep   = 1;
             dev->hs_ramping = 0;
         } else if (w == 0x1E) {
@@ -2662,9 +2808,14 @@ pp_init(const device_t *info)
         dev->t_key  = hd_keys[trel].tkey;
         dev->t_init = hd_keys[trel].tinit;
         dev->t_cur  = dev->t_init;
+        dev->t_clk  = hd_keys[trel].tclk ? hd_keys[trel].tclk : 0x10;
+        dev->t_pre  = hd_keys[trel].tpre;
         if (dev->t_key)
-            pp_log("PP: picture cipher key %08X, register %03X (%s)\n",
-                   dev->t_key, dev->t_init, hd_keys[trel].banner);
+            pp_log("PP: picture cipher key %08X, register %03X (%s), query clock"
+                   " DATA bit %d%s\n",
+                   dev->t_key, dev->t_init, hd_keys[trel].banner,
+                   (dev->t_clk == 0x01) ? 0 : 4,
+                   (dev->t_clk == 0x01) ? ", preamble payload 46" : "");
         else
             pp_log("PP: no picture cipher on this release -- its pictures are plain\n");
     }

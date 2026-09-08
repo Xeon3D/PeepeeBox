@@ -244,6 +244,115 @@ static void finish(void)
 #define LST_MAGIC 0x50414344u      /* 'DCAP' */
 #define OUT_MAGIC 0x54554F44u      /* 'DOUT' */
 
+/* ------------------------------------------------------------------------------------
+ * Getting I/O privilege on XP, and saying exactly why when it fails.
+ *
+ * The first cut called NtSetInformationProcess(ProcessUserModeIOPL) once, with a NULL
+ * buffer, and printed "Run as Administrator" for every possible failure.  On a real XP
+ * machine that message was wrong in the way that matters: it named the one cause the
+ * operator had already ruled out and hid the NTSTATUS that would have said which cause it
+ * actually was.
+ *
+ * Three things can fail here and they need different answers:
+ *
+ *   1. 64-bit Windows.  ProcessUserModeIOPL does not exist on x64 -- there is no fix,
+ *      the program has to run on 32-bit.  Detected up front via IsWow64Process.
+ *   2. No SeTcbPrivilege.  This is the likely one, and it is NOT the same as "not
+ *      Administrator": on XP an Administrator does not hold "Act as part of the operating
+ *      system" by default, and this call wants it.  So enable it first rather than
+ *      assuming an admin token already carries it.
+ *   3. The call form.  Published examples disagree over whether the information buffer
+ *      may be NULL; try both rather than pick a side.
+ *
+ * ADVAPI32 is resolved at run time, not linked, so the import table stays KERNEL32-only
+ * and the binary keeps working where the privilege dance is unnecessary.
+ * ---------------------------------------------------------------------------------- */
+typedef BOOL (WINAPI *PFN_ISWOW64)(HANDLE, PBOOL);
+typedef BOOL (WINAPI *PFN_OPT)(HANDLE, DWORD, PHANDLE);
+typedef BOOL (WINAPI *PFN_LPV)(LPCSTR, LPCSTR, PLUID);
+typedef BOOL (WINAPI *PFN_ATP)(HANDLE, BOOL, PTOKEN_PRIVILEGES, DWORD,
+                               PTOKEN_PRIVILEGES, PDWORD);
+
+/* Try to enable SeTcbPrivilege.  Returns 1 if it is enabled afterwards, 0 if not --
+   and 0 is not fatal on its own, because some builds grant the IOPL call anyway. */
+static int
+enable_tcb(void)
+{
+    HMODULE adv = LoadLibraryA("advapi32.dll");
+    PFN_OPT open_tok;
+    PFN_LPV lookup;
+    PFN_ATP adjust;
+    HANDLE  tok = NULL;
+    TOKEN_PRIVILEGES tp;
+
+    if (!adv)
+        return 0;
+    open_tok = (PFN_OPT) GetProcAddress(adv, "OpenProcessToken");
+    lookup   = (PFN_LPV) GetProcAddress(adv, "LookupPrivilegeValueA");
+    adjust   = (PFN_ATP) GetProcAddress(adv, "AdjustTokenPrivileges");
+    if (!open_tok || !lookup || !adjust)
+        return 0;
+
+    if (!open_tok(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &tok))
+        return 0;
+
+    tp.PrivilegeCount = 1;
+    tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+    if (!lookup(NULL, "SeTcbPrivilege", &tp.Privileges[0].Luid)) {
+        CloseHandle(tok);
+        return 0;
+    }
+    adjust(tok, FALSE, &tp, sizeof(tp), NULL, NULL);
+    /* AdjustTokenPrivileges reports success even when it changed nothing, so the
+       last error is what says whether the privilege was actually there to enable. */
+    {
+        DWORD err = GetLastError();
+        CloseHandle(tok);
+        return err == ERROR_SUCCESS;
+    }
+}
+
+static int
+get_iopl(PFN_NTSIP set)
+{
+    HMODULE     k32  = GetModuleHandleA("kernel32.dll");
+    PFN_ISWOW64 wow  = k32 ? (PFN_ISWOW64) GetProcAddress(k32, "IsWow64Process") : NULL;
+    BOOL        is64 = FALSE;
+    ULONG       dummy = 0;
+    LONG        st1, st2;
+    int         tcb;
+
+    if (wow && wow(GetCurrentProcess(), &is64) && is64) {
+        say("This is 64-bit Windows.  ProcessUserModeIOPL does not exist there, so\r\n"
+            "no user-mode program can reach the port: run this on 32-bit Windows XP.\r\n");
+        return 0;
+    }
+
+    tcb = enable_tcb();
+
+    st1 = set(GetCurrentProcess(), 16, NULL, 0);
+    if (st1 >= 0)
+        return 1;
+    st2 = set(GetCurrentProcess(), 16, &dummy, sizeof(dummy));
+    if (st2 >= 0)
+        return 1;
+
+    say("Could not get I/O privilege.\r\n");
+    say("  NtSetInformationProcess(ProcessUserModeIOPL) returned ");
+    sayhex((unsigned int) st1, 8);
+    say(" and ");
+    sayhex((unsigned int) st2, 8);
+    say("\r\n  SeTcbPrivilege: ");
+    say(tcb ? "enabled\r\n" : "NOT held by this account\r\n");
+    say("\r\nC0000061 is STATUS_PRIVILEGE_NOT_HELD -- the account needs \"Act as part\r\n"
+        "of the operating system\" (secpol.msc -> Local Policies -> User Rights), and\r\n"
+        "a log off and back on for it to take.  Being an Administrator is not enough\r\n"
+        "on its own.\r\n"
+        "\r\nIf that cannot be arranged, use the DOS build instead: it runs in real mode\r\n"
+        "and needs no privilege at all.\r\n");
+    return 0;
+}
+
 void __stdcall start(void)
 {
     HMODULE ntm;
@@ -284,9 +393,7 @@ void __stdcall start(void)
 
     ntm = LoadLibraryA("ntdll.dll");
     set = ntm ? (PFN_NTSIP) GetProcAddress(ntm, "NtSetInformationProcess") : NULL;
-    if (!set || set(GetCurrentProcess(), 16, NULL, 0) < 0) {
-        say("Could not get I/O privilege.\r\n"
-            "Run as Administrator on 32-bit Windows XP.\r\n");
+    if (!set || !get_iopl(set)) {
         finish();
         ExitProcess(1);
     }

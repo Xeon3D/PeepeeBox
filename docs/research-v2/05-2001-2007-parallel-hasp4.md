@@ -123,17 +123,37 @@ synthesised `0x1C` rule reproduces 2,880 of 6,144 reads (chance); the measured
 signature reproduces **6,144 of 6,144**. The measured identity and the 64-word geometry
 of `5.2` belong together — one without the other garbles the banner.
 
-**The 64-step sweep** — 6 occurrences. The library writes a fixed 64-byte sequence and
-reads one bit back each time. The written bytes are identical on all six occurrences and
-so is the reply:
+**The 64-step sweep** — 6 occurrences. The library writes a 64-byte sequence and reads one
+bit back each time. The written bytes are identical on all six occurrences and so is the
+reply:
 
 ```
 reply bits, MSB first:  F5 7A 37 E7 8F 8F BD DA
 ```
 
-The written sequence is in `hs_sweep_w[]` in `src/device/dongle_photoplay.c`. Some tools
-call these bits "read and discarded"; that is true of the tool and evidently not of the
-game.
+**The sequence is not a table funworld chose — it is generated**, and knowing that is what
+lets it be recognised in a generation whose capture we do not have. I.G.O. 3's `MENU.EXE`
+computes it at `0x24FB`:
+
+```c
+x = 100;                                   /* the seed, a literal in the code */
+for (i = 0; i < 64; i++) {
+    x = (x * 0x1989 + 5) & 0xFFFF;         /* a 16-bit LCG */
+    payload = (x >> 8) & 0x7E;             /* the high byte, masked to bits 1..6 */
+}
+```
+
+Its output is byte-identical to `hs_sweep_w[]` in `src/device/dongle_photoplay.c`, which
+was measured off a real I.G.O. 2 part — all 64 values. So **I.G.O. 2 and I.G.O. 3 ask the
+same 64 questions**, and any generation's build can be checked for the same LCG rather
+than needing its sweep measured from scratch.
+
+The two generations differ only in how they put those payloads on the wire: I.G.O. 2 sends
+them with bit 7 clear, I.G.O. 3 with bit 7 set (see `5.6`). A matcher that compares the
+raw byte therefore fires on one and not the other.
+
+Some tools call these bits "read and discarded"; that is true of the tool and evidently
+not of the game.
 
 **The liveness probe** — 59 occurrences in one boot. The library writes `1E`, then `1C`,
 and the part answers **1** then **0**. Address 15 really is clear in the measured
@@ -255,4 +275,58 @@ like the others, and FINDIT and AMORE give the same key independently.
 chain end to end, from a key fitted with no dongle in the room.
 
 **I.G.O. 3 (DE)** now *asks* the round with its own key and still stops at
-`error number 228.250.107, in module MENU, dongle error`. See `09`.
+`error number 228.250.107, in module MENU, dongle error` -- see `5.7` for what
+raises that, and `09` for what is still unknown about it.
+
+## 5.6 I.G.O. 3 puts the same three layers on different lines
+
+Everything above is I.G.O. 2's arrangement. I.G.O. 3 runs the same three protocols with
+two of them moved, which is why a device built for I.G.O. 2 hears almost nothing from it.
+All of this is read out of I.G.O. 3's own `MENU.EXE`, not inferred from traffic:
+
+| | I.G.O. 2 | I.G.O. 3 |
+|---|---|---|
+| oracle query clock | DATA bit 4 | **DATA bit 0** (`0x19FC` masks the payload with `0x7E` and writes `V, V\|1, V`) |
+| oracle round preamble | any bit-0 rise, bit 7 set | **payload `0x46`** (wire `C6`), clocked alone by `0x1A8F` before each service call |
+| session layer | bit 7 **clear** | bit 7 **set** |
+| Microwire | bit 7 clear | bit 7 clear, unchanged |
+
+Three consequences for anything emulating this part, each of which cost a build to find:
+
+1. **The sweep matcher must ignore bit 7** on I.G.O. 3, or it never matches.
+2. **Bit-7-set writes must not reach the Microwire decoder** on I.G.O. 3. Its session
+   payloads move bit 1 and bit 5, which that decoder reads as CS and SK, so it parses the
+   sweep as an instruction and then owns the STATUS reads the sweep was meant to answer.
+3. **A query answer must be held for repeated writes of the same DATA value.** I.G.O. 3's
+   transport repeats every write four times, so one query is followed by several reads;
+   consuming the answer on the first drops the rest through to the session matcher, where
+   query payload `F8` aliases onto `hs_sweep_w[0]` (`0x78`). Hold it until the DATA value
+   changes, which is what the part does anyway — DO stays driven until the next clock.
+
+## 5.7 What raises `dongle error` on I.G.O. 3
+
+Not any of the session gates. The string is at `DS:0x5129` and has three identical call
+sites, all of this shape:
+
+```
+push &p1..&p4
+pushd 0x24A36B91        ; pass2:pass1 = 24A3:6B91
+push [0x7E01]           ; port
+push [bp-0xa]           ; seed
+push 0x3C               ; service 3C, HaspEncodeData
+lcall 0x3AE3:000B       ; the HASP library, inside MENU.EXE
+cmp  word [bp-6],0      ; p3 -- the library's status word
+je   ok
+push 0x5129             ; "dongle error"
+```
+
+So the condition is **`p3 != 0` after HaspEncodeData**, which is what `docs/research/20`
+§ 3 said all along. `p3` is set by the library, and the library ships in the same binary at
+segment `0x3AE3`, writing status codes such as `0xFC19` and `0xFFF4` — so what makes it
+non-zero is readable code rather than a property of the part.
+
+A gate at `0x20BB` — 64 folded bits compared against `DS:0x4C86` — was investigated at
+length and is **not** this failure. It is a real check, it passes and fails on its own
+terms, and forcing it to pass changes nothing on screen. Recorded here so nobody follows
+that trail twice.
+

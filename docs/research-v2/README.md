@@ -50,6 +50,8 @@ Nothing else is stated. Where a thing is not known, `09` says so.
 | a real dongle's whole boot, on the wire | `docs/research/evidence/igo2-dongle-wire-2026-09-06.log.gz` |
 | the software HASP4 part, and its verifier | `tools/dongcap/softpart.py` |
 | capture and replay tooling | `tools/dongcap/` |
+| what a guest's wire framing actually is | `tools/dongcap/framing.py` — reads a `PEEPEEBOX_LPT_TRACE` log and finds the clock line, the payload set, the round length and the Microwire pins, rather than assuming them |
+| a part's session layer, from DOS | `tools/dongcap/mksession_dos.py` builds `SESSION.COM`: 194 fixed questions, eight bytes out, runs on any dongle and needs no privilege |
 | archive/FAT16 readers, cracked FIND IT keys | `docs/research/evidence/` |
 
 Disk images are not in the repository. They live in `F:\HDDImages\<release>\`, and an
