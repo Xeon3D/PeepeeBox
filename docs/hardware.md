@@ -88,8 +88,21 @@ LINK ERROR: No serial-port found !!!!. Please check mainboard COM-settings
 LINK ERROR: Unable to send on BUS. Please check LINK-adaptor and LINK-cable
 ```
 
-It is a multi-drop serial bus, and every release that carries the driver opens
-it the same way.
+It is a multi-drop serial bus on **COM A**, and funworld's service manual lists
+the cabinet's four serial ports:
+
+| port | address | IRQ | connector | what is on it |
+|---|---|---|---|---|
+| COM A | `3F8` | 4 | **25-pin** | **fun.link** |
+| COM B | `2F8` | 3 | 9-pin | Data Print |
+| COM C | `3E8` | 3 | 9-pin | SMT3, the serial touchscreen controller |
+| COM D | `2E8` | 10 | 9-pin | modem (Photo Play MASTERS) |
+
+So the 25-pin D-sub on the adapter is COM A's, not the I/O card's. Note COM C:
+a cabinet with fun.link fitted has its touchscreen on **IRQ 3**, because the link
+driver takes IRQ 4 for itself. PeepeeBox follows that automatically.
+
+Every release that carries the driver opens the port the same way.
 
 | | |
 |---|---|

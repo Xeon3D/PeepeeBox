@@ -12,12 +12,29 @@ LINK ERROR: Unable to send on BUS. Please check LINK-adaptor and LINK-cable
 
 Two strings, one library, present in every release from 1998/99 to I.G.O. 2.
 The link is a **multi-drop half-duplex bus on COM1 at 115200 baud**, arbitrated
-in software, with the modem-control DTR line used as the transmit enable. The
-25-pin funworld I/O connector the adapter plugs into is carrying a UART, not a
-printer port.
+in software, with the modem-control DTR line used as the transmit enable.
 
-Everything below was read out of the shipped binaries. Nothing here has been
-tested against a real fun.link box or a second cabinet.
+funworld's own service manual settles the wiring, and names the adapter:
+
+| port | address | IRQ | connector | what is on it |
+|---|---|---|---|---|
+| COM A | `3F8` | 4 | **25-pin** | **fun.link** |
+| COM B | `2F8` | 3 | 9-pin | Data Print |
+| COM C | `3E8` | 3 | 9-pin | SMT3, the serial touchscreen controller |
+| COM D | `2E8` | 10 | 9-pin | modem (Photo Play MASTERS) |
+
+So the 25-pin D-sub on the box is **COM A's**, not the I/O card's -- which is why
+a female DB25 mates with it. The same manual's fault-finding page for "screen OK,
+touchscreen does not work" says to check the jumpers on the touchscreen
+controller: `Address: A1, A4, A5`, `Interrupt: I4 / fun.link I3`. A cabinet with
+an adapter fitted moves its touchscreen to **IRQ 3**, because the link driver
+takes IRQ 4 and does not give it back -- see section 3. IRQ 3 is free on these
+machines; it was only taken when an ISA MicroTouch bus card stood in for the SMT3
+serial controller. The BIOS screen agrees: onboard Serial Port 3 is *Disabled*,
+because the SMT3 card provides `3E8` itself.
+
+The protocol below was read out of the shipped binaries. The wiring above is from
+the manual; what has not been done is a capture from a real adapter.
 
 ## 1. What the product was
 

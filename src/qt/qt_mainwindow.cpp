@@ -1330,7 +1330,8 @@ pp_touchscreen_dialog(QWidget *parent)
        IRQ 4's vector and does not chain, so a cabinet running both cannot have
        the touchscreen there too.  funworld's own calibration offers these four. */
     auto      *irq     = new QComboBox();
-    const int  cur_irq = photoplay_com3_irq();
+    const int  cur_irq = photoplay_com3_irq_setting();
+    irq->addItem(QObject::tr("Automatic (%1)").arg(photoplay_com3_irq()), 0);
     for (const int cand : { 3, 4, 10, 12 }) {
         irq->addItem(QString::number(cand), cand);
         if (cand == cur_irq)
@@ -1345,10 +1346,10 @@ pp_touchscreen_dialog(QWidget *parent)
         "The cabinets wired their touchscreen to COM3. A different port, or a "
         "controller the game does not expect, stops touch working with no error "
         "on screen."
-        "\n\nThe interrupt is 4 unless fun.link is fitted. The link driver takes "
-        "IRQ 4 for itself and does not hand it back, so with an adapter fitted the "
-        "touchscreen has to be somewhere else \u2014 and the guest has to agree, or "
-        "moving it here only changes which way touch fails."
+        "\n\nThe interrupt is 4, and 3 when fun.link is fitted. That is what "
+        "the cabinets did: the link driver takes IRQ 4 for itself and does not hand "
+        "it back, and funworld's service manual jumpers the touchscreen controller "
+        "to I3 on a machine with an adapter. Automatic follows that."
         "\n\nChanging any of this restarts the machine."));
     note->setWordWrap(true);
     form->addRow(note);

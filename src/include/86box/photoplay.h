@@ -62,13 +62,14 @@ extern void photoplay_set_cdrom_enabled(int enabled);
 extern int  photoplay_fdd_enabled(void);
 extern void photoplay_set_fdd_enabled(int enabled);
 
-/* The IRQ the cabinet wires COM3 -- the touchscreen -- to.  The PC-standard 4 by
-   default, which is what the rigs here were measured on, but a setting rather
-   than a constant: funworld's own calibration paths offer 3, 4, 10 and 12, and a
-   cabinet with fun.link fitted cannot have been on 4, because the link driver
-   takes that vector and does not give it back.  See photoplay.c.  Called from
-   serial_init() when the standalone COM3 is created. */
+/* The IRQ the cabinet wires COM3 -- the touchscreen -- to.  4 normally, and 3 when
+   fun.link is fitted, because the link driver takes IRQ 4's vector and does not
+   give it back; funworld's service manual jumpers the controller to I3 on a
+   cabinet with an adapter.  photoplay_com3_irq() is the effective value and
+   _setting() the stored choice, where 0 means automatic.  See photoplay.c.
+   Called from serial_init() when the standalone COM3 is created. */
 extern int  photoplay_com3_irq(void);
+extern int  photoplay_com3_irq_setting(void);
 extern void photoplay_set_com3_irq(int irq);
 
 /* Which modem is fitted to COM4, by device internal name, and the IRQ that port

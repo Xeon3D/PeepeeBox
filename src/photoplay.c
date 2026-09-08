@@ -12,7 +12,7 @@
  *
  *             Photo Play / I.G.O.:
  *                 Zida Tomato 4DPS (SiS 496), Intel iDX4 at 100 MHz, 16 MB
- *                 3M MicroTouch TouchPen on COM3, IRQ 4
+ *                 3M MicroTouch TouchPen on COM3, IRQ 4 (IRQ 3 with fun.link)
  *                 the Photo Play protection dongle on LPT1
  *                 Cirrus Logic CL-GD5480, ESS ES1688 AudioDrive, and one IDE
  *                 disk -- HardDisk.img, next to the executable.
@@ -674,11 +674,26 @@ photoplay_com3_irq(void)
        would have moved it.  So this is a setting, defaulting to what the rigs
        here were measured on.
 
-       Changing it only helps if the guest agrees -- its own driver installs on
-       whatever interrupt it believes COM3 is on.  That is why the default does
-       not move on its own when fun.link is fitted: guessing for the guest would
-       trade one silent failure for another. */
-    const int irq = config_get_int(PHOTOPLAY_SECTION, "touch_irq", COM3_IRQ);
+       Which one it moves to is not a guess.  funworld's service manual lists the
+       cabinet's four serial ports as
+
+           COM A  3F8 / IRQ4   25-pin   fun.link
+           COM B  2F8 / IRQ3    9-pin   Data Print
+           COM C  3E8 / IRQ3    9-pin   SMT3 serial touchscreen controller
+           COM D  2E8 / IRQ10   9-pin   modem
+
+       and the fault-finding page for "screen OK, touchscreen does not work" says
+       to check the jumpers on the controller: `Address: A1, A4, A5` and
+       `Interrupt: I4 / fun.link I3`.  So a cabinet with an adapter fitted has its
+       touchscreen jumpered to 3, and that is what automatic does here.  IRQ 3 is
+       free on these machines -- it was only taken when an ISA MicroTouch bus card
+       stood in for the SMT3 serial controller.
+
+       0 means automatic.  An explicit value still wins, because the guest has to
+       agree: its own driver installs on whatever interrupt it believes COM3 is
+       on, and if that turns out to be fixed, this is the knob that says so. */
+    const int set = config_get_int(PHOTOPLAY_SECTION, "touch_irq", 0);
+    const int irq = set ? set : (photoplay_funlink_enabled() ? 3 : COM3_IRQ);
 
     switch (irq) {
         case 3:
@@ -689,6 +704,14 @@ photoplay_com3_irq(void)
         default:
             return COM3_IRQ;
     }
+    /* NOTREACHED */
+}
+
+/* The stored choice rather than the effective one: 0 means automatic. */
+int
+photoplay_com3_irq_setting(void)
+{
+    return config_get_int(PHOTOPLAY_SECTION, "touch_irq", 0);
 }
 
 void
