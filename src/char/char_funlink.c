@@ -75,6 +75,7 @@
 #include <86box/ini.h>
 #include <86box/char.h>
 #include <86box/log.h>
+#include <86box/path.h>
 #include <86box/plat.h>
 #include <86box/plat_netsocket.h>
 #include <86box/plat_unused.h>
@@ -176,7 +177,38 @@ typedef struct {
 
     funlink_ow_t ow;
     int          station; /* 0 = work it out from who hosts the bus */
+
+    /* An optional trace of the wire, for working out where a linked game stalls.
+       The cabinets talk to each other and not to us, so when something goes wrong
+       between them this is the only place to see it. */
+    FILE    *cap;
+    uint32_t cap_bytes;
 } char_funlink_t;
+
+#define FUNLINK_CAP_MAX (8u * 1024u * 1024u) /* stop before it eats the disk */
+
+static void
+funlink_cap(char_funlink_t *dev, const char *what, const uint8_t *buf, int len)
+{
+    if ((dev->cap == NULL) || (dev->cap_bytes > FUNLINK_CAP_MAX))
+        return;
+
+    fprintf(dev->cap, "%9u %-3s %4d ", plat_get_ticks(), what, len);
+    for (int i = 0; i < len; i++)
+        fprintf(dev->cap, "%02X", buf[i]);
+    fputc('\n', dev->cap);
+    fflush(dev->cap);
+    dev->cap_bytes += (uint32_t) (len * 2 + 20);
+}
+
+static void
+funlink_cap_note(char_funlink_t *dev, const char *note)
+{
+    if (dev->cap == NULL)
+        return;
+    fprintf(dev->cap, "%9u ---  %s\n", plat_get_ticks(), note);
+    fflush(dev->cap);
+}
 
 /* ------------------------------------------- the token: a DS1982 on the bus
  *
@@ -307,6 +339,7 @@ funlink_ow_on_byte(char_funlink_t *dev, uint8_t val)
                 ow->state = FUNLINK_OW_DONE;
                 /* Rare and worth having in an ordinary log: this is the moment
                    the cabinet learns it has an adapter, and its number. */
+                funlink_cap_note(dev, "guest read the token (READ ROM)");
                 pclog("fun.link: the cabinet read the adapter's token, station %u\n",
                       (unsigned) (ow->rom[1] | (ow->rom[2] << 8) |
                                   (ow->rom[3] << 16) | (ow->rom[4] << 24)));
@@ -510,8 +543,11 @@ funlink_flush_tx(char_funlink_t *dev)
        like a peer dying; with no bus at all there is nobody to hear.  Either way
        the cabinet is talking into an unterminated wire, which is exactly what a
        real one does with no cable in the adapter. */
-    if ((dev->state == FUNLINK_ST_CLIENT) || (dev->state == FUNLINK_ST_LISTENING))
+    if ((dev->state == FUNLINK_ST_CLIENT) || (dev->state == FUNLINK_ST_LISTENING)) {
+        funlink_cap(dev, "TX", dev->tx, (int) dev->tx_len);
         funlink_send_to_peers(dev, dev->tx, (int) dev->tx_len, (SOCKET) -1);
+    } else
+        funlink_cap(dev, "TX?", dev->tx, (int) dev->tx_len); /* nowhere to go */
 
     dev->tx_len = 0;
 }
@@ -632,6 +668,7 @@ funlink_poll(char_funlink_t *dev)
 
         ret = plat_netsocket_receive(dev->peer[i], buf, (unsigned int) sizeof(buf), &wouldblock);
         if (ret > 0) {
+            funlink_cap(dev, "RX", buf, ret);
             funlink_rx_push(dev, buf, ret);
             if (dev->state == FUNLINK_ST_LISTENING)
                 funlink_send_to_peers(dev, buf, ret, dev->peer[i]);
@@ -727,6 +764,11 @@ funlink_close(void *priv)
 {
     char_funlink_t *dev = (char_funlink_t *) priv;
 
+    if (dev->cap != NULL) {
+        funlink_cap_note(dev, "capture end");
+        fclose(dev->cap);
+        dev->cap = NULL;
+    }
     funlink_close_all(dev);
     log_close(dev->log);
     free(dev);
@@ -746,6 +788,17 @@ funlink_init(UNUSED(const device_t *info))
     dev->host_port = device_get_config_int("host_port");
     dev->echo      = device_get_config_int("echo");
     dev->station   = device_get_config_int("station");
+
+    if (device_get_config_int("capture")) {
+        char fn[1024];
+
+        path_append_filename(fn, exe_path, "funlink-capture.txt");
+        dev->cap = fopen(fn, "w");
+        if (dev->cap != NULL) {
+            pclog("fun.link: tracing the wire to %s\n", fn);
+            funlink_cap_note(dev, "capture start");
+        }
+    }
 
     funlink_crc8_init();
     funlink_ow_load(dev);
@@ -853,6 +906,24 @@ static const device_config_t funlink_config[] = {
             .max = 255
         },
         .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        /* For working out where a linked game stalls.  The cabinets talk to each
+           other and not to us, so when something goes wrong between them the wire
+           is the only place it shows. */
+        .name           = "capture",
+        .description    = "Write a trace of the bus to funlink-capture.txt",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "No",  .value = 0 },
+            { .description = "Yes", .value = 1 },
+            { .description = ""                }
+        },
         .bios           = { { 0 } }
     },
     {
