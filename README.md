@@ -30,20 +30,20 @@ Released under the GNU General Public License version 2 or later, the same as
 Running it
 ----------
 
+Unpack the download, then drop your `HardDisk.img` into that folder — the one
+holding `PeepeeBox.exe`, alongside the `roms` and `nvr` folders that came with
+it. Do not move the executable out to sit next to an image somewhere else; it
+needs the whole folder:
+
 ```
 PeepeeBox.exe
+roms\
+nvr\
+HardDisk.img      <- yours, dropped in here
 ```
 
-Put `PeepeeBox.exe` in a folder with your `HardDisk.img` and run it. There is no
-machine to pick, no disk to mount and no first-run wizard — it loads the image
-sitting next to it and boots.
-
-To keep a log of the protection exchange, which is the quickest way to see
-whether both tokens answered:
-
-```
-PeepeeBox.exe -P . -L 86box.log
-```
+Now run `PeepeeBox.exe`. There is no machine to pick, no disk to mount and no
+first-run wizard — it loads the image sitting next to it and boots.
 
 Which releases run
 ------------------
@@ -192,7 +192,9 @@ ninja -C build
 ```
 
 The build produces `build/src/PeepeeBox.exe`. The two ROM images it needs are
-already in `roms/`.
+already in `roms/`, and `nvr/` holds a settled CMOS -- copy both in beside the
+executable, or the 4DPS BIOS comes up with no drive configured and stops on a
+hard disk error.
 
 Relationship to upstream
 ------------------------

@@ -7,8 +7,9 @@
 #
 #   * preset `regular` (Release, DEV_BRANCH off) rather than the debug/dev presets
 #     CI uses, because this is what people actually run;
-#   * roms/ is staged alongside the binary so the download is runnable as-is --
-#     PeepeeBox needs exactly two ROM images and they live in this repository;
+#   * roms/ and nvr/ are staged alongside the binary so the download is runnable
+#     as-is -- PeepeeBox needs exactly two ROM images, and a blank CMOS stops the
+#     4DPS BIOS on a hard disk error, so both live in this repository;
 #   * macOS builds arm64 with NEW_DYNAREC on, because the CI matrix excludes the
 #     old dynarec on arm64.
 #
@@ -38,6 +39,7 @@ on:
       - src/**
       - cmake/**
       - roms/**
+      - nvr/**
       - "**/CMakeLists.txt"
       - CMakePresets.json
       - .github/workflows/release.yml
@@ -130,6 +132,7 @@ jobs:
           mkdir -p dist/PeepeeBox
           cp -r build/artifacts/* dist/PeepeeBox/
           cp -r roms dist/PeepeeBox/
+          cp -r nvr dist/PeepeeBox/
           cp README.md dist/PeepeeBox/
 
       - name: Archive
@@ -190,6 +193,7 @@ jobs:
           mkdir -p dist/PeepeeBox
           cp -r build/artifacts/* dist/PeepeeBox/
           cp -r roms dist/PeepeeBox/
+          cp -r nvr dist/PeepeeBox/
           cp README.md dist/PeepeeBox/
           cd dist && zip -r ../PeepeeBox-linux-x86_64.zip PeepeeBox
 
@@ -241,6 +245,7 @@ jobs:
           mkdir -p dist/PeepeeBox
           cp -R build/artifacts/* dist/PeepeeBox/
           cp -R roms dist/PeepeeBox/
+          cp -R nvr dist/PeepeeBox/
           cp README.md dist/PeepeeBox/
           # -y so the .app bundle's symlinks survive the archive
           cd dist && zip -ry ../PeepeeBox-macos-arm64.zip PeepeeBox
@@ -294,8 +299,9 @@ jobs:
             {
               echo "$headline"
               echo
-              echo "Each archive contains the emulator, the two ROM images it needs, and"
-              echo "the README. Drop your \`HardDisk.img\` in beside the executable and run it."
+              echo "Each archive contains the emulator, the two ROM images and the settled"
+              echo "CMOS it needs, and the README. Drop your \`HardDisk.img\` into that same"
+              echo "folder, beside \`PeepeeBox.exe\`, and run it."
               echo
               echo "| Platform | Notes |"
               echo "|---|---|"
