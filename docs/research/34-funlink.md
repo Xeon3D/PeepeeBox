@@ -474,6 +474,55 @@ arguments reverts. This is a diagnostic on a copy, not something a rig should
 keep — a linked game that stalls now names the step it stalled on, on a screen
 that is otherwise black.
 
+### The message layer, and where the two stop
+
+The step log never appeared, and both patches were still in the image
+afterwards, so the game **never reaches the invite lobby at all**. It stalls
+earlier, and the payloads say where.
+
+The first word of a payload is an **opcode**, dispatched at `0x17E57`, which also
+gates on the header first: field `+0x0C` is the **destination station**, taken if
+it is zero (broadcast) or equal to this cabinet's own number at `+0x08`.
+
+| opcode | handler | |
+|---|---|---|
+| `0x0907` | `0x17EE5` | the game table — what station 1 broadcasts |
+| `0x5797` | `0x17FDB` | the short reply — what station 2 answers with |
+| `0x0910` `0x1234` `0x1401` `0x1801` `0x2401` `0x3789` | | never seen on the wire |
+
+**Two of eight opcodes is the whole of our exchange**, repeated to a standstill.
+The `0x0907` payload is 433 bytes and its layout is exact: two bytes of opcode,
+the sender's station, a nine-byte game name (`TOUCHDN`), two more fields, then
+**16 name slots of 16 bytes** and **16 dwords**, `0x71 + 0x100 + 0x40 = 0x1B1`.
+Across 996 frames it does not change by a byte — the second player's name never
+enters it.
+
+The deadlock is visible in the handlers:
+
+- `0x17EE5` copies a received table **only if the sender's station equals the
+  partner stored at `obj+0x979`**; otherwise it skips the copy.
+- `obj+0x979` is set in two places: by sending a table (to one's own station),
+  and by the setter at `0x18318`.
+- The only thing that calls that setter with a *remote* station is the scan at
+  `0x1C7F7`, which walks the nine-byte name table at `obj+0x795`, matches an
+  entry against a local name, requires its status **not** to be 8, and takes that
+  entry's station as the partner.
+
+So station 2 will not accept station 1's table until it finds a name in a table
+it has not accepted. Meanwhile the loop at `0x1C8E6` polls the same table for an
+entry whose status **is** 8, for 350 ticks, and gives up — which is the black
+screen ending and the menu coming back. Nothing in the program ever writes 8;
+it can only arrive over the bus.
+
+Which leaves one candidate that is ours rather than the game's, and it is the
+`echo` question again. On a two-wire bus a station whose `/RE` is tied to ground
+hears **its own** transmissions. If fun.link is built that way, then a cabinet
+processes its own `0x0907` through the same dispatcher — sender equals
+`obj+0x979`, which sending just set to its own station, so the copy is taken —
+and that is how a station's own table reaches its own state. A cabinet that
+cannot hear itself would stall exactly where these two do. Untested until now,
+because the option was writing to a config section the device never read.
+
 ## 5. Where the evidence is
 
 Offsets are file offsets in `\EXE\TOUCHDN.EXE` from `1999\1999AT-81519_`, which
@@ -491,6 +540,11 @@ is the richest build of the library.
 | header check and checksum compare | `0x19E55`–`0x19F1F` |
 | the link lobby loop, and its 60 s | `0x1CA94`–`0x1CCBA` |
 | `/TESTMODE`, and the flag it sets | `0x1CDFB`; `DS:0x6763` |
+| opcode dispatch, and the destination gate | `0x17E57` |
+| the partner check that skips the copy | `0x17EE5` |
+| the scan that sets the partner | `0x1C7F7`; setter at `0x18318` |
+| the wait for status 8, and its 350 ticks | `0x1C8E6`–`0x1C964` |
+| the object, and its tables | `DS:0x57EC`; `+0x645` `+0x685` `+0x695` `+0x795` `+0x937` `+0x979` |
 | its step names (`SEND NETGAME DATAS` …) | `0x29CA7` onwards; DGROUP at `0x24C20` |
 | receive ISR and 1024-byte ring | `0x19D86`, ISR tail at `0x1988C` |
 | port / IRQ table | `DS:0x1C5E` / `DS:0x1C68` (`f803 f802 f802 e802 .. 0400 0300 0400 0300`) |
