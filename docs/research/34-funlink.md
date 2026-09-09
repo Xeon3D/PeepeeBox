@@ -428,6 +428,37 @@ What it settles, and what it does not:
   weaker than the DS1982 transaction it was read as. Nothing here depends on the
   answer — what ppbox sends satisfies the real software — but it is not resolved.
 
+### Making the game say where it is
+
+With the transport cleared — every byte delivered to both guests, DTR raised once
+per frame, the two interleaving — the only thing left to learn is which step of
+its own lobby the game is standing on, and it turns out it will say.
+
+`TOUCHDN.EXE` takes an undocumented **`/TESTMODE`** on its command line, which
+sets the word at `DS:0x6763`. Ten places test it. Six of them are the lobby loop
+printing where it is — `BUTTONS`, `CHECK_LINK_PLAYERS`, `KEYBOARD`, `INVITED`,
+`SEND NETGAME DATAS`, `FINISH LOOP` — drawn straight onto the screen in white by
+`0x1114:0x16DA`, which despite the `c:\loggin.out` next door writes to the display
+and not to a file. The other four change what the program does: two make a
+function return 1 without running (`0x1B73C`, `0x1BE41`), and two more sit in
+startup.
+
+The menu launches games as `\EXE\<name>.EXE /IPX=<n>` and will not add an argument, so
+the flag cannot be reached from a running cabinet. Patching the flag on would
+also take the four behaviour sites with it. So instead the six `je` instructions
+that skip the printing are patched to `90 90`, leaving `0x6763` at zero and the
+program otherwise exactly as it was:
+
+| file offset in `\EXE\TOUCHDN.EXE` | | |
+|---|---|---|
+| `0x1CB6C` `0x1CBED` `0x1CC0A` | `74 0B` → `90 90` | `BUTTONS`, `CHECK_LINK_PLAYERS`, `KEYBOARD` |
+| `0x1CC2F` `0x1CC4A` `0x1CC8D` | `74 0B` → `90 90` | `INVITED`, `SEND NETGAME DATAS`, `FINISH LOOP` |
+
+`tools/imgpatch.py` applies them to a disk image in place; swapping the two byte
+arguments reverts. This is a diagnostic on a copy, not something a rig should
+keep — a linked game that stalls now names the step it stalled on, on a screen
+that is otherwise black.
+
 ## 5. Where the evidence is
 
 Offsets are file offsets in `\EXE\TOUCHDN.EXE` from `1999\1999AT-81519_`, which
@@ -444,6 +475,7 @@ is the richest build of the library.
 | `0x55` preamble, header builder | `0x19F86` onwards |
 | header check and checksum compare | `0x19E55`–`0x19F1F` |
 | the link lobby loop, and its 60 s | `0x1CA94`–`0x1CCBA` |
+| `/TESTMODE`, and the flag it sets | `0x1CDFB`; `DS:0x6763` |
 | its step names (`SEND NETGAME DATAS` …) | `0x29CA7` onwards; DGROUP at `0x24C20` |
 | receive ISR and 1024-byte ring | `0x19D86`, ISR tail at `0x1988C` |
 | port / IRQ table | `DS:0x1C5E` / `DS:0x1C68` (`f803 f802 f802 e802 .. 0400 0300 0400 0300`) |
