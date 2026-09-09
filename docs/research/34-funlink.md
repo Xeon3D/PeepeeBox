@@ -1,7 +1,7 @@
 # Phase 34 — fun.link: cabinet-to-cabinet play, and the bus it runs on
 
 **fun.link is a serial bus, not a parallel one.** The adapter photographs as a
-box with a 25-pin D-sub going to the cabinet and a round DIN going onward, and
+box with a 25-pin D-sub going to the cabinet and a round DIN alongside it, and
 the parallel port is the obvious guess because that is where the dongle lives.
 It is the wrong guess, and the binaries say so in plain English:
 
@@ -346,7 +346,7 @@ ordinary 8250 traffic. `src/char/char_funlink.c` is the whole of it:
 What is not yet known, and would need either the box opened or a capture from two
 real cabinets:
 
-- the DIN pinout;
+- which conductor of the jack is `A` and which is `B`;
 - whether the receiver stays enabled while the driver is on — `/RE` on the
   SN75176B, pin 2, tied to `DE` or tied to ground (below);
 - how `MENU.EXE` chooses the `/IPX=` value;
@@ -405,9 +405,13 @@ QC PASS sticker, single-sided board, three ICs and nothing else active:
 | **PAL16L8ACN** (date code 9716) | the only logic; drives the transceiver's enables |
 | **MAX232CPE** | RS-232 levels to and from the cabinet's COM port |
 
-Two DIN sockets wired in parallel — in and out, so cabinets **daisy chain**;
-four electrolytics for the MAX232's charge pumps; a ribbon to the 25-pin plug and
-a two-wire tail for +5 V and ground. So the box is passive in the sense that
+Two **3.5 mm jack sockets** wired in parallel — in and out, so cabinets **daisy
+chain** — and the cable between cabinets is an ordinary three-conductor one, tip,
+ring and sleeve. Three conductors is exactly what an SN75176B wants: `A`, `B` and
+a ground to reference them against. Four electrolytics serve the MAX232's charge
+pumps; a ribbon goes to the 25-pin plug, and a two-wire tail to pads marked
+`+5V` and `GND`. **The round DIN is power**, not signal — it carries that tail,
+and nothing on the bus goes through it. So the box is passive in the sense that
 matters: no processor, nothing that repeats or re-times a frame, which is the
 question §4 left open. An emulated pipe **is** equivalent to the wire.
 
