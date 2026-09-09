@@ -394,8 +394,10 @@ gives it 60 seconds — timer 3 against `0x3C`, or an early exit when the byte a
 
 ### What is in the box
 
-Opened, 2026-09-08. Silkscreen `funlink`, part `6 033.5002 00.00`, QC PASS
-sticker, single-sided board, three ICs and nothing else active:
+From photographs of a fun.link board published online, not a box opened here —
+so read it as a good photograph rather than a measurement, and nothing below
+depends on a pin that was traced. Silkscreen `funlink`, part `6 033.5002 00.00`,
+QC PASS sticker, single-sided board, three ICs and nothing else active:
 
 | | |
 |---|---|
@@ -419,8 +421,9 @@ What it settles, and what it does not:
   lowers it around a transmission.
 - **Whether a station hears itself is `/RE`**, pin 2 of the SN75176B: tied to the
   driver enable it goes deaf while transmitting, tied to ground it hears every
-  byte it sends. The PAL is between them, so it can be either. This is the
-  `echo` option, and tracing that one pin would answer it.
+  byte it sends. The PAL is between them, so it can be either, and a photograph
+  of an assembled board cannot say which. This is still the `echo` option, and
+  it still needs a board in hand.
 - **The token is not on this board.** No memory part, and a 16L8 is combinatorial
   — it cannot hold a 64-bit ROM and a 128-byte page. Yet the menu reads one on
   `0x3F8` and will not open the link without it (§2). So either it is in the
@@ -453,6 +456,14 @@ program otherwise exactly as it was:
 |---|---|---|
 | `0x1CB6C` `0x1CBED` `0x1CC0A` | `74 0B` → `90 90` | `BUTTONS`, `CHECK_LINK_PLAYERS`, `KEYBOARD` |
 | `0x1CC2F` `0x1CC4A` `0x1CC8D` | `74 0B` → `90 90` | `INVITED`, `SEND NETGAME DATAS`, `FINISH LOOP` |
+
+Those six go to `0x1114:0x16DA`, and that draws to the display — which is no use
+when the screen under investigation is black, and a run with the patch in showed
+nothing at all. But the same routine will write to a file instead: it takes a
+flag, and its outer entry at `0x1581A` hardcodes `push 0` for "draw it". One byte
+at **`0x1581E`, `00` → `01`**, and all six land in `c:\loggin.out` on the cabinet's
+own disk, timestamped, where they can be read out of the image afterwards. That
+is the readout that does not depend on anything reaching the screen.
 
 `tools/imgpatch.py` applies them to a disk image in place; swapping the two byte
 arguments reverts. This is a diagnostic on a copy, not something a rig should
