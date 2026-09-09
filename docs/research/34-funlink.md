@@ -340,25 +340,27 @@ ordinary 8250 traffic. `src/char/char_funlink.c` is the whole of it:
   cabinets transmit into each other. `funlink_read()` therefore counts bit times
   and hands over one byte per character, from the port's own `data_bits`,
   `stop_bits` and parity.
-- **A cabinet does not hear itself**, because that is the guess the box has not
-  been opened to settle. `echo` in the device's options switches it.
+- **A cabinet hears itself**, because the protocol needs it to — see below. The
+  default; `echo` in the device's options can turn it off.
 
 What is not yet known, and would need either the box opened or a capture from two
 real cabinets:
 
 - which conductor of the jack is `A` and which is `B`;
-- whether the receiver stays enabled while the driver is on — `/RE` on the
-  SN75176B, pin 2, tied to `DE` or tied to ground (below);
 - how `MENU.EXE` chooses the `/IPX=` value;
-- what the two stations are each waiting for once the invitation has been
-  accepted — see below.
+- the six opcodes the two cabinets never had to exchange to get a game started.
 
-None of it blocked the implementation, because the cabinets talk to each other
-rather than to us: a transparent bus between COM1s carries payloads nobody here
-has to understand. What is verified so far is the wire and nothing above it —
-two instances find each other, a third joins, and a frame sent by one arrives at
-the others and not back at its sender. Whether two guests then agree to play is
-the on-screen test, and it needs one of the images from §3.
+None of it blocks anything, because the cabinets talk to each other rather than
+to us: a transparent bus between COM1s carries payloads nobody here has to
+understand.
+
+**And it plays.** Two 1999 rigs, one hosting and one joining, ring each other,
+the second player accepts, and a linked Touchdown starts and runs. Verified on
+screen, 2026-09-09. Getting there took three things this file did not start with:
+the adapter's token, so the menu opens the bus at all (§2); receive paced at a
+character time rather than a bit time, so the arbitration settles (§4); and a
+cabinet hearing its own transmissions, which turned out not to be a nicety but
+the hinge the whole handshake turns on.
 
 ### What two cabinets actually said to each other
 
@@ -423,11 +425,11 @@ What it settles, and what it does not:
   still more forgiving than the hardware.
 - **DTR drives the enable through the PAL**, which is why the driver raises and
   lowers it around a transmission.
-- **Whether a station hears itself is `/RE`**, pin 2 of the SN75176B: tied to the
-  driver enable it goes deaf while transmitting, tied to ground it hears every
-  byte it sends. The PAL is between them, so it can be either, and a photograph
-  of an assembled board cannot say which. This is still the `echo` option, and
-  it still needs a board in hand.
+- **`/RE` is grounded**, pin 2 of the SN75176B: the receiver stays enabled while
+  the driver is on, so a station hears every byte it sends. The photograph cannot
+  show that, but the software settles it — with the cabinets deaf to themselves
+  the handshake never completes, and with them hearing themselves it does. Which
+  also explains the PAL: `DE` alone is what needs driving, from DTR.
 - **The token is not on this board.** No memory part, and a 16L8 is combinatorial
   — it cannot hold a 64-bit ROM and a 128-byte page. Yet the menu reads one on
   `0x3F8` and will not open the link without it (§2). So either it is in the
@@ -522,6 +524,12 @@ processes its own `0x0907` through the same dispatcher — sender equals
 and that is how a station's own table reaches its own state. A cabinet that
 cannot hear itself would stall exactly where these two do. Untested until now,
 because the option was writing to a config section the device never read.
+
+**That was it.** With `echo` on, both cabinets get past the invitation and a
+linked Touchdown plays. So the receiver on a real adapter stays enabled while its
+driver is: `/RE` grounded, `DE` alone driven from DTR through the PAL. It is now
+the default, and the last of the three things that stood between a working wire
+and a working game.
 
 ## 5. Where the evidence is
 

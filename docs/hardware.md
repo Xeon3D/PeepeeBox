@@ -132,10 +132,12 @@ linked game. I.G.O. 1 and 2 still carry the serial driver — their binaries
 still hold its error messages — but their menu launches every game with
 `/IPX=0`, and a game started that way never opens COM1; the invitation session is
 missing from the binary entirely. From I.G.O. 3 the driver is gone as well,
-leaving the artwork and the "Fun Link" menu entry with nothing behind them. The
-per-generation table, the disassembly it comes from, and the one thing about the
-real adapter that is still a guess — whether a cabinet hears its own
-transmissions — are in [`research/34-funlink.md`](research/34-funlink.md).
+leaving the artwork and the "Fun Link" menu entry with nothing behind them.
+
+Where it does work, it plays: two instances ring each other, the second player
+accepts, and the linked game runs. The per-generation table, the adapter's token,
+the message layer and the disassembly all of it comes from are in
+[`research/34-funlink.md`](research/34-funlink.md).
 
 ## The disk
 

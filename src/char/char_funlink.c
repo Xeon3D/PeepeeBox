@@ -56,12 +56,15 @@
  *     they just always win first time, which is the good case on real hardware
  *     too.
  *
- * The one thing that is a guess is whether a station hears its own transmission.
- * On a real bus that depends on whether the box leaves its receiver enabled while
- * the driver is on, and the box has not been opened.  The default is not to echo
- * -- a cabinet hears only the others -- and `echo` switches it, because if that
- * guess is wrong it is the sort of wrong that a rig with two real machines would
- * settle in a minute.
+ *   - **A cabinet hears its own transmission**, and this is not a detail.  The
+ *     box is an SN75176B on one pair, and its receiver stays enabled while the
+ *     driver is on -- `/RE` grounded rather than tied to the enable.  The
+ *     software settles it: a station's own broadcast goes back through its own
+ *     dispatcher, where the sender matches the partner that sending just stored,
+ *     and that is how a station's own game table reaches its own state.  Deaf to
+ *     itself, a cabinet never gets past the invitation, which is exactly how this
+ *     failed until it was switched on.  `echo` still exists for anyone who meets
+ *     an adapter wired the other way, but the default is to hear yourself.
  */
 
 #include <stdarg.h>
@@ -802,8 +805,9 @@ funlink_write(uint8_t *buf, size_t len, void *priv)
             funlink_flush_tx(dev);
         dev->tx[dev->tx_len++] = buf[i];
 
-        /* Whether a station hears itself is the one thing about the real box
-           that is not known.  Off by default; see the file comment. */
+        /* The real adapter's receiver stays on while its driver is: a station
+           hears what it sends, and the protocol needs it to.  See the file
+           comment. */
         if (dev->echo)
             funlink_rx_push(dev, &buf[i], 1);
     }
@@ -1016,7 +1020,7 @@ static const device_config_t funlink_config[] = {
         .description    = "Cabinet hears its own transmissions",
         .type           = CONFIG_SELECTION,
         .default_string = NULL,
-        .default_int    = 0,
+        .default_int    = 1,
         .file_filter    = NULL,
         .spinner        = { 0 },
         .selection      = {
