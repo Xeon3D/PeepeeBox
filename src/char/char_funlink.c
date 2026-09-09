@@ -85,8 +85,10 @@
 #include <86box/timer.h> /* serial.h wants pc_timer_t */
 #include <86box/serial.h>
 
-/* Four cabinets is what funworld's own advert draws, so three peers plus us. */
-#define FUNLINK_MAX_PEERS 3
+/* The game's own table is sixteen stations -- sixteen name slots and sixteen ids
+   in the frame it broadcasts -- so that is the ceiling, and fifteen peers plus us
+   reaches it.  funworld's advert only ever draws four. */
+#define FUNLINK_MAX_PEERS 15
 
 /* The token in the adapter.  Before the menu will so much as open the bus it
    looks for a DS1982 on this same port and checks what it says; see the 1-Wire
@@ -322,7 +324,8 @@ funlink_crc8(const uint8_t *d, int n, uint8_t crc)
    rather than funworld's: the cabinets each had their own adapter and so their
    own number, and two stations answering to the same one cannot be told apart on
    the bus.  Left at 0 it follows who ended up hosting -- which is right for the
-   usual pair and wrong for a third cabinet, so the option exists. */
+   usual pair and wrong from a third cabinet on, where every joiner would answer
+   to 2, so the option exists. */
 static void
 funlink_ow_load(char_funlink_t *dev)
 {
@@ -982,8 +985,9 @@ static const device_config_t funlink_config[] = {
     {
         /* Each cabinet had its own adapter and so its own number, and two
            stations answering to the same one cannot be told apart on the bus.
-           Automatic follows who hosts, which is right for a pair; a third and
-           fourth cabinet need this set by hand. */
+           Automatic follows who hosts -- 1 for it, 2 for anyone joining -- which
+           is right for a pair and no use beyond it, because every joiner would
+           answer to 2.  A third cabinet and up need a number of their own here. */
         .name           = "station",
         .description    = "Station number",
         .type           = CONFIG_SPINNER,
@@ -992,7 +996,7 @@ static const device_config_t funlink_config[] = {
         .file_filter    = NULL,
         .spinner        = {
             .min = 0,
-            .max = 255
+            .max = 16
         },
         .selection      = { { 0 } },
         .bios           = { { 0 } }

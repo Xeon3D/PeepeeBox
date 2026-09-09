@@ -1485,8 +1485,9 @@ pp_modem_dialog(QWidget *parent)
 
 /* PeepeeBox: fun.link, the adapter that joins cabinets together.
 
-   funworld's own advert for it draws four machines in a ring, and the box on the
-   bench has a 25-pin plug to the cabinet's I/O connector and a DIN onward -- but
+   funworld's own advert for it draws four machines in a ring -- the games' own
+   table holds sixteen -- and the box has a 25-pin plug to the cabinet's I/O
+   connector, a DIN for power and a pair of jack sockets for the bus itself; but
    it is a *serial* bus, not a parallel one, whatever the 25-pin end suggests.
    The games say so: "LINK ERROR: No serial-port found !!!!. Please check
    mainboard COM-settings".  COM1 at 0x3F8 / IRQ 4, 115200 8N1.  See
@@ -1522,6 +1523,9 @@ pp_funlink_dialog(QWidget *parent)
         "beside this one, or one on another PC. Leave both on the default "
         "under Options and whichever starts first hosts the bus; to link over a "
         "network, set the others to the host's address."
+        "\n\nUp to sixteen cabinets share one bus. Automatic numbering only "
+        "covers a pair, so from a third machine on give each its own Station "
+        "number under Options."
         "\n\nOnly the 1998/99, 2000 and 2001 releases can start a linked "
         "game. I.G.O. 1 and 2 still carry the serial driver, but their menu "
         "never launches a game in link mode, and I.G.O. 3 onward has neither "

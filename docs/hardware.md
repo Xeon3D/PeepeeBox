@@ -124,8 +124,11 @@ beside the first, or one on another PC. **Tools → fun.link…** fits the adapt
 and its Options decide where the bus is. On the default — *joins if the bus
 exists, else hosts it*, at `127.0.0.1` port 7662 — two copies on one machine
 find each other whichever starts first. To link across a network, set one to
-host and point the others at its address. Up to four cabinets share one bus,
-which is what the advert draws.
+host and point the others at its address. The advert draws four cabinets, but
+the games carry a sixteen-station table, so **up to sixteen** share one bus.
+Automatic numbering only covers a pair — 1 for the host, 2 for whoever joins —
+so a third cabinet and beyond needs its own **Station number** set under Options,
+or they all answer to 2.
 
 **Most disk images cannot use it.** Only **1998/99, 2000 and 2001** can start a
 linked game. I.G.O. 1 and 2 still carry the serial driver — their binaries
