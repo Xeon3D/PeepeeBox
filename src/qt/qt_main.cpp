@@ -23,7 +23,9 @@
 #include <QThread>
 #include <QTimer>
 #include <QTranslator>
+#include <QDir>
 #include <QDirIterator>
+#include <QFileDialog>
 #include <QLibraryInfo>
 #include <QString>
 #include <QFont>
@@ -55,6 +57,7 @@ extern "C" {
 #include <86box/device.h>
 #include <86box/timer.h>
 #include <86box/lpt.h>
+#include <86box/photoplay.h>
 #ifdef Q_OS_LINUX
 #    define GAMEMODE_AUTO
 #    include "../unix/gamemode/gamemode_client.h"
@@ -79,6 +82,7 @@ extern "C" {
 #include "qt_mainwindow.hpp"
 #include "qt_preferences.hpp"
 #include "qt_deviceconfig.hpp"
+#include "qt_hddmanager.hpp"
 #include "cocoa_mouse.hpp"
 #include "qt_styleoverride.hpp"
 #include "qt_unixmanagerfilter.hpp"
@@ -760,6 +764,108 @@ main(int argc, char *argv[])
             return 0;
     }
 
+    /* PeepeeBox: the hard disk image manager is off unless the user asks for
+       it, and this is where they are asked.  The answer is recorded whether it
+       was yes or no -- and closing the box counts as no -- so the question is
+       put exactly once, on the first start after the feature appears.  It is
+       asked here, after the warnings that can still send the user away, and
+       before the machine window opens. */
+    if (!hdd_manager_asked) {
+        QMessageBox askbox(QMessageBox::Icon::Question, QObject::tr("Machine Manager"),
+                           QObject::tr("Do you want to use the Machine Manager?"),
+                           QMessageBox::NoButton);
+        askbox.setInformativeText(QObject::tr("%1 normally runs the HardDisk.img sitting next to the executable. The manager instead keeps a folder of cabinet images and lets you pick which one to run.\n\nIt is off by default, and you can turn it on or off later under Preferences.").arg(EMU_NAME));
+        const QPushButton *useButton = askbox.addButton(QObject::tr("Use the manager"), QMessageBox::AcceptRole);
+        QPushButton       *notButton = askbox.addButton(QObject::tr("Not now"), QMessageBox::RejectRole);
+        askbox.setDefaultButton(notButton);
+        askbox.exec();
+
+        /* clickedButton() is null when the box was dismissed rather than
+           answered, which lands on "not now" like every other non-answer. */
+        hdd_manager       = (askbox.clickedButton() == useButton) ? 1 : 0;
+        hdd_manager_asked = 1;
+
+        /* Saying yes without saying where the images are leaves the manager
+           with nothing to show, so ask for the folder straight away.  Backing
+           out of the folder dialog is allowed; Preferences can fill it in. */
+        if (hdd_manager) {
+            QFileDialog::Options options = QFileDialog::ShowDirsOnly;
+#ifdef Q_OS_LINUX
+            options |= QFileDialog::DontUseNativeDialog;
+#endif
+            const QString directory = QFileDialog::getExistingDirectory(nullptr,
+                                                                        QObject::tr("Choose the hard disk images folder"),
+                                                                        QString(), options);
+
+            if (!directory.isEmpty()) {
+                strncpy(hdd_images_path, QDir::cleanPath(directory).toUtf8().constData(),
+                        sizeof(hdd_images_path) - 1);
+                hdd_images_path[sizeof(hdd_images_path) - 1] = '\0';
+            }
+        }
+
+        config_save_global();
+    }
+
+    /* With the manager switched on, put it up before the machine starts.
+       Nothing is pre-selected -- a pick lasts for the run and no longer -- so
+       this is where the run gets its disk.
+
+       Doing it here rather than once the window is up matters: the first
+       pc_reset_hard_init() has not run yet, and that is what stamps the
+       profile and mounts the disk.  So the cabinet boots straight onto the
+       chosen image, instead of coming up empty and being reset onto it.
+
+       Closing the manager without picking is allowed.  It leaves the machine
+       on whatever HardDisk.img sits next to the executable, which is what a
+       rig folder holds and is the behaviour with the manager switched off. */
+    if (hdd_manager) {
+        HddManager manager;
+
+        if ((manager.exec() == QDialog::Accepted) && !manager.selectedImage().isEmpty()) {
+            const QByteArray image = manager.selectedImage().toUtf8();
+
+            photoplay_set_selected_image(image.constData());
+
+            /* Name the machine after the image now.  The main window reads
+               vm_name when it is built, which is before the first hard reset
+               runs and sets it -- so without this the title comes up as
+               whatever the working directory is called. */
+            char ident[96] = { 0 };
+
+            photoplay_image_label(image.constData(), ident, sizeof(ident));
+
+            if (ident[0] != '\0') {
+                strncpy(vm_name, ident, sizeof(vm_name) - 1);
+                vm_name[sizeof(vm_name) - 1] = '\0';
+            }
+        }
+    }
+
+    /* Has this run got a disk at all -- one picked out of the library, or the
+       HardDisk.img a rig folder carries?  If not, starting the machine just
+       drops into the BIOS complaining about a missing drive, which reads as a
+       broken build rather than a missing file.  Say what is actually wrong and
+       bring the window up stopped instead. */
+    const QString localImage = QDir(QString::fromUtf8(exe_path))
+                                   .filePath(QString::fromUtf8(PHOTOPLAY_DISK_IMAGE));
+    const bool    havePicked = hdd_manager && (photoplay_selected_image()[0] != 0);
+    const bool    startStopped = !havePicked && !QFile::exists(localImage);
+
+    if (startStopped && !hdd_manager) {
+        QMessageBox nodiskbox(QMessageBox::Icon::Warning, QObject::tr("No hard disk image"),
+                              QObject::tr("The Machine Manager is disabled and there is no %1 "
+                                          "in the current folder.")
+                                  .arg(QString::fromUtf8(PHOTOPLAY_DISK_IMAGE)),
+                              QMessageBox::Ok);
+
+        nodiskbox.setInformativeText(QObject::tr("Copy a %1 into the folder, or switch the "
+                                                 "Machine Manager on in Preferences.\n\n"
+                                                 "The machine will not be started.")
+                                         .arg(QString::fromUtf8(PHOTOPLAY_DISK_IMAGE)));
+        nodiskbox.exec();
+    }
+
 #ifdef Q_OS_MACOS
     exit_pause();
 #endif
@@ -893,7 +999,7 @@ main(int argc, char *argv[])
     onesec.start(1000);
 
     /* Initialize the rendering window, or fullscreen. */
-    QTimer::singleShot(0, &app, [] {
+    QTimer::singleShot(0, &app, [startStopped] {
         plat_set_thread_name(nullptr, "qt_thread");
 
 #ifdef Q_OS_WINDOWS
@@ -909,7 +1015,9 @@ main(int argc, char *argv[])
             plat_pause(1);
         else
 #endif
-            plat_pause(0);
+            /* No disk to boot: the machine is built but never let run, so it
+               cannot error out on a missing drive. */
+            plat_pause(startStopped ? 1 : 0);
 
         cpu_thread_running = true;
         main_thread        = new std::thread(main_thread_fn);

@@ -82,9 +82,11 @@ public slots:
     void destroyRendererMonitorSlot(int monitor_index);
     void updateStatusEmptyIcons();
     void updateUiPauseState();
+    void updateWindowTitle();
 private slots:
     void on_actionFullscreen_triggered();
     void on_actionSettings_triggered();
+    void on_actionHDD_manager_triggered();
     void on_actionTouchscreen_triggered();
     void on_actionModem_triggered();
     void on_actionFunlink_triggered();

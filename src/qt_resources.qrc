@@ -89,6 +89,7 @@
     </qresource>
     <qresource prefix="/menuicons">
         <file>qt/icons/acpi_shutdown.ico</file>
+        <file>qt/icons/hard_disk.ico</file>
         <file>qt/icons/dongle.ico</file>
         <file>qt/icons/touch.ico</file>
         <file>qt/icons/coin.ico</file>

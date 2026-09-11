@@ -42,8 +42,40 @@ nvr\
 HardDisk.img      <- yours, dropped in here
 ```
 
-Now run `PeepeeBox.exe`. There is no machine to pick, no disk to mount and no
-first-run wizard — it loads the image sitting next to it and boots.
+Now run `PeepeeBox.exe`. There is no machine to pick and no disk to mount — it
+loads the image sitting next to it and boots.
+
+PeepeeBox is always portable, and keeps everything in one file. `86box.cfg` is
+written into that same folder and holds both halves -- the machine under
+`[General]`, `[Machine]` and the rest, and your settings under `[Emulator]`,
+`[Input]` and `[Keybinds]`. Nothing is written anywhere else on the machine, so
+two folders holding two releases keep two sets of settings and neither can
+surprise the other. Copy the folder and everything goes with it; delete it and
+nothing is left behind.
+
+A folder from an older build that still has a separate `86box_global.cfg` has
+its settings read across once, into `86box.cfg`. The old file is then ignored,
+and can be deleted.
+
+The Machine Manager
+-------------------
+
+The first start asks one question: whether to use the Machine Manager. It is off
+by default, the question is put once, and the Machine Manager page in Preferences
+changes the answer and sets the folder later.
+
+Switched on, it adds a button at the left of the toolbar. **Scan for HDD images**
+walks the folder you pointed it at and asks every `.img` it finds what it is —
+release, territory and the raw `Version` line, read out of the image's own
+`\FOTO\SETTINGS\MAIN.SET` rather than guessed from the folder name, which is
+worth knowing because folder names in circulation are often wrong. The result is
+saved, so the window opens on the list next time; the button then reads
+**Update list** and scans again over the top.
+
+**Double-click a release to run it.** That image goes into the drive and the
+cabinet hard resets onto it. The pick lasts for the run — hard resets included —
+and is not written anywhere, so the next launch starts on nothing again and a rig
+folder carrying its own `HardDisk.img` goes on booting that one.
 
 Which releases run
 ------------------

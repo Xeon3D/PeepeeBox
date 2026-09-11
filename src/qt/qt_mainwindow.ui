@@ -69,6 +69,8 @@
      <addaction name="actionTablet"/>
      <addaction name="actionTablet_Crosshair"/>
     </widget>
+    <addaction name="actionHDD_manager"/>
+    <addaction name="separator"/>
     <addaction name="menuInput_device"/>
     <addaction name="separator"/>
     <addaction name="actionPause"/>
@@ -92,7 +94,6 @@
      <addaction name="actionSound_gain"/>
     </widget>
     <addaction name="actionOperator_setup"/>
-    <addaction name="actionCalibrate"/>
     <addaction name="actionPrinter_paper"/>
     <addaction name="separator"/>
     <addaction name="actionSettings"/>
@@ -100,6 +101,7 @@
     <addaction name="actionModem"/>
     <addaction name="actionFunlink"/>
     <addaction name="actionNetwork"/>
+    <addaction name="separator"/>
     <addaction name="actionCDROM_drive"/>
     <addaction name="actionFloppy_drive"/>
     <addaction name="actionUpdate_status_bar_icons"/>
@@ -237,6 +239,8 @@
    <attribute name="toolBarBreak">
     <bool>false</bool>
    </attribute>
+   <addaction name="actionHDD_manager"/>
+   <addaction name="separator"/>
    <addaction name="actionPause"/>
    <addaction name="actionHard_Reset"/>
    <addaction name="actionACPI_Shutdown"/>
@@ -246,6 +250,7 @@
    <addaction name="actionModem"/>
    <addaction name="actionFunlink"/>
    <addaction name="actionNetwork"/>
+   <addaction name="separator"/>
    <addaction name="actionCDROM_drive"/>
    <addaction name="actionFloppy_drive"/>
    <addaction name="separator"/>
@@ -259,6 +264,7 @@
    <addaction name="actionInsert_note_2"/>
    <addaction name="actionInsert_note_3"/>
    <addaction name="actionInsert_note_4"/>
+   <addaction name="separator"/>
    <addaction name="actionOperator_setup"/>
    <addaction name="actionPrinter_paper"/>
   </widget>
@@ -577,6 +583,21 @@
    </property>
    <property name="toolTip">
     <string>Network cards</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionHDD_manager">
+   <property name="icon">
+    <iconset resource="../qt_resources.qrc">
+     <normaloff>:/menuicons/qt/icons/hard_disk.ico</normaloff>:/menuicons/qt/icons/hard_disk.ico</iconset>
+   </property>
+   <property name="text">
+    <string>&amp;Machine Manager…</string>
+   </property>
+   <property name="toolTip">
+    <string>Machine Manager…</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>

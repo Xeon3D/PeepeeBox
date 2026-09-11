@@ -214,6 +214,14 @@ int      inhibit_multimedia_keys;                                 /* (G) Inhibit
 int      force_10ms;                                              /* (C) Force 10ms CPU frame intervals. */
 int      vmm_disabled                           = 1;              /* (G) disable built-in manager - PeepeeBox: off by default */
 char     vmm_path_cfg[1024]                     = { '\0' };       /* (G) VMs path (unless -E is used)*/
+int      hdd_manager                            = 0;              /* (G) PeepeeBox: the hard disk image
+                                                                         manager is in use.  Off unless the
+                                                                         user has asked for it. */
+int      hdd_manager_asked                      = 0;              /* (G) PeepeeBox: the first-start question
+                                                                         has been answered, so do not ask it
+                                                                         again whatever the answer was */
+char     hdd_images_path[1024]                  = { '\0' };       /* (G) PeepeeBox: folder holding the hard
+                                                                         disk image library */
 
 int      other_ide_present = 0;                                   /* IDE controllers from non-IDE cards are
                                                                      present */
@@ -805,18 +813,23 @@ pc_init(int argc, char *argv[])
     path_slash(exe_path);
 
     /*
-     * Determine if we are running in portable mode.
+     * PeepeeBox is always portable: settings live next to the executable, in
+     * the folder they belong to, and never machine-wide.
      *
-     * We enable portable mode if the EXE path
-     * contains the global config file.
+     * 86Box turns portable mode on only when it already finds a global config
+     * beside the executable, and otherwise keeps one per user under AppData.
+     * That is the wrong shape here, and it is circular besides: a freshly
+     * extracted download has no config next to it yet, so it writes the
+     * machine-wide one and never becomes portable.
+     *
+     * A PeepeeBox folder is a whole cabinet -- its own image, its own nvr, its
+     * own roms -- and several of them sit side by side while different releases
+     * are being tested.  Sharing one set of settings between them means an
+     * answer given in one folder silently applies in all the others, which is
+     * how a fresh extraction came up already knowing whether the Machine
+     * Manager had been asked about.
      */
-    path_append_filename(temp, exe_path, GLOBAL_CONFIG_FILE);
-
-    FILE *fp = fopen(temp, "r");
-    if (fp) {
-        portable_mode = 1;
-        fclose(fp);
-    }
+    portable_mode = 1;
 
     /*
      * Get the current working directory.
@@ -1247,7 +1260,6 @@ usage:
     }
 
     pclog("# Emulator path: %s\n", exe_path);
-    pclog("# Global configuration file: %s\n", global_cfg_path);
 
     /* Initialize the keyboard accelerator list with default values */
     for (int x = 0; x < NUM_ACCELS; x++) {
@@ -1256,7 +1268,7 @@ usage:
         strcpy(acc_keys[x].seq, def_acc_keys[x].seq);
     }
 
-    /* Load the global configuration file. */
+    /* Load the settings half of the configuration file. */
     config_load_global();
     config_save_global(); // hack
 

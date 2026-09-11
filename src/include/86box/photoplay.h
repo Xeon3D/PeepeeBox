@@ -106,6 +106,24 @@ extern void photoplay_set_funlink_enabled(int enabled);
 extern const char *photoplay_touchscreen(void);
 extern void        photoplay_set_touchscreen(const char *internal_name);
 
+/* Which image out of the library this run is on, as an absolute path, or ""
+   for the HardDisk.img next to the executable.  Chosen in the hard disk image
+   manager, and deliberately NOT persisted: a pick lasts for the run, hard
+   resets included, and the next launch starts with nothing pre-selected. */
+extern const char *photoplay_selected_image(void);
+extern void        photoplay_set_selected_image(const char *path);
+
+/* What to call an image in the window title: the release it says it is plus its
+   NSB number, e.g. "IGO 5 PT - NSB: MB001".  Empty when the image says nothing
+   about itself. */
+extern void photoplay_image_label(const char *img_path, char *out, size_t sz);
+
+/* The NSB number an image carries -- the build the cabinet shipped as, out of
+   MENU\NSB.NR (or MAIN\KEY.DAT on Photo Play 2.0).  Returns 1 when the image
+   has one.  It is what tells two images of the same release and territory
+   apart, so the manager lists it. */
+extern int  photoplay_image_nsb(const char *img_path, char *out, size_t sz);
+
 /* Work out which release and territory a disk image is, from its own
    \FOTO\SETTINGS\MAIN.SET.  Returns 1 and fills `out` with something like
    "IGO 5 PT" on success, 0 if the image is missing, foreign or unreadable. */

@@ -328,15 +328,15 @@ static const struct {
 } pp_release_names[] = {
     { "Version 99",    "Photo Play 99",   0 },
     { "Version 2000",  "Photo Play 2000", 0 },
-    { "Version 2001",  "IGO 1",           0 },
-    { "Version 2002",  "IGO 2",           0 },
-    { "Version 2003",  "IGO 3",           0 },
-    { "Version 2004",  "IGO 4",           0 },
-    { "Version 2005B", "IGO 5",           0 },
-    { "Version 2005",  "IGO 5",           0 },
-    { "Version 2006",  "IGO 6",           0 },
-    { "Version 2007",  "IGO 7",           0 },
-    { "Version 2008",  "IGO 8",           0 },
+    { "Version 2001",  "I.G.O. 1",       0 },
+    { "Version 2002",  "I.G.O. 2",       0 },
+    { "Version 2003",  "I.G.O. 3",       0 },
+    { "Version 2004",  "I.G.O. 4",       0 },
+    { "Version 2005B", "I.G.O. 5",       0 },
+    { "Version 2005",  "I.G.O. 5",       0 },
+    { "Version 2006",  "I.G.O. 6",       0 },
+    { "Version 2007",  "I.G.O. 7",       0 },
+    { "Version 2008",  "I.G.O. 8",       0 },
 
     /* The Italian one does not follow the year pattern: its MAIN.SET says
        "Version 08IT (IT)", which matched nothing here and so showed up in the

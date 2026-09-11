@@ -9,6 +9,7 @@ class Preferences;
 }
 
 class PreferencesEmulator;
+class PreferencesHdd;
 class PreferencesInput;
 class PreferencesKeyBindings;
 
@@ -56,6 +57,7 @@ private:
     static bool       loadQtTranslations(const QString name);
 
     PreferencesEmulator        *emulator;
+    PreferencesHdd             *hdd;
     PreferencesInput           *input;
     PreferencesKeyBindings     *key_bindings;
 };

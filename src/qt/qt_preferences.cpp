@@ -42,6 +42,7 @@ extern "C" {
 #include <QPushButton>
 
 #include "qt_preferencesemulator.hpp"
+#include "qt_preferenceshdd.hpp"
 #include "qt_preferencesinput.hpp"
 #include "qt_preferenceskeybindings.hpp"
 #include "qt_defs.hpp"
@@ -84,11 +85,13 @@ public:
 private:
     QStringList pages = {
         "Emulator",
+        "Machine Manager",
         "Input",
         "Key bindings",
     };
     QStringList page_icons = {
         "emulator",
+        "hard_disk",
         "input_devices",
         "key_bindings",
     };
@@ -166,10 +169,13 @@ Preferences::Preferences(QWidget *parent)
     ui->listView->setModel(model);
 
     emulator                  = new PreferencesEmulator(this);
+    hdd                       = new PreferencesHdd(this);
     input                     = new PreferencesInput(this);
     key_bindings              = new PreferencesKeyBindings(this);
 
+    /* Page order must match PreferencesModel::pages. */
     ui->stackedWidget->addWidget(emulator);
+    ui->stackedWidget->addWidget(hdd);
     ui->stackedWidget->addWidget(input);
     ui->stackedWidget->addWidget(key_bindings);
 
@@ -196,6 +202,7 @@ void
 Preferences::save()
 {
     emulator->save();
+    hdd->save();
     input->save();
     key_bindings->save();
 

@@ -438,11 +438,44 @@ pp_read_small(pp_fat_t *v, uint16_t dir_cl, const char *name11, char *out, size_
     return out[0] != '\0';
 }
 
+/* The NSB number an image carries, for anything that wants it on its own --
+   the hard disk image manager lists it, because it is what tells two images of
+   the same release and territory apart. */
+int
+photoplay_image_nsb(const char *fn, char *out, size_t sz)
+{
+    pp_fat_t v;
+    uint16_t dir = 0;
+
+    if ((out == NULL) || (sz == 0))
+        return 0;
+
+    out[0] = '\0';
+
+    if (!pp_fat_open(&v, fn)) {
+        pp_fat_close(&v);
+        return 0;
+    }
+
+    if (pp_dir_find(&v, 0, "MENU       ", &dir, NULL))
+        pp_read_small(&v, dir, "NSB     NR ", out, sz);
+    if ((out[0] == '\0') && pp_dir_find(&v, 0, "MAIN       ", &dir, NULL))
+        pp_read_small(&v, dir, "KEY     DAT", out, sz);
+
+    pp_fat_close(&v);
+
+    return out[0] != '\0';
+}
+
 /* What to call this image in the window title: the release it says it is, plus its NSB
    number.  Photo Play 2.0 does not carry a MAIN.SET to name itself, so it is recognised
-   by its CopyControl directory instead. */
-static void
-pp_image_label(const char *fn, char *out, size_t sz)
+   by its CopyControl directory instead.
+
+   Public because the hard disk image manager has to name the machine the moment it
+   picks an image: pc_reset_hard() only raises a flag, so the reset that would set
+   vm_name has not happened yet when the title is redrawn. */
+void
+photoplay_image_label(const char *fn, char *out, size_t sz)
 {
     pp_fat_t v;
     char     nsb[32] = "";
@@ -452,15 +485,13 @@ pp_image_label(const char *fn, char *out, size_t sz)
     int      is20     = 0;
 
     out[0] = '\0';
+
+    photoplay_image_nsb(fn, nsb, sizeof(nsb));
+
     if (!pp_fat_open(&v, fn)) {
         pp_fat_close(&v);
         return;
     }
-
-    if (pp_dir_find(&v, 0, "MENU       ", &dir, NULL))
-        pp_read_small(&v, dir, "NSB     NR ", nsb, sizeof(nsb));
-    if ((nsb[0] == '\0') && pp_dir_find(&v, 0, "MAIN       ", &dir, NULL))
-        pp_read_small(&v, dir, "KEY     DAT", nsb, sizeof(nsb));
 
     if (pp_dir_find(&v, 0, "EXE        ", &dir, NULL) &&
         pp_dir_find(&v, dir, "PP2000  081", &sub, NULL) &&
@@ -536,8 +567,31 @@ pp_check_copycontrol(const char *fn)
                               "It changes no game file.");
 }
 
-/* Always mount HardDisk.img from the emulator's own directory as the single
-   IDE master, with the geometry implied by its size. */
+/* Which image this run boots: the one the hard disk image manager was pointed
+   at, or the HardDisk.img next to the executable.  Everything that needs to
+   know -- what to mount, and what to tell the dongle the disk is -- has to
+   agree, so they all come through here. */
+static void
+pp_disk_path(char *out, size_t outsz)
+{
+    const char *picked = photoplay_selected_image();
+
+    if (hdd_manager && (picked[0] != '\0')) {
+        snprintf(out, outsz, "%s", picked);
+        return;
+    }
+
+    path_append_filename(out, exe_path, PHOTOPLAY_DISK_IMAGE);
+}
+
+/* Mount the disk as the single IDE master, with the geometry implied by its
+   size.  That is HardDisk.img from the emulator's own directory, unless the
+   hard disk image manager is switched on and has been pointed at one out of
+   the library for this run.
+
+   This runs again from pc_reset_hard_init(), which is what makes picking an
+   image in the manager take effect on a hard reset rather than at the next
+   launch. */
 static void
 pp_apply_disk(void)
 {
@@ -549,7 +603,7 @@ pp_apply_disk(void)
     for (int i = 0; i < HDD_NUM; i++)
         memset(&hdd[i], 0, sizeof(hard_disk_t));
 
-    path_append_filename(fn, exe_path, PHOTOPLAY_DISK_IMAGE);
+    pp_disk_path(fn, sizeof(fn));
 
     fp = plat_fopen64(fn, "rb");
     if (fp == NULL) {
@@ -557,7 +611,7 @@ pp_apply_disk(void)
            would silently produce a blank multi-gigabyte image and boot to a
            dead machine, which looks like a corrupt disk rather than a missing
            one.  Leave the disk disabled and say so. */
-        pp_profile_log("PP: %s not found next to the executable -- no disk attached\n", fn);
+        pp_profile_log("PP: %s not found -- no disk attached\n", fn);
         return;
     }
     if (!fseeko64(fp, 0, SEEK_END))
@@ -591,7 +645,7 @@ pp_apply_disk(void)
        came out as ".".  The image says so itself in \FOTO\SETTINGS\MAIN.SET. */
     char ident[96];
 
-    pp_image_label(fn, ident, sizeof(ident));
+    photoplay_image_label(fn, ident, sizeof(ident));
     if (ident[0]) {
         strncpy(vm_name, ident, sizeof(vm_name) - 1);
         vm_name[sizeof(vm_name) - 1] = '\0';
@@ -615,7 +669,7 @@ photoplay_image_ident(char *banner_out, size_t bsz, char *terr_out, size_t tsz)
         char disp[64];
 
         pp_ident_done = 1;
-        path_append_filename(fn, exe_path, PHOTOPLAY_DISK_IMAGE);
+        pp_disk_path(fn, sizeof(fn));
         pp_ident_ok   = photoplay_identify_ex(fn, disp, sizeof(disp),
                                               pp_ident_banner, sizeof(pp_ident_banner),
                                               pp_ident_terr, sizeof(pp_ident_terr));
@@ -742,6 +796,42 @@ photoplay_modem(void)
         return "";
     snprintf(name, sizeof(name), "%s", s);
     return name;
+}
+
+/* The image the hard disk image manager picked, for this run only.
+
+   Nothing writes this to a config file on purpose.  A rig folder is a
+   complete cabinet -- its own image, its own nvr -- and the manager is a way
+   to run something else for a while, not a way to re-point that folder
+   permanently.  So the pick survives hard resets, because pp_apply_disk()
+   runs again on each one and has to keep the image the user chose, and dies
+   with the process. */
+static char pp_image[1024] = { '\0' };
+
+const char *
+photoplay_selected_image(void)
+{
+    return pp_image;
+}
+
+void
+photoplay_set_selected_image(const char *path)
+{
+    /* The dongle answers out of a cache of what the disk says it is, keyed on
+       nothing -- it was only ever asked about one image.  Changing the disk
+       under it has to throw that away, or the token keeps answering for the
+       previous image and every check fails. */
+    pp_ident_done = 0;
+    pp_ident_ok   = 0;
+    pp_ident_banner[0] = '\0';
+    pp_ident_terr[0]   = '\0';
+
+    if ((path == NULL) || (path[0] == '\0')) {
+        pp_image[0] = '\0';
+        return;
+    }
+
+    snprintf(pp_image, sizeof(pp_image), "%s", path);
 }
 
 void

@@ -247,6 +247,12 @@ extern int    fm_driver;                    /* (C) select FM sound driver */
 extern int    hook_enabled;                 /* (C) Keyboard hook is enabled */
 extern int    vmm_disabled;                 /* (G) disable built-in manager */
 extern char   vmm_path_cfg[1024];           /* (G) VMs path (unless -E is used) */
+extern int    hdd_manager;                  /* (G) PeepeeBox: hard disk image
+                                                   manager is in use */
+extern int    hdd_manager_asked;            /* (G) PeepeeBox: the first-start
+                                                   question has been answered */
+extern char   hdd_images_path[1024];        /* (G) PeepeeBox: folder holding the
+                                                   hard disk image library */
 extern int    gdbstub_port;                 /* (C) The GDB stub port. */
 
 extern char exe_path[2048];        /* path (dir) of executable */

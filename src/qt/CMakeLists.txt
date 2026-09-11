@@ -146,6 +146,9 @@ add_library(ui STATIC
     qt_preferencesemulator.cpp
     qt_preferencesemulator.hpp
     qt_preferencesemulator.ui
+    qt_preferenceshdd.cpp
+    qt_preferenceshdd.hpp
+    qt_preferenceshdd.ui
     qt_preferencesinput.cpp
     qt_preferencesinput.hpp
     qt_preferencesinput.ui
@@ -172,6 +175,10 @@ add_library(ui STATIC
     qt_keybind.ui
     qt_singlekeyseqedit.cpp
     qt_singlekeyseqedit.hpp
+
+    qt_hddmanager.cpp
+    qt_hddmanager.hpp
+    qt_hddmanager.ui
 
     qt_filefield.cpp
     qt_filefield.hpp

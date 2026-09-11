@@ -101,6 +101,9 @@ static int      cy;
 static int      cw;
 static int      ch;
 static ini_t    config;
+/* Where the global settings are being read from.  Normally this is `config`
+   itself -- there is one file -- and it points somewhere else only while a
+   pre-merge 86box_global.cfg is being imported. */
 static ini_t    global;
 static mutex_t *config_mutex = NULL;
 
@@ -166,6 +169,25 @@ load_global_emulator(void)
         }
     } else {
         plat_get_vmm_dir(vmm_path_cfg, sizeof(vmm_path_cfg));
+    }
+
+    /* PeepeeBox: the hard disk image manager.  Both keys are absent on a
+       first start, which is exactly how the first-start question knows it
+       has not been asked yet. */
+    hdd_manager       = ini_section_get_int(cat, "hdd_manager", 0);
+    hdd_manager_asked = ini_section_get_int(cat, "hdd_manager_asked", 0);
+
+    hdd_images_path[0] = '\0';
+    p = ini_section_get_string(cat, "hdd_images_path", NULL);
+    if (p != NULL) {
+        /* Convert relative paths to absolute in portable mode */
+        if (portable_mode && !path_abs(p)) {
+            path_append_filename(hdd_images_path, exe_path, p);
+            path_normalize(hdd_images_path);
+        } else {
+            strncpy(hdd_images_path, p, sizeof(hdd_images_path) - 1);
+            hdd_images_path[sizeof(hdd_images_path) - 1] = '\0';
+        }
     }
 }
 
@@ -2000,17 +2022,40 @@ load_keybinds(void)
 void
 config_load_global(void)
 {
-    config_log("Loading global config file '%s'...\n", global_cfg_path);
+    config_log("Loading settings from '%s'...\n", cfg_path);
 
-    global = ini_read(global_cfg_path);
+    /* One configuration file.  What used to be its own 86box_global.cfg now
+       lives in 86box.cfg under [Emulator], [Input] and [Keybinds], so this
+       reads the same file config_load() goes on to parse and the two halves
+       share one ini object rather than two views over two files.
 
-    if (global == NULL) {
-        global = ini_new();
+       A missing file is left as NULL rather than replaced with an empty ini:
+       config_load() distinguishes "no file" from "empty file" and applies a
+       different set of defaults for each. */
+    if (config == NULL)
+        config = ini_read(cfg_path);
 
-        config_log("Global config file not present or invalid!\n");
-    }
+    global = config;
 
     load_global();
+
+    /* A folder left over from before the merge still has the settings in the
+       old file.  Read them across once so nothing is silently lost; the next
+       save puts them in 86box.cfg.  The old file is left where it is rather
+       than deleted -- it is the user's, and it is now simply ignored. */
+    if (!new_loaded && !kb_loaded) {
+        ini_t legacy = ini_read(global_cfg_path);
+
+        if (legacy != NULL) {
+            config_log("Importing settings from '%s'.\n", global_cfg_path);
+
+            global = legacy;
+            load_global();
+            ini_close(legacy);
+
+            global = config;
+        }
+    }
 }
 
 /* Load the specified or a default configuration file. */
@@ -2031,7 +2076,9 @@ config_load(void)
     for (int i = 0; i < 768; i++)
         scancode_config_map[i] = i;
 
-    config = ini_read(cfg_path);
+    /* config_load_global() has already read this file; it holds both halves. */
+    if (config == NULL)
+        config = ini_read(cfg_path);
 
     if (config == NULL) {
         config = ini_new();
@@ -2133,6 +2180,9 @@ config_load(void)
         config_log("VM config loaded.\n\n");
     }
 
+    /* An absent file left config NULL until the branch above made one. */
+    global = config;
+
     /* PeepeeBox: overwrite whatever was just loaded with the fixed Photo Play
        machine profile.  Done here, after parsing, so that a stale or
        hand-edited 86box.cfg cannot describe a machine that is not a cabinet. */
@@ -2222,6 +2272,29 @@ save_global_emulator(void)
         }
     } else {
         ini_section_delete_var(cat, "vmm_path");
+    }
+
+    /* PeepeeBox: the hard disk image manager.  Leaving the keys out while the
+       feature is off and unasked keeps a default config file unchanged. */
+    if (hdd_manager)
+        ini_section_set_int(cat, "hdd_manager", hdd_manager);
+    else
+        ini_section_delete_var(cat, "hdd_manager");
+
+    if (hdd_manager_asked)
+        ini_section_set_int(cat, "hdd_manager_asked", hdd_manager_asked);
+    else
+        ini_section_delete_var(cat, "hdd_manager_asked");
+
+    if (hdd_images_path[0] != 0) {
+        /* Save path as relative to the EXE path in portable mode */
+        if (portable_mode && path_abs(hdd_images_path) && !strnicmp(hdd_images_path, exe_path, strlen(exe_path))) {
+            ini_section_set_string(cat, "hdd_images_path", &hdd_images_path[strlen(exe_path)]);
+        } else {
+            ini_section_set_string(cat, "hdd_images_path", hdd_images_path);
+        }
+    } else {
+        ini_section_delete_var(cat, "hdd_images_path");
     }
 
     ini_delete_section_if_empty(global, cat);
@@ -3433,9 +3506,14 @@ save_cdrom_drives(void)
 void
 config_save_global(void)
 {
+    if (config == NULL)
+        config = ini_new();
+
+    global = config;
+
     save_global();                  /* Global */
 
-    ini_write(global, global_cfg_path);
+    ini_write(config, cfg_path);
 }
 
 void
@@ -3463,9 +3541,10 @@ config_save(void)
     save_vk_shaders();              /* GL3 Shaders */
 #endif
 
-    ini_write(config, cfg_path);
+    global = config;
+    save_global();                  /* Emulator, Input and Keybinds */
 
-    config_save_global();
+    ini_write(config, cfg_path);
 
     if (config_mutex)
         thread_release_mutex(config_mutex);

@@ -27,6 +27,7 @@
 #include "qt_soundgain.hpp"
 #include "qt_preferences.hpp"
 #include "qt_mcadevicelist.hpp"
+#include "qt_hddmanager.hpp"
 
 #include "qt_rendererstack.hpp"
 #include "qt_renderercommon.hpp"
@@ -358,6 +359,9 @@ MainWindow::MainWindow(QWidget *parent)
     statusBar()->setStyleSheet("QStatusBar::item {border: None; } QStatusBar QLabel { margin-right: 2px; margin-bottom: 1px; }");
     this->centralWidget()->setStyleSheet("background-color: black;");
     ui->toolBar->setVisible(!hide_tool_bar);
+    /* Grayed out rather than hidden, so it is visible that the feature is
+       there and switched off rather than missing from the build. */
+    ui->actionHDD_manager->setEnabled(hdd_manager > 0);
 #ifdef _WIN32
     ui->toolBar->setBackgroundRole(QPalette::Light);
 #endif
@@ -382,17 +386,7 @@ MainWindow::MainWindow(QWidget *parent)
     this->setWindowFlag(Qt::WindowMaximizeButtonHint, vid_resize == 1);
     this->setWindowFlag(Qt::WindowFullscreenButtonHint, vid_resize == 1);
 
-    QString vmname(vm_name);
-    if (vmname.at(vmname.size() - 1) == '"' || vmname.at(vmname.size() - 1) == '\'')
-        vmname.truncate(vmname.size() - 1);
-    /* The fork release, then the commit the build came from after a dash.  Several
-       builds are usually in flight at once across the rig folders, so the title has to
-       say which one is on screen; the log header repeats it. */
-    QString title = QString("%1 - %2 %3").arg(vmname, EMU_NAME, PEEPEEBOX_RELEASE);
-#ifdef EMU_GIT_HASH
-    title += QString(" - %1").arg(EMU_GIT_HASH);
-#endif
-    this->setWindowTitle(title);
+    updateWindowTitle();
 
     connect(this, &MainWindow::forceInterpretationCompleted, this, [this]() {
         const auto fi_icon      = cpu_force_interpreter ? QIcon(":/menuicons/qt/icons/recompiler.ico") :
@@ -1595,6 +1589,71 @@ MainWindow::on_actionSettings_triggered()
         pc_reset_hard();
     }
     plat_pause(currentPause);
+}
+
+/* The window is named after what the disk says it is, so this has to be
+   rebuilt whenever the disk changes under the machine. */
+void
+MainWindow::updateWindowTitle()
+{
+    QString vmname(vm_name);
+
+    if (vmname.isEmpty())
+        vmname = QString(EMU_NAME);
+    else if ((vmname.at(vmname.size() - 1) == '"') || (vmname.at(vmname.size() - 1) == '\''))
+        vmname.truncate(vmname.size() - 1);
+
+    /* The fork release, then the commit the build came from after a dash.  Several
+       builds are usually in flight at once across the rig folders, so the title has to
+       say which one is on screen; the log header repeats it. */
+    QString title = QString("%1 - %2 %3").arg(vmname, EMU_NAME, PEEPEEBOX_RELEASE);
+#ifdef EMU_GIT_HASH
+    title += QString(" - %1").arg(EMU_GIT_HASH);
+#endif
+    this->setWindowTitle(title);
+}
+
+void
+MainWindow::on_actionHDD_manager_triggered()
+{
+    HddManager manager(this);
+
+    manager.setWindowModality(Qt::WindowModal);
+
+    if ((manager.exec() != QDialog::Accepted) || manager.selectedImage().isEmpty())
+        return;
+
+    /* Make the choice the disk and restart the cabinet on it.  The profile is
+       re-stamped from pc_reset_hard_init(), so the reset is what mounts the
+       new image.  Nothing is saved: the pick is for this run. */
+    const QByteArray image = manager.selectedImage().toUtf8();
+
+    plat_pause(1);
+
+    photoplay_set_selected_image(image.constData());
+
+    /* Name the machine now rather than waiting for the reset to do it.
+       pc_reset_hard() only raises a flag -- the emulation thread does the work
+       later -- so vm_name still describes the previous disk at this point, and
+       the title came out as whatever the working directory is called. */
+    char ident[96] = { 0 };
+
+    photoplay_image_label(image.constData(), ident, sizeof(ident));
+
+    if (ident[0] != '\0') {
+        strncpy(vm_name, ident, sizeof(vm_name) - 1);
+        vm_name[sizeof(vm_name) - 1] = '\0';
+    }
+
+    pc_reset_hard();
+
+    /* Loading an image means running it.  Restoring the previous pause state
+       would leave it stopped in the case that matters most -- a machine that
+       came up with no disk at all and is being given one. */
+    plat_pause(0);
+
+    updateWindowTitle();
+    refreshMediaMenu();
 }
 
 /* PeepeeBox: the cabinet's own controls -- the coin slot and the two buttons
@@ -4691,6 +4750,7 @@ MainWindow::on_actionPreferences_triggered()
             break;
         case QDialog::Accepted:
             updateShortcuts();
+            ui->actionHDD_manager->setEnabled(hdd_manager > 0);
             emit vmmGlobalConfigurationChanged();
             break;
         case QDialog::Rejected:
