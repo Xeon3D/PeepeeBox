@@ -45,11 +45,13 @@ void  log_out(void *p, const char *f, va_list a) { (void) p; (void) f; (void) a;
 
 /* The config the device would have read out of the ini.  Blank identity strings,
    so the model table's own answers are what gets tested. */
+static int fake_line = 0; /* 0 dead, 1 a TCP host that always answers */
+
 int
 device_get_config_int(const char *name)
 {
     if (!strcmp(name, "line"))
-        return 0; /* not connected */
+        return fake_line;
     if (!strcmp(name, "host_port"))
         return 23;
     if (!strcmp(name, "connect_rate"))
@@ -60,7 +62,8 @@ device_get_config_int(const char *name)
 const char *
 device_get_config_string(const char *name)
 {
-    (void) name;
+    if (!strcmp(name, "host") && fake_line)
+        return "127.0.0.1";
     return "";
 }
 
@@ -68,12 +71,14 @@ static uint32_t fake_ticks = 100000;
 
 uint32_t plat_get_ticks(void) { return fake_ticks; }
 
-SOCKET plat_netsocket_create(int t) { (void) t; return (SOCKET) -1; }
+/* With fake_line set the "network" is a socket that connects at once and
+   never carries anything -- enough to watch the modem's side of a connect. */
+SOCKET plat_netsocket_create(int t) { (void) t; return fake_line ? (SOCKET) 7 : (SOCKET) -1; }
 void   plat_netsocket_close(SOCKET s) { (void) s; }
-int    plat_netsocket_connect(SOCKET s, const char *h, unsigned short p) { (void) s; (void) h; (void) p; return -1; }
-int    plat_netsocket_connected(SOCKET s) { (void) s; return -1; }
+int    plat_netsocket_connect(SOCKET s, const char *h, unsigned short p) { (void) s; (void) h; (void) p; return fake_line ? 0 : -1; }
+int    plat_netsocket_connected(SOCKET s) { (void) s; return fake_line ? 1 : -1; }
 int    plat_netsocket_send(SOCKET s, const unsigned char *d, unsigned int n, int *w) { (void) s; (void) d; (void) n; (void) w; return -1; }
-int    plat_netsocket_receive(SOCKET s, unsigned char *d, unsigned int n, int *w) { (void) s; (void) d; (void) n; (void) w; return -1; }
+int    plat_netsocket_receive(SOCKET s, unsigned char *d, unsigned int n, int *w) { (void) s; (void) d; (void) n; *w = fake_line; return -1; }
 
 /* ---------------------------------------------- the cabinet's own tables */
 
@@ -383,11 +388,49 @@ run_model(const device_t *device, const char *expect_name)
     device->close(dev);
 }
 
+/* The order of events on a connect.  The cabinet's PPP driver reads result
+   lines after ATDT and watches DCD; it must see the CONNECT text before the
+   carrier, or it goes by the carrier alone and the cabinet files the call as
+   NO RESPONSE. */
+static void
+run_connect(const device_t *device)
+{
+    char buf[4096];
+
+    printf("\n== %s, connecting ==\n", device->name);
+    fake_line = 1;
+    dev       = device->init(device);
+
+    send_str("\r\r");
+    drain(buf, sizeof(buf));
+    at("ATE0");
+    send_str("ATDT0676077111\r");
+    drain(buf, sizeof(buf));
+    expect("nothing right after ATDT", strstr(buf, "CONNECT") ? "early" : "quiet", "quiet");
+    expect("no DCD before CONNECT",
+           (test_port.chardev.status(dev) & CHAR_COM_DCD) ? "dcd" : "none", "none");
+
+    fake_ticks += 2100; /* the "training" */
+    drain(buf, sizeof(buf));
+    expect("CONNECT after a pause", buf, "\r\nCONNECT 57600\r\n");
+    expect("still no DCD while it is being read",
+           (test_port.chardev.status(dev) & CHAR_COM_DCD) ? "dcd" : "none", "none");
+
+    fake_ticks += 200;
+    drain(buf, sizeof(buf));
+    expect("DCD once the line has been read",
+           (test_port.chardev.status(dev) & CHAR_COM_DCD) ? "dcd" : "none", "dcd");
+
+    device->close(dev);
+    fake_line = 0;
+}
+
 int
 main(void)
 {
     run_model(&char_modem_elsa_com_device, "ELSA MicroLink 56k");
     run_model(&char_modem_supra_com_device, "Diamond SupraExpress 56e PRO");
+    run_connect(&char_modem_supra_com_device);
 
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "all checks passed",
            failures, (failures == 1) ? "" : "s");

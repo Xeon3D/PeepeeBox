@@ -119,8 +119,22 @@ enum { /* line state machine */
        MODEM_ST_IDLE = 0,
        MODEM_ST_DIALING,    /* off hook, waiting out the dial  */
        MODEM_ST_CONNECTING, /* TCP connect in flight           */
+       MODEM_ST_ANSWERING,  /* carrier found: training, then CONNECT */
        MODEM_ST_ONLINE
 };
+
+/* A TCP connect to localhost completes in well under a millisecond; a V.34
+   handshake takes several seconds.  The gap matters: the cabinet's PPP driver
+   (Klos, PPP.EXE) sends ATDT and then reads result lines until it sees its
+   CONNECTSTRING, and it also watches DCD.  Hand it DCD and the CONNECT line in
+   the same instant and it goes by the carrier, never reads the text, and the
+   cabinet logs the call as NO RESPONSE -- PPPMENU's placeholder for "the modem
+   never said".  So: wait a plausible while, say CONNECT, let the DTE drain it,
+   and only then raise DCD and go on line, which is the order a real modem does
+   it in and what the cabinet's own logs show (CONNECT 48000/LAPM, every night
+   for a decade). */
+#define MODEM_TRAIN_MS   2000 /* dial to CONNECT                          */
+#define MODEM_SETTLE_MS  100  /* CONNECT drained to DCD and data mode     */
 
 enum { /* result codes, in the numeric order every Hayes modem uses */
        RES_OK = 0,
@@ -264,6 +278,7 @@ typedef struct {
     int      state;
     SOCKET   sock;
     uint32_t deadline; /* plat_get_ticks() value the current wait ends at  */
+    int      said_connect; /* ANSWERING: the CONNECT line has been queued  */
     int      dtr;
 
     /* +++ escape detection. */
@@ -369,12 +384,21 @@ modem_hangup(modem_t *dev)
     char_update_status(dev->port);
 }
 
+/* The carrier is up: start the CONNECT sequence described above. */
 static void
 modem_answered(modem_t *dev)
 {
+    dev->state        = MODEM_ST_ANSWERING;
+    dev->said_connect = 0;
+    dev->deadline     = plat_get_ticks() + MODEM_TRAIN_MS;
+}
+
+/* CONNECT has been read: raise DCD, go on line. */
+static void
+modem_online(modem_t *dev)
+{
     dev->state  = MODEM_ST_ONLINE;
     dev->online = 1;
-    modem_result(dev, RES_CONNECT);
     char_update_status(dev->port);
 }
 
@@ -441,6 +465,17 @@ modem_poll_line(modem_t *dev)
             }
             break;
         }
+
+        case MODEM_ST_ANSWERING:
+            if ((int32_t) (now - dev->deadline) < 0)
+                break;
+            if (!dev->said_connect) {
+                modem_result(dev, RES_CONNECT);
+                dev->said_connect = 1;
+                dev->deadline     = now + MODEM_SETTLE_MS;
+            } else if (dev->out_tail == dev->out_head)
+                modem_online(dev); /* the DTE has read the line */
+            break;
 
         default:
             break;

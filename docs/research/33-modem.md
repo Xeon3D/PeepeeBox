@@ -339,7 +339,13 @@ It has:
   the cabinet hang for its 60-second `CONNECTION TIMEOUT`.
 * an optional TCP host, in which case dialling anything connects there and the
   modem becomes a transparent pipe -- which is what the guest's PPP wants, and
-  what a fun.net stand-in would need.
+  what a fun.net stand-in would need. The connect is paced like a real one:
+  two seconds of "training" after `ATDT`, then the `CONNECT` line, then DCD
+  only once the DTE has read it. The order matters. Klos `PPP.EXE` reads result
+  lines after dialling and also watches DCD; given both in the same instant it
+  went by the carrier, never read the text, and every session against
+  fun.net-server was filed in `EVENT.TAB` with PPPMENU's placeholder
+  `NO RESPONSE` instead of a `CONNECT 57600` -- even the ones that worked.
 
 `photoplay.c` fits the chosen part to COM4 on IRQ 10; `[Photo Play] modem` holds
 its device internal name, and an empty string -- the default -- means no modem.
