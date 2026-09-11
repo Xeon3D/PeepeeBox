@@ -161,6 +161,10 @@ def main():
     if len(sys.argv) < 3:
         raise SystemExit(__doc__)
     gen = sys.argv[1].lower()
+    if gen in ('2001', 'igo3'):
+        raise SystemExit('%s: refused -- the calibration pairs this builds fit no key, so the kit '
+                         'can never calibrate (README.md);\nthe key is already fitted in '
+                         'softpart.py, so there is nothing to capture' % gen)
     args = sys.argv[2:]
     outp = 'DONGCAP.LST'
     if '-o' in args:

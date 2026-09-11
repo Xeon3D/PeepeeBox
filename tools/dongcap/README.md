@@ -4,10 +4,12 @@ dongcap — source for the three capture tools
 This folder builds the programs that ship in `capture-igo2/`, and generates the work list
 it carries. You only need it to rebuild or re-target; to actually capture, use that folder.
 
-There is one capture folder because there is one dongle. `capture-2001/` and
-`capture-igo3/` would need the `7477/7D57` and `6B91/24A3` parts, which are not to hand --
-`mklist.py 2001` and `mklist.py igo3` still build their lists, so they are one command away
-if those ever turn up.
+There is one capture folder because there is one dongle. Kits for 2001 and I.G.O. 3 were
+built once and were **broken**: their calibration pairs fit no key under the cipher at all
+(2001's list read its pictures from byte 0 rather than 128; I.G.O. 3's used stale harvested
+pairs), so no part on any port could have passed calibration. They were withdrawn and
+`mklist.py` now refuses both. Nothing needs them -- both keys are fitted in `softpart.py` --
+and what I.G.O. 3 still wants from a real part is `SESSION.COM`, not a capture.
 
 `dongcap.c` — the capture program (Windows)
 -------------------------------------------
