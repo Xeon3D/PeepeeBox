@@ -174,7 +174,13 @@ serial_receive_timer(void *priv)
 
     serial_log("serial_receive_timer()\n");
 
-    timer_on_auto(&dev->receive_timer, /* dev->bits * */ dev->transmit_period);
+    /* One character per character time.  Upstream delivers one per *bit* time
+       -- ten times the configured baud rate -- which no real UART ever did and
+       which the cabinet's PPP driver cannot service: on a 57600 link its
+       receive FIFO overran partway through every second frame, and fun.net
+       transfers crawled on retransmissions.  Transmit already paces itself by
+       the character; receive now matches. */
+    timer_on_auto(&dev->receive_timer, dev->bits * dev->transmit_period);
 
     if (dev->char_port.chardev.read) {
         uint8_t val;
@@ -412,7 +418,13 @@ static void
 serial_update_speed(serial_t *dev)
 {
     serial_log("serial_update_speed(%lf)\n", dev->transmit_period);
-    timer_on_auto(&dev->receive_timer, /* dev->bits * */ dev->transmit_period);
+    /* One character per character time.  Upstream delivers one per *bit* time
+       -- ten times the configured baud rate -- which no real UART ever did and
+       which the cabinet's PPP driver cannot service: on a 57600 link its
+       receive FIFO overran partway through every second frame, and fun.net
+       transfers crawled on retransmissions.  Transmit already paces itself by
+       the character; receive now matches. */
+    timer_on_auto(&dev->receive_timer, dev->bits * dev->transmit_period);
 
     if (dev->transmit_enabled & 3)
         timer_on_auto(&dev->transmit_timer, dev->transmit_period);

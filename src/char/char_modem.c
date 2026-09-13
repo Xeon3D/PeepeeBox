@@ -887,12 +887,25 @@ modem_read(uint8_t *buf, size_t len, void *priv)
         modem_result(dev, RES_OK);
     }
 
-    /* Anything the carrier is delivering goes in front of the ring. */
+    /* Anything the carrier is delivering goes in front of the ring -- but only
+       as much as the ring can hold.  The far end can push a TCP window's worth
+       in a millisecond; the UART drains 5.7 KB/s.  Taking it all and dropping
+       the overflow (what this did before) corrupts HDLC frames and the guest's
+       TCP pays a retransmission timeout for each.  Leaving it in the socket is
+       what a real modem's flow control does: the peer's kernel holds it. */
     if (dev->online && CHAR_FD_VALID(dev->sock)) {
         uint8_t   net[256];
         int       wouldblock = 0;
-        const int room       = (int) sizeof(net);
-        const int ret        = plat_netsocket_receive(dev->sock, net, room, &wouldblock);
+        const int used       = (int) ((dev->out_head - dev->out_tail + MODEM_OUT_SIZE) % MODEM_OUT_SIZE);
+        int       room       = MODEM_OUT_SIZE - 1 - used;
+        int       ret        = 0;
+
+        if (room > (int) sizeof(net))
+            room = (int) sizeof(net);
+        if (room > 0)
+            ret = plat_netsocket_receive(dev->sock, net, room, &wouldblock);
+        else
+            wouldblock = 1; /* nothing asked for; not a hangup */
 
         if (ret > 0) {
             for (int i = 0; i < ret; i++)

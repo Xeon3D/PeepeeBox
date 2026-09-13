@@ -346,6 +346,11 @@ It has:
   went by the carrier, never read the text, and every session against
   fun.net-server was filed in `EVENT.TAB` with PPPMENU's placeholder
   `NO RESPONSE` instead of a `CONNECT 57600` -- even the ones that worked.
+  On line, the modem takes from the socket only what its 4 KB output ring
+  can hold, so a fast peer is held back in its own kernel rather than having
+  bytes dropped mid-frame -- which is what a real modem's flow control does,
+  and what stopped a 6 MB fun.net update costing a retransmission timeout
+  every third segment.
 
 `photoplay.c` fits the chosen part to COM4 on IRQ 10; `[Photo Play] modem` holds
 its device internal name, and an empty string -- the default -- means no modem.
