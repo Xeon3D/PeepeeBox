@@ -2661,10 +2661,13 @@ ib_start(void)
 {
     ib_t *ib = &ib_dev;
     /* ROM: family 0x09 (DS1982/DS2502), 6-byte serial, CRC8 over all 8 == 0.
-       The games check only the CRC -- the serial is never compared. */
-    static const uint8_t serial[6] = { 0x50, 0x50, 0x42, 0x4F, 0x58, 0x00 };
-    static const char    text[]    = "Photo Play 2000 Version 3";
+       The games check only the CRC.  FN_SYS.EXE, however, turns the serial into
+       the cabinet's machine licence for fun.net -- [Photo Play] machlic; the
+       default is the old fixed "PPBOX" (50 50 42 4F 58 00). */
+    uint8_t           serial[6];
+    static const char text[] = "Photo Play 2000 Version 3";
 
+    photoplay_machlic_serial(serial);
     ib_crc8_init();
     memset(ib, 0, sizeof(*ib));
 

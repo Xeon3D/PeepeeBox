@@ -35,6 +35,7 @@ extern "C" {
 #define PHOTOPLAY_MODEM_IRQ   10                 /* what the cabinet's NET.CFG says */
 #define PHOTOPLAY_FUNLINK     "funlink"          /* the fun.link adapter        */
 #define PHOTOPLAY_FUNLINK_PORT 0                 /* COM1, 0x03F8, IRQ 4         */
+#define PHOTOPLAY_NIC         "rtl8139c+"       /* Realtek RTL8139C+, PCI; see photoplay.c */
 
 #define PHOTOPLAY_DISK_IMAGE  "HardDisk.img"
 
@@ -85,6 +86,12 @@ extern void photoplay_set_com3_irq(int irq);
 extern const char *photoplay_modem(void);
 extern void        photoplay_set_modem(const char *internal_name);
 extern const char *photoplay_modem_list(int index);
+
+/* The machine licence the dongle presents (see photoplay.c). */
+extern const char *photoplay_machlic(void);
+extern void        photoplay_machlic_serial(uint8_t serial[6]);
+#define PHOTOPLAY_MACHLIC_POOL 2000            /* entries in the shared machlic pool */
+extern void        photoplay_machlic_pool(int i, char lic[13]);
 extern int         photoplay_com4_irq(void);
 
 /* Whether the fun.link adapter is fitted.  fun.link joins cabinets together so

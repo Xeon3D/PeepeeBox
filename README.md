@@ -170,12 +170,17 @@ Six things, all under the **Tools** menu:
 | **Dongle…** | The version banner and territory the dongle reports, and whether the iButton is present. The banner must match `MAIN.SET["Version"]` for the image you are running. |
 | **Touchscreen…** | Which part is fitted — a 3M MicroTouch or an Elo SmartSet — and its port, IRQ and speed. The cabinets shipped a MicroTouch on COM3, IRQ 4, 9600 baud, and that is the default. Move it and touch stops working with nothing on screen saying so. |
 | **Modem…** | Which modem is fitted to COM4, at 0x2E8 on IRQ 10 — an ELSA MicroLink 56k or a Diamond SupraExpress 56e PRO, the two parts the fun.net cabinets are found with — and what its telephone line is attached to. None by default; the line is dead unless you point it at a TCP host. |
-| **Network…** | Network card selection, as upstream. The cabinets are offline, but adding a NIC is harmless. |
+| **Network…** | What the cabinet's RTL8139 is plugged into. The card is always fitted — no real cabinet had one, but an image given the Ethernet option (`tools/ethernet-patch`) reaches fun.net through it instead of the modem. *Local Switch* talks to a fun.net stand-in on this PC; *Remote Switch* to one on the internet (`host:port`, optional shared secret). See `docs/research/35-ethernet.md`. |
 | **CD-ROM drive** | Attaches a generic 52× ATAPI CD-ROM as secondary master. Off by default. |
 | **Floppy drive** | Attaches a 3.5" 1.44 MB drive as A:. Off by default. |
 
 With a CD-ROM or floppy attached, the **Media** menu gains the usual
 new / existing image / eject actions for it.
+
+One more, in `86box.cfg` only — `[Photo Play] machlic`: the machine licence the
+dongle presents, which fun.net addresses the cabinet by. Every PeepeeBox used to
+be the same cabinet (`00584F425050`); `machlic = random` or `pool:N` draws one of
+2000 licences the fun.net stand-in already knows, and a 12-digit value fixes it.
 
 Everything else — machine, CPU, RAM, video card, sound card, hard disk — is
 fixed by the Photo Play profile in

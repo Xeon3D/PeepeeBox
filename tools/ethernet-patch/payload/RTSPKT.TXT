@@ -1,0 +1,92 @@
+   Packet Driver
+
+   Introduction:
+   -------------
+   This document describes the procedure to setup the Packet driver for
+   Realtek RTL8139 family PCI/Cardbus fast ethernet cards.
+
+   Location of Driver:     \RTSPKT\RTSPKT.COM
+
+   Sample Configuration Files:
+   ---------------------------
+      AUTOEXEC.BAT
+        RTSPKT 0x60
+
+   Notes:
+   ------
+     1.  Load the packet driver using the software interrupt and any
+         optional switches if required.
+
+         Usage: RTSPKT [options] <software_int_no> [-m media type] [bus_no device_no]
+
+         Example: RTSPKT -i 0x7e
+
+         The only required  parameter is the software  interrupt.  A packet
+         driver needs to have a software interrupt assigned to it for other
+         programs to access it. The recommended interrupt 0x7e. If you need
+         any of the  options  listed below,  place them before the software
+         interrupt on the command line.
+
+         -i - Force driver to report itself as 802.3 instead of Ethernet II.
+         -d - Delayed initialization.  Used for diskless booting
+         -n - NetWare conversion.  Converts 802.3 packets into 8137 packets
+         -w - Windows hack, obsoleted by winpkt
+         -p - Promiscuous mode disable
+         -h - Help
+         -u - Uninstall
+
+      2. Media type can be used to force the card to work on specific
+         speed and duplex mode. If no media type if specified, then
+         driver will read hardware configuration from EEPROM on the
+         card. The hardware configuration can be modified by running
+         'rset8139' on driver disk.
+
+      3. Type command,C:\RTSPKT 0x60, the screen will appear following
+         message:
+
+         System: [345]86 processor, PCI bus, Two 8259s
+         Packet driver software interrupt is 0x60
+         Interrupt number is 0x9
+         I/O port is 0x6100
+         My Ethernet address is 52:54:4C:29:29:AD
+
+
+      4. Installing Multiple LAN Adapters:
+
+         4.1 The user can run RTSPKT 0x60 directly, then the screen
+             will display :
+
+             Packet driver for RTL8139(X) fast ehternet NIC, version 3.19
+             Copyright 2000(c), Realtek Semiconductor Inc.
+
+             There are 2 network cards on your main board :
+             Card 1. IRQ= 0x9  I/O= 0x6100  NodeID= 52:54:4C:29:29:AD
+             Card 2. IRQ= 0xA  I/O= 0x6000  NodeID= 52:54:4C:29:29:64
+             Please select a Card No.(1-2): 1
+
+         4.11 The user just has to select one card from the list. After
+             selecting Card 1, the screen will display:
+
+             System: [345]86 processor, PCI bus, Two 8259s
+             Packet driver software interrupt is 0x60
+             Interrupt number is 0x9
+             I/O port is 0x6100
+             My Ethernet address is 52:54:4C:29:29:AD
+
+         4.2 The user can use the bus_no and device_no argument to specify
+             the card that you want to select. If bus number is 0x00 and
+             the device number is 0x0A, you just has bo type
+             PCIPKT 0x60 0x00 0x0A in the command line to select this card
+             directly without having to make selection as 3.1.
+
+
+      5. Installing multiple drivers:
+
+         If you want to install multiple cards each connecting to different
+         network, you have to install the driver multiple times, each with
+         different packet interrupt number. Then modify 'ioaddr' variable
+         in 'config.tel' to specify the packet inetrrupt you will use.
+
+                                               ---David Tang---
+
+

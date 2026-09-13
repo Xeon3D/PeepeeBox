@@ -1,0 +1,11 @@
+# WATTCP.ETH - WATTCP configuration used by TRANSMIT.BAT in Ethernet mode
+# (copied over WATTCP.CFG before CLIENT.EXE runs).
+#
+# DHCP from the fun.net-server-ethernet stand-in (86Box local switch):
+my_ip = dhcp
+#
+# static example:
+#my_ip = 192.168.200.20
+#netmask = 255.255.255.0
+#gateway = 192.168.200.1
+#nameserver = 192.168.200.1

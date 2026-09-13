@@ -42,6 +42,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
+#include <time.h>
 #include <wchar.h>
 #define HAVE_STDARG_H
 #include <86box/86box.h>
@@ -68,8 +70,11 @@
 #include <86box/scsi_device.h>
 #include <86box/cdrom.h>
 #include <86box/fdd.h>
+#include <86box/thread.h>
+#include <86box/network.h>
 #include <86box/ui.h>
 #include <86box/photoplay.h>
+#include <shathree.h>
 #include "cpu.h"
 
 /* The real images all use 63 sectors per track and 16 heads; their MBRs and
@@ -860,6 +865,82 @@ photoplay_modem_list(int index)
     return modems[index];
 }
 
+/* The machine licence, "machlic".  FN_SYS.EXE derives it from the dongle's
+   iButton ROM serial -- six bytes, written as twelve hex digits in reverse
+   byte order -- and treats a change as a new machine: TECHDATA.TAB and
+   COUNTER.TAB are wiped and fun.net addresses the cabinet by it
+   (/master/outgoing/machine/<machlic>).  The emulated dongle's serial used to
+   be the fixed "PPBOX" (machlic 00584F425050), which made every image on
+   every PeepeeBox the same cabinet to a fun.net server.
+
+   [Photo Play] machlic = <12 hex digits>   fixes it, in the cabinet's own notation;
+   [Photo Play] machlic = random            draws a new one and writes it back, so
+                                            it persists until asked for again;
+   absent, or anything else                 the old PPBOX default.
+   See docs/research/35-ethernet.md. */
+const char *
+photoplay_machlic(void)
+{
+    static char lic[13];
+    const char *s = config_get_string(PHOTOPLAY_SECTION, "machlic", "");
+    int         ok = (s != NULL) && (strlen(s) == 12);
+
+    for (int i = 0; ok && (i < 12); i++)
+        ok = isxdigit((unsigned char) s[i]);
+    if (ok) {
+        for (int i = 0; i < 12; i++)
+            lic[i] = toupper((unsigned char) s[i]);
+        lic[12] = '\0';
+        return lic;
+    }
+    /* "random" and "pool:N" draw from the pool shared with the fun.net stand-in
+       (machlic_pool.py there): the server registers every entry in advance, so
+       a cabinet with a pooled licence passes the operator-password check and
+       gets a machine script without anyone having heard of it first. */
+    int idx = -1;
+    if ((s != NULL) && !stricmp(s, "random")) {
+        srand((unsigned) time(NULL) ^ (unsigned) plat_get_ticks());
+        idx = rand() % PHOTOPLAY_MACHLIC_POOL;
+    } else if ((s != NULL) && !strnicmp(s, "pool:", 5) && (atoi(s + 5) >= 0) && (atoi(s + 5) < PHOTOPLAY_MACHLIC_POOL))
+        idx = atoi(s + 5);
+    if (idx >= 0) {
+        photoplay_machlic_pool(idx, lic);
+        config_set_string(PHOTOPLAY_SECTION, "machlic", lic);
+        pp_profile_log("PP: machlic %s from the pool (entry %d)\n", lic, idx);
+        return lic;
+    }
+    return "00584F425050";
+}
+
+/* Pool entry i: the first six bytes of SHA3-256("PeepeeBox machlic i"), as
+   twelve upper-case hex digits.  machlic_pool.py must agree, byte for byte. */
+void
+photoplay_machlic_pool(int i, char lic[13])
+{
+    SHA3Context cx;
+    char        seed[40];
+
+    snprintf(seed, sizeof(seed), "PeepeeBox machlic %d", i);
+    SHA3Init(&cx, 256);
+    SHA3Update(&cx, (const unsigned char *) seed, strlen(seed));
+    const unsigned char *h = SHA3Final(&cx);
+    for (int k = 0; k < 6; k++)
+        snprintf(lic + 2 * k, 3, "%02X", h[k]);
+    lic[12] = '\0';
+}
+
+/* The six ROM serial bytes the dongle presents for the machlic above. */
+void
+photoplay_machlic_serial(uint8_t serial[6])
+{
+    const char *lic = photoplay_machlic();
+    for (int i = 0; i < 6; i++) {
+        unsigned v;
+        sscanf(lic + 2 * (5 - i), "%2x", &v);
+        serial[i] = (uint8_t) v;
+    }
+}
+
 /* Which IRQ COM4 is wired to: 10, not the PC-standard 3.
 
    This is not a preference either.  An IGO 6 image still carries the NET.CFG its
@@ -954,6 +1035,34 @@ photoplay_set_fdd_enabled(int enabled)
     config_set_int(PHOTOPLAY_SECTION, "floppy", !!enabled);
 }
 
+/* The network card.  No cabinet left the factory with one, but a Photo Play
+   whose FN_SYS.EXE carries the Ethernet option (CONNTYPE=ETHERNET) transmits
+   through a Realtek RTL8139 packet driver instead of the modem, so the machine
+   has one fitted, as the first card, always: an idle NIC costs nothing, and a
+   cabinet without the option never loads the driver.  What the card is plugged
+   into -- the local switch on this host or a remote switch on the internet,
+   with or without a secret -- stays the user's choice in the Network settings
+   and persists in [Network] as usual; an unset type becomes the local switch.
+   See docs/research/35-ethernet.md. */
+static void
+pp_apply_network(void)
+{
+    net_cards_conf[0].device_num = network_card_get_from_internal_name(PHOTOPLAY_NIC);
+    if (net_cards_conf[0].device_num <= 0)
+        fatal("PeepeeBox: the %s network card is missing from this build\n", PHOTOPLAY_NIC);
+    if (net_cards_conf[0].net_type == NET_TYPE_NONE)
+        net_cards_conf[0].net_type = NET_TYPE_NLSWITCH;
+    for (int i = 1; i < NET_CARD_MAX; i++) {
+        net_cards_conf[i].device_num = 0;
+        net_cards_conf[i].net_type   = NET_TYPE_NONE;
+    }
+    pp_profile_log("PP: network: %s on %s%s%s (type %d, host \"%s\")\n", PHOTOPLAY_NIC,
+                   (net_cards_conf[0].net_type == NET_TYPE_NRSWITCH) ? "remote switch " : "the local switch",
+                   (net_cards_conf[0].net_type == NET_TYPE_NRSWITCH) ? net_cards_conf[0].nrs_hostname : "",
+                   net_cards_conf[0].secret[0] ? " (secret)" : "",
+                   net_cards_conf[0].net_type, net_cards_conf[0].nrs_hostname);
+}
+
 static void
 pp_apply_floppy(void)
 {
@@ -1006,6 +1115,7 @@ photoplay_apply_profile(void)
     pp_apply_disk();
     pp_apply_cdrom();
     pp_apply_floppy();
+    pp_apply_network();
 
     pp_profile_log("PP: Photo Play profile applied (%s, %s @ %d MHz, %d MB)\n",
                    PHOTOPLAY_MACHINE, PHOTOPLAY_CPU_FAMILY,

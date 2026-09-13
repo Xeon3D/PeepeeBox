@@ -399,9 +399,7 @@ SettingsNetwork::onCurrentMachineChanged(int machineId)
 #endif
 
         Models::AddEntry(model, tr("Local Switch"), NET_TYPE_NLSWITCH);
-#ifdef ENABLE_NET_NRSWITCH
-        Models::AddEntry(model, tr("Remote Switch"), NET_TYPE_NRSWITCH);
-#endif /* ENABLE_NET_NRSWITCH */
+        Models::AddEntry(model, tr("Remote Switch"), NET_TYPE_NRSWITCH); /* PeepeeBox: implemented in net_switch.c */
 
         model->removeRows(0, removeRows);
         cbox->setCurrentIndex(cbox->findData(net_cards_conf[i].net_type));
