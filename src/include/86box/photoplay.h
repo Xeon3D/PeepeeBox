@@ -63,6 +63,13 @@ extern void photoplay_set_cdrom_enabled(int enabled);
 extern int  photoplay_fdd_enabled(void);
 extern void photoplay_set_fdd_enabled(int enabled);
 
+/* Whether the network card is fitted.  No cabinet had one, but an image given the
+   Ethernet option reaches fun.net through it instead of the modem.  Off unless
+   switched on -- by choosing the card as NIC 1 in the Network dialog -- and
+   persisted in [Photo Play].  See photoplay.c. */
+extern int  photoplay_net_enabled(void);
+extern void photoplay_set_net_enabled(int enabled);
+
 /* The IRQ the cabinet wires COM3 -- the touchscreen -- to.  4 normally, and 3 when
    fun.link is fitted, because the link driver takes IRQ 4's vector and does not
    give it back; funworld's service manual jumpers the controller to I3 on a

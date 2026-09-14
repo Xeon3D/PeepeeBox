@@ -100,11 +100,15 @@ and `SETETH ON|OFF` flips the setting from a DOS prompt.
 
 ## 4. What PeepeeBox does about it
 
-**The card.** `photoplay_apply_profile()` now fits an RTL8139C+ as the first
-network card, always (`pp_apply_network()`, `PHOTOPLAY_NIC`). An idle NIC costs
-nothing and a cabinet without the patch never loads a driver for it. What the
-card is plugged into stays the user's choice in the Network dialog and persists
-in `[Network]` as usual; an unset type becomes the local switch. Note the config
+**The card.** `photoplay_apply_profile()` fits an RTL8139C+ as the first
+network card (`pp_apply_network()`, `PHOTOPLAY_NIC`) when `[Photo Play]
+network = 1`. From 1.9 to 1.10 it was fitted always; after 1.10 it is **off by
+default**, like the drives, since no cabinet had one, and choosing it as NIC 1
+in the Network dialog is what switches it on. The flag is its own key because
+every config saved while the card was unconditional names it in `[Network]`.
+What the card is plugged into stays the user's choice in the Network dialog and
+persists in `[Network]` as usual, card or no card; an unset type becomes the
+local switch. Note the config
 keys are **1-based**: `net_01_card`, `net_01_net_type`, … — `net_00_*` is
 silently ignored, which cost an afternoon.
 

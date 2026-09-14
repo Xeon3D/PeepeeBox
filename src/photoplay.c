@@ -1037,24 +1037,50 @@ photoplay_set_fdd_enabled(int enabled)
 
 /* The network card.  No cabinet left the factory with one, but a Photo Play
    whose FN_SYS.EXE carries the Ethernet option (CONNTYPE=ETHERNET) transmits
-   through a Realtek RTL8139 packet driver instead of the modem, so the machine
-   has one fitted, as the first card, always: an idle NIC costs nothing, and a
-   cabinet without the option never loads the driver.  What the card is plugged
-   into -- the local switch on this host or a remote switch on the internet,
-   with or without a secret -- stays the user's choice in the Network settings
-   and persists in [Network] as usual; an unset type becomes the local switch.
+   through a Realtek RTL8139 packet driver instead of the modem.  So it is a part
+   that can be fitted, like the drives, and it is off until it has been: the
+   cabinets never had one.  Fitted, it is the first card and always the
+   RTL8139C+.  It is switched on by choosing that card as NIC 1 in the Network
+   settings, which then sets this.
+
+   A key of its own, rather than whatever card [Network] names, because from 1.9
+   to 1.10 the card was fitted unconditionally and every config saved in that
+   time names it there -- reading that as a choice would leave it on everywhere.
+
+   What the card is plugged into -- the local switch on this host or a remote
+   switch on the internet, with or without a secret -- stays the user's choice in
+   the Network settings and persists in [Network] as usual, card or no card, so
+   switching it off and on again keeps it; an unset type becomes the local switch.
    See docs/research/35-ethernet.md. */
+int
+photoplay_net_enabled(void)
+{
+    return !!config_get_int(PHOTOPLAY_SECTION, "network", 0);
+}
+
+void
+photoplay_set_net_enabled(int enabled)
+{
+    config_set_int(PHOTOPLAY_SECTION, "network", !!enabled);
+}
+
 static void
 pp_apply_network(void)
 {
-    net_cards_conf[0].device_num = network_card_get_from_internal_name(PHOTOPLAY_NIC);
-    if (net_cards_conf[0].device_num <= 0)
+    const int enabled = photoplay_net_enabled();
+
+    net_cards_conf[0].device_num = enabled ? network_card_get_from_internal_name(PHOTOPLAY_NIC) : 0;
+    if (enabled && (net_cards_conf[0].device_num <= 0))
         fatal("PeepeeBox: the %s network card is missing from this build\n", PHOTOPLAY_NIC);
     if (net_cards_conf[0].net_type == NET_TYPE_NONE)
         net_cards_conf[0].net_type = NET_TYPE_NLSWITCH;
     for (int i = 1; i < NET_CARD_MAX; i++) {
         net_cards_conf[i].device_num = 0;
         net_cards_conf[i].net_type   = NET_TYPE_NONE;
+    }
+    if (!enabled) {
+        pp_profile_log("PP: network: no card fitted\n");
+        return;
     }
     pp_profile_log("PP: network: %s on %s%s%s (type %d, host \"%s\")\n", PHOTOPLAY_NIC,
                    (net_cards_conf[0].net_type == NET_TYPE_NRSWITCH) ? "remote switch " : "the local switch",
