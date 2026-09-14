@@ -1523,7 +1523,24 @@ static const struct {
        fails the condition: I.G.O. 5 reached its menu on the synthesised rule (1.5,
        2026-09-01) and says "wrong dongle version" on the measured one, having done
        nothing on the wire after the probe.  So the 68BB part's identity is the 68BB
-       part's, and the family this build wants has never been captured. */
+       part's, and the family this build wants has never been captured.
+
+       The value is the address toggled on top of the addr %% 3 == 0 set, and the
+       accumulator lands on twice it: 14 gives 0x1C, 6 gives 0x0C.  Which one matters,
+       because the 2005 library's identity table is not the 2001 one.  TOWERS.EXE
+       0x2D1D9..0x2D255 maps 0x08 to type 1 with 64 words (or none), 0x0C to type 1
+       with 256 words, 0x18 to type 3 with no memory and 0x1C to type 5 with no memory
+       -- and every memory or data service then refuses a part with no memory (error
+       3 at 0x2DE84 and 0x2DFC3).  0x1C got the record read and the menu up because
+       the record reader does not check; it never got HaspDecodeData, which is what
+       the two enciphered button faces need (docs/research/36).
+
+       0x0C ("MemoHASP, 256 words") and 0x08 ("MemoHASP, 64 words") were both tried
+       on the PT MB001 image, 2026-09-14: with either the menu runs ramp, command
+       bytes, probe, sweep twice and reports "wrong dongle version" without ever
+       reading memory, so the type-1 path checks something after the sweep that the
+       type-5 path does not, and it is not yet mapped.  14 stays: it is the only
+       answer that boots. */
     int         synth_ident;
 } hd_keys[] = {
     { "Version 2001",  0x7477, 0, 0, HD_R2001, 160678,     -35733698, 0xCF47CB42, 0x7DF, 0, 0 },
@@ -1540,7 +1557,7 @@ static const struct {
        served, the bytes were clocked into the Microwire decoder instead, and the menu
        stopped at "wrong dongle version" -- where the same image had reached the menu
        (garbled buttons) before the two forms were told apart. */
-    { "Version 2005",  0x6B91, 0, 1, HD_RVERS,      0,            0, 0xAB32E970, 0x5DF, 1, 1 }, /* I.G.O. 5 */
+    { "Version 2005",  0x6B91, 0, 1, HD_RVERS,      0,            0, 0xAB32E970, 0x5DF, 1, 14 }, /* I.G.O. 5 */
     /* 2006 and later ship plain GIF: there is nothing for the round to decrypt, and a
        key would only be guessing at a part no game asks. */
     { "Version 2006",  0x68BB, 1, 1, HD_RVERS,      0,            0,          0,     0, 0, 0 }, /* I.G.O. 6 */
@@ -2313,7 +2330,7 @@ pp_read_status(void *priv)
             /* The pre-measurement rule, for the family the capture does not cover:
                see synth_ident in hd_keys.  One rule for ramp, sweep and probe alike,
                which is what 1.5 did and what I.G.O. 5 booted on. */
-            bit             = ((addr % 3) == 0) != (addr == 14);
+            bit             = ((addr % 3) == 0) != (addr == dev->t_synth_ident);
             dev->hs_ramping = 0;
             dev->hs_sweep   = 0;
         } else if (dev->hs_ramping && (w == (uint8_t) (dev->hs_ramp_prev + 2))) {
@@ -2921,7 +2938,8 @@ pp_init(const device_t *info)
                    dev->t_key, dev->t_init, hd_keys[trel].banner,
                    dev->t_sess_hi ? ", session layer carries bit 7" : "");
         if (dev->t_synth_ident)
-            pp_log("PP: session layer answered by the synthesised 0x1C rule, not the measured 68BB part\n");
+            pp_log("PP: session layer answered by the synthesised rule, identity 0x%02X, not the measured 68BB part\n",
+                   dev->t_synth_ident << 1);
         else
             pp_log("PP: no picture cipher on this release -- its pictures are plain\n");
     }

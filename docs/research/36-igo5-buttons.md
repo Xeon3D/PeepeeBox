@@ -89,3 +89,38 @@ I.G.O. 2. The 2005 h5dmp dumps hold that family's crypto table, but the session 
 have not been derived from a table for any family, so the dump alone does not do it.
 Failing a part, the check is in the library at `TOWERS.EXE` segment `0x2E51` (file
 `0x32910`), service 5, which is where it decides the ramp and sweep were wrong.
+
+## 6. The service-5 check, read — and the two answers it refused
+
+`TOWERS.EXE`'s HASP library (segment `0x2E51` wraps, `0x285A` is the core) does the
+following, all measured against the trace:
+
+- **Ramp** (`0x2EE15`): 64 writes of `i<<1`, `acc = 0x7E ^ XOR{i<<1 : DO set}` — as
+  documented for the 2001 library.
+- **Identity table** (`0x2D1D9`, data at `0x2D27C`): the same four keys `08 0C 18 1C`, but
+  the 2005 handlers are not the 2001 ones:
+
+  | acc | type (`+0x82`) | memory (`+0x10`) |
+  |---|---|---|
+  | `0x08` | 1 | 1 = 64 words, or 0 |
+  | `0x0C` | 1 | 4 = 256 words |
+  | `0x18` (measured 68BB) | 3 | 0 |
+  | `0x1C` (synthesised) | 5 | 0 |
+
+  Type 5 is still given 256 words for memory reads (`0x2D789`), which is why `0x1C` reads
+  the record. The memory/data services check `+0x10` (`0x2DE84`, `0x2DFC3`) and return
+  error 3 on zero.
+- **Sweep** (`0x2EEA7`): 64 bytes of `x = x*0x1989+5` from 100, one bit each into four
+  words, then byte-swapped; rejected only if all-zero or all-one, plus a heuristic in
+  `0x2E89D` that flags a result with any byte equal to the constant at `DS:0x40EA`
+  (eight zero bytes). Nothing in it is password-derived.
+- **Command bytes** (`0x2E4FC`): the fifteen are constants from `DS:0x40CA`, the same
+  for every family; the password only builds a 27-byte table that is applied on top when
+  non-zero, and the trace shows the 2001 sequence verbatim on this build.
+
+`MENU.EXE` carries the identical table (`0x3FF29`). So `0x0C` and `0x08` were tried, as
+the two answers that name a MemoHASP with memory. **Both fail sooner than `0x1C`:** the
+menu runs ramp → command bytes → probe → sweep, twice, and says `wrong dongle version`
+without one memory read, where `0x1C` runs the same cycle three times and then reads.
+Whatever the type-1 path checks between the sweep and the first read is not the sweep
+and not the ramp, and is not yet located. `0x1C` is back in the build.
