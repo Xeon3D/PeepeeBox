@@ -280,25 +280,16 @@ MainWindow::MainWindow(QWidget *parent)
     }
     statusBar()->setVisible(!hide_status_bar);
 
-    auto    hertz_label    = new QLabel;
-    QTimer *frameRateTimer = new QTimer(this);
-    frameRateTimer->setInterval(1000);
-    frameRateTimer->setSingleShot(false);
-    connect(frameRateTimer, &QTimer::timeout, [hertz_label] {
-        if (monitors[0].mon_dpms) {
-            hertz_label->setText(tr("Monitor in sleep mode"));
-            hertz_label->setToolTip(tr("Monitor in sleep mode"));
-        } else {
-            auto hz = monitors[0].mon_actualrenderedframes.load();
-#ifdef SCREENSHOT_MODE
-            hz = ((hz + 2) / 5) * 5;
-#endif
-            hertz_label->setText(tr("%1 Hz").arg(QString::number(hz) + (monitors[0].mon_interlace ? "i" : "")));
-            hertz_label->setToolTip(tr("Refresh rate"));
-        }
-    });
-    statusBar()->addPermanentWidget(hertz_label);
-    frameRateTimer->start(1000);
+    /* The emulation speed -- and " - PAUSED", and the mouse capture hint when there
+       is a mouse -- sits where upstream showed the refresh rate.  It used to trail the
+       toolbar buttons; a cabinet's refresh rate is fixed and says nothing, the speed
+       is the one reading worth a glance.  Wide enough for "100%" so the lock icons
+       beside it do not twitch between 99 and 100. */
+    status_label = new QLabel;
+    status_label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    status_label->setMinimumWidth(status_label->fontMetrics().horizontalAdvance(QStringLiteral("100%")));
+    status_label->setToolTip(tr("Emulation speed"));
+    statusBar()->addPermanentWidget(status_label);
 
     num_icon        = QIcon(":/settings/qt/icons/num_lock_on.ico");
     num_icon_off    = QIcon(":/settings/qt/icons/num_lock_off.ico");
@@ -368,20 +359,6 @@ MainWindow::MainWindow(QWidget *parent)
 #endif
     renderers[0].reset(nullptr);
 
-    auto toolbar_label_widget = new QWidget();
-    auto toolbar_label_layout = new QHBoxLayout(toolbar_label_widget);
-    toolbar_label_layout->setContentsMargins(0, 0, 0, 0);
-
-    toolbar_label = new QLabel();
-    toolbar_label->setMinimumWidth(0);
-    toolbar_label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    toolbar_label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    toolbar_label_layout->addWidget(toolbar_label);
-    toolbar_label_widget->setMinimumWidth(0);
-    toolbar_label_widget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-
-    ui->toolBar->addWidget(toolbar_label_widget);
-
     this->setWindowFlag(Qt::CustomizeWindowHint, true);
     this->setWindowFlag(Qt::MSWindowsFixedSizeDialogHint, vid_resize != 1);
     this->setWindowFlag(Qt::WindowMaximizeButtonHint, vid_resize == 1);
@@ -445,12 +422,11 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(this, &MainWindow::showMessageForNonQtThread, this, &MainWindow::showMessage_, Qt::QueuedConnection);
 
+    /* Kept whether or not the status bar is showing: pausing appends to what
+       getTitle() returns, and the on-screen menu shows it too. */
     connect(this, &MainWindow::setTitle, this, [this](const QString &title) {
-        if (hide_tool_bar)
-            return;
-        else
-            toolbar_text = title;
-        toolbar_label->setText(toolbar_label->fontMetrics().elidedText(toolbar_text, Qt::ElideRight, toolbar_label->width()));
+        status_text = title;
+        status_label->setText(status_text);
     });
 
     connect(this, &MainWindow::updateMenuResizeOptions, [this]() {
@@ -1160,9 +1136,6 @@ MainWindow::resizeEvent(QResizeEvent *event)
     }
     move(newX, newY);
 #endif /*MOVE_WINDOW*/
-
-    toolbar_label->setText(toolbar_label->fontMetrics().elidedText(toolbar_text, Qt::ElideRight, toolbar_label->width()));
-
 }
 
 void
@@ -4249,7 +4222,7 @@ MainWindow::on_actionFullscreen_triggered()
 QString
 MainWindow::getTitle()
 {
-    return toolbar_label->text();
+    return status_text;
 }
 
 // Helper to find an accelerator key and return it's sequence
