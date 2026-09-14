@@ -313,8 +313,9 @@ static const uint32_t pp_dwords[8] = {
 /* The releases, and the banner each one's MAIN.SET carries.  Where an image was
    available the banner was read out of it directly (Docs/08); the rest follow the
    year pattern those establish.  The guest string-matches this, so it has to be
-   right -- and note 2005 is "Version 2005B" on both IGO 5 images to hand, which
-   also satisfies a plain "Version 2005" test because that is a prefix of it.
+   right -- and note 2005 is "Version 2005B" on most IGO 5 images.  The IT CZ033 image
+   says plain "Version 2005 (IT)" and is an older library that wants a different
+   record (see hd_keys); Auto reads that out of MAIN.SET, so it is not offered here.
 
    "IGO 1" and "Photo Play 2001" are the same release under two names: the
    IGO <n> -> "Version 200<n>" mapping is confirmed for 2, 3 and 5, so there is no
@@ -1557,7 +1558,17 @@ static const struct {
        served, the bytes were clocked into the Microwire decoder instead, and the menu
        stopped at "wrong dongle version" -- where the same image had reached the menu
        (garbled buttons) before the two forms were told apart. */
-    { "Version 2005",  0x6B91, 0, 1, HD_RVERS,      0,            0, 0xAB32E970, 0x5DF, 1, 14 }, /* I.G.O. 5 */
+    { "Version 2005B", 0x6B91, 0, 1, HD_RVERS,      0,            0, 0xAB32E970, 0x5DF, 1, 14 }, /* I.G.O. 5 */
+    /* The first I.G.O. 5, before the B: the IT CZ033 image, whose MAIN.SET is dated
+       23.11.2004 and says "Version 2005 (IT)".  Its MENU.EXE and all 43 of its games are
+       the older library, the one I.G.O. 2 and 3 carry, and that library does not parse
+       the record at all -- it strcpy's a hardcoded "Version 2005 (", strcat's the record
+       from byte 0 up to the first NUL, strcat's ")" (MENU.EXE 0x3521B), and the menu then
+       strcmp's the result against MAIN.SET's "Version" (0x6541).  So byte 2 has to be the
+       NUL that ends the territory, which is I.G.O. 3's shape; the B shape's '-' ran on
+       into "Version 2005 (IT-Version2005)" and a "wrong dongle version" screen.  The
+       transport is left as the B row's, which is what read that record off the wire. */
+    { "Version 2005",  0x6B91, 0, 1, HD_RSION,      0,            0, 0xAB32E970, 0x5DF, 1, 14 }, /* I.G.O. 5, pre-B */
     /* 2006 and later ship plain GIF: there is nothing for the round to decrypt, and a
        key would only be guessing at a part no game asks. */
     { "Version 2006",  0x68BB, 1, 1, HD_RVERS,      0,            0,          0,     0, 0, 0 }, /* I.G.O. 6 */
@@ -1579,7 +1590,10 @@ static const struct {
 
 /* The row this banner belongs to, or -1 if no release in the table claims it.  That
    answer is also what says whether the parallel HASP part should be on the port at all:
-   the generations with a row are exactly the generations that have one. */
+   the generations with a row are exactly the generations that have one.
+
+   A row matches as a prefix and the first match wins, so "Version 2005B" has to stay
+   above "Version 2005" -- the two are different records. */
 static int
 hd_release_opt(const char *banner)
 {
@@ -1674,7 +1688,11 @@ hd_load(pp_t *dev, const char *banner)
 
            Both are copied verbatim from the dumps.  Feeding this parser 2001's record
            instead prints "sion 20 05B" with the territory as the first two characters,
-           which is how the layout was found before the dumps existed. */
+           which is how the layout was found before the dumps existed.
+
+           The older form is read by a different parser, which is why its byte 2 is a
+           NUL: I.G.O. 2, 3 and the pre-B 2005 build compose "Version 200x (" + the
+           record as a string + ")", so only the territory is ever seen. */
         const char *lp = strchr(banner, '(');
         const char *sp = strchr(banner, ' ');
 
@@ -2937,11 +2955,11 @@ pp_init(const device_t *info)
             pp_log("PP: picture cipher key %08X, register %03X (%s)%s\n",
                    dev->t_key, dev->t_init, hd_keys[trel].banner,
                    dev->t_sess_hi ? ", session layer carries bit 7" : "");
+        else
+            pp_log("PP: no picture cipher on this release -- its pictures are plain\n");
         if (dev->t_synth_ident)
             pp_log("PP: session layer answered by the synthesised rule, identity 0x%02X, not the measured 68BB part\n",
                    dev->t_synth_ident << 1);
-        else
-            pp_log("PP: no picture cipher on this release -- its pictures are plain\n");
     }
 
     /* Say what all of that resolved to, where the user can see it. */
