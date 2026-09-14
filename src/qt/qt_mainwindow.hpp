@@ -44,6 +44,7 @@ public:
     QString mouseStringUncaptured;
     QString mouseStringCaptured;
     void    updateMouseStrings();
+    void    quitForUpdate();
 
     std::array<std::unique_ptr<RendererStack>, 8> renderers;
 signals:

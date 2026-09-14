@@ -25,6 +25,8 @@ public:
 
 private slots:
     void on_pushButtonLanguage_released();
+    void on_pushButtonUpdateCheckNow_released();
+    void showUpdateStatus(const QString &text);
 
 private:
     Ui::PreferencesEmulator *ui;

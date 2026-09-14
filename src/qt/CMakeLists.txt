@@ -269,6 +269,11 @@ add_library(ui STATIC
 
     qt_iconindicators.hpp
     qt_iconindicators.cpp
+
+    qt_autoupdate.hpp
+    qt_autoupdate.cpp
+    qt_ziparchive.hpp
+    qt_ziparchive.cpp
 )
 
 # Build the Qt ImGui backend separately so AUTOMOC skips it.
@@ -434,12 +439,16 @@ target_link_libraries(plat PRIVATE
     Threads::Threads
 )
 
+# PeepeeBox: zlib inflates the release archives the auto-updater downloads.
+find_package(ZLIB REQUIRED)
+
 target_link_libraries(ui PRIVATE
     Qt${QT_MAJOR}::Widgets
     Qt${QT_MAJOR}::Gui
     Qt${QT_MAJOR}::OpenGL
     Qt${QT_MAJOR}::Network
     Threads::Threads
+    ZLIB::ZLIB
 )
 
 if (LIBRASHADER)

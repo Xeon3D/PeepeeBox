@@ -253,6 +253,12 @@ extern int    hdd_manager_asked;            /* (G) PeepeeBox: the first-start
                                                    question has been answered */
 extern char   hdd_images_path[1024];        /* (G) PeepeeBox: folder holding the
                                                    hard disk image library */
+extern int    update_check;                 /* (G) PeepeeBox: how often to look for
+                                                   a new release on GitHub: 0 never,
+                                                   1 hourly, 2 daily, 3 weekly,
+                                                   4 monthly */
+extern long long update_last_check;         /* (G) PeepeeBox: when the last look
+                                                   finished, Unix seconds; 0 = never */
 extern int    gdbstub_port;                 /* (C) The GDB stub port. */
 
 extern char exe_path[2048];        /* path (dir) of executable */

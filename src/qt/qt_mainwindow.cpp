@@ -26,6 +26,7 @@
 
 #include "qt_soundgain.hpp"
 #include "qt_preferences.hpp"
+#include "qt_autoupdate.hpp"
 #include "qt_mcadevicelist.hpp"
 #include "qt_hddmanager.hpp"
 
@@ -1000,6 +1001,22 @@ MainWindow::MainWindow(QWidget *parent)
 #endif
 
     updateShortcuts();
+
+    /* PeepeeBox: automatic updates.  Whatever the last update could not delete
+       from under itself goes first; then the schedule starts. */
+    AutoUpdate::cleanupLeftovers();
+    (new AutoUpdate(this))->start();
+}
+
+/* PeepeeBox: the way out after an update has been installed and a restart
+   accepted.  The confirmation is skipped because the question was just asked
+   in other words; the shutdown itself is the ordinary one, and the relaunch
+   happens in main() once it is complete. */
+void
+MainWindow::quitForUpdate()
+{
+    skip_exit_confirmation = true;
+    on_actionExit_triggered();
 }
 
 void

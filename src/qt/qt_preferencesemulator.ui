@@ -169,17 +169,102 @@
         </widget>
        </item>
        <item>
-        <spacer name="horizontalSpacer">
-         <property name="orientation">
-          <enum>Qt::Horizontal</enum>
+        <widget class="QGroupBox" name="groupBoxUpdates">
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+           <horstretch>1</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
          </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>40</width>
-           <height>20</height>
-          </size>
+         <property name="title">
+          <string>Updates</string>
          </property>
-        </spacer>
+         <layout class="QVBoxLayout" name="verticalLayoutUpdates">
+          <item>
+           <layout class="QHBoxLayout" name="horizontalLayoutUpdateCheck">
+            <item>
+             <widget class="QLabel" name="labelUpdateCheck">
+              <property name="text">
+               <string>Check for new releases:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QComboBox" name="comboBoxUpdateCheck">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="toolTip">
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;How often PeepeeBox looks at its GitHub releases page. A newer release is downloaded and installed over this folder by itself; you are then offered a restart.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+              </property>
+              <item>
+               <property name="text">
+                <string>Never</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Hourly</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Daily</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Weekly</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Monthly</string>
+               </property>
+              </item>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="horizontalLayoutUpdateNow">
+            <item>
+             <widget class="QPushButton" name="pushButtonUpdateCheckNow">
+              <property name="text">
+               <string>Check now</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="labelUpdateLastCheck">
+              <property name="text">
+               <string>Last checked: never</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <widget class="QLabel" name="labelUpdateStatus">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Ignored" vsizetype="Preferred">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="text">
+             <string/>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
        </item>
       </layout>
      </item>

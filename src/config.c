@@ -189,6 +189,16 @@ load_global_emulator(void)
             hdd_images_path[sizeof(hdd_images_path) - 1] = '\0';
         }
     }
+
+    /* PeepeeBox: automatic updates.  The timestamp is kept as a string because
+       the ini integer getters are 32-bit and Unix seconds outgrow that in 2038. */
+    update_check = ini_section_get_int(cat, "update_check", 2);
+    if ((update_check < 0) || (update_check > 4))
+        update_check = 2;
+    p = ini_section_get_string(cat, "update_last_check", NULL);
+    update_last_check = (p != NULL) ? strtoll(p, NULL, 10) : 0;
+    if (update_last_check < 0)
+        update_last_check = 0;
 }
 
 static void
@@ -2296,6 +2306,19 @@ save_global_emulator(void)
     } else {
         ini_section_delete_var(cat, "hdd_images_path");
     }
+
+    /* PeepeeBox: automatic updates.  Daily is the default, so a default
+       config file stays free of the key. */
+    if (update_check != 2)
+        ini_section_set_int(cat, "update_check", update_check);
+    else
+        ini_section_delete_var(cat, "update_check");
+
+    if (update_last_check > 0) {
+        snprintf(buffer, sizeof(buffer), "%lld", update_last_check);
+        ini_section_set_string(cat, "update_last_check", buffer);
+    } else
+        ini_section_delete_var(cat, "update_last_check");
 
     ini_delete_section_if_empty(global, cat);
 }

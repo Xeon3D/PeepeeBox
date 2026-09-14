@@ -222,6 +222,10 @@ int      hdd_manager_asked                      = 0;              /* (G) PeepeeB
                                                                          again whatever the answer was */
 char     hdd_images_path[1024]                  = { '\0' };       /* (G) PeepeeBox: folder holding the hard
                                                                          disk image library */
+int      update_check                           = 2;              /* (G) PeepeeBox: look for a new release
+                                                                         daily unless told otherwise */
+long long update_last_check                     = 0;              /* (G) PeepeeBox: Unix time of the last
+                                                                         completed look, 0 = never */
 
 int      other_ide_present = 0;                                   /* IDE controllers from non-IDE cards are
                                                                      present */

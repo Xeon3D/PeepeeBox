@@ -81,6 +81,7 @@ extern "C" {
 #include "qt_defs.hpp"
 #include "qt_mainwindow.hpp"
 #include "qt_preferences.hpp"
+#include "qt_autoupdate.hpp"
 #include "qt_deviceconfig.hpp"
 #include "qt_hddmanager.hpp"
 #include "cocoa_mouse.hpp"
@@ -1030,6 +1031,12 @@ main(int argc, char *argv[])
     endblit();
 
     socket.close();
+
+    /* PeepeeBox: an installed update was accepted with a restart.  Now, with
+       the image closed and the config and CMOS written, is when the new build
+       can be started without the two fighting over them. */
+    if (AutoUpdate::restartRequested())
+        AutoUpdate::relaunch();
     return ret;
 }
 
