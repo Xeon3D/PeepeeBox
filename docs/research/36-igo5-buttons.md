@@ -1,0 +1,91 @@
+# Phase 36 — I.G.O. 5's garbled buttons are HaspDecodeData, and the 6B91 login never completes
+
+Measured 2026-09-14 on `IGO5\PPIGO5PT-NSB MB001-NECAPP` at 1.9.2 (`7427735`), with the
+full port trace (`PEEPEEBOX_LPT_TRACE=1`, `86box-trace.log` in that rig folder, 118,488
+lines). The screen: MENU is fine, and on a game's start screen the three big buttons
+(*Jogue / Hi-Score / Mudar jogo*) draw as RLE noise while the *Instruções* button beside
+them is fine. This is the "menu buttons garbled" row of the README, and it is not the
+menu's.
+
+## 1. It is not the menu, and not the UI language
+
+`docs/research/10` blamed a blank UI language from an empty record buffer. That was the
+keyless-patched menu. This `MENU.EXE` is unpatched (no `INT 2Bh` site; byte-identical
+across the PT, DE and NL images), it reads words 08..26 cleanly, writes `SYSTEM.INI` as
+`POR ENG,POR,SPA`, and `\MENU\BUTTONS\POR\FOTOPLAY.WAD` decodes: every entry's header
+comes out as a valid PCX under the `0x12345` LCG, bodies at entropy 3–5. MENU decrypts
+headers at exactly two call sites (`0x2C6C3`, `0x336EF`), both with the constant seed;
+the "seed writers" `0x3C02B/0x3C44F/0x3C45B/0x3C4BC` the handoff pointed at are
+save/restore of the RNG around drawing.
+
+## 2. Two files in one archive are enciphered whole
+
+The start screen is the game's (`TOWERS.EXE`), drawn from `\FOTO\HISCORE\2005\FOTOPLAY.WAD`:
+
+| entry | 2002 / 2003 / 2004 sets | **2005 set** |
+|---|---|---|
+| `INSBUTP.PCX`, `QUICKB*`, `HISCBACK`, … | header LCG, plain body (~4 bits) | same (3.4–3.9) |
+| `BUTP.PCX`, `BUTR.PCX` (222×52) | header LCG, plain body (~4 bits) | header LCG, **body 7.95 / 7.96**, palette marker gone |
+
+The archive is byte-identical on the PT, IT and NL images, so the key is not per unit.
+The body is not the LCG continued (tried from 0 and from 128, seeds `0x12345` and the
+eight record dwords: still 7.99), and the Feistel constants `5B2C004A` / `803425C3` are in
+none of `TOWERS.EXE`, `MENU.EXE` or `\MENU\EXE`.
+
+## 3. The game asks the HASP library to decode them
+
+`TOWERS.EXE` `0x1BE16`..`0x1BE5E` sets `[0x2E9A] = 1`, `[0x2E9B] = 3`, loads `butR.pcx`
+and `butP.pcx` through `0x15D4:080C`, then clears both. Inside the loader (`0x1A22A`):
+
+```
+01A24E  cmp [0x2E9A],0          ; enciphered-body mode?
+01A267  cmp [0x24D0],0          ; not logged in yet?
+01A282  push 0x24A36B91         ; pass2:pass1 = 6B91/24A3
+        push [0x24D0] ; push [bp-0x12] ; push 5
+01A291  lcall 2E51:0007         ; HASP service 5
+01A29C  mov [0x24D0],ax         ; keep what it returned
+...  per 4 KB block:
+01A484  push 0x24A36B91
+        push [0x24D0] ; push [bp-0x12] ; push 0x3D
+01A493  lcall 2E51:0007         ; HASP service 61, HaspDecodeData
+                                ; p1 = [0x2E9B] (3), p2 = length, p3:p4 = buffer
+```
+
+So the two button faces are the one thing on I.G.O. 5 that goes through the part's
+block cipher — the same `EncodeData`/`DecodeData` pair I.G.O. 3's MENU calls at boot —
+and the return value is never checked, which is why the game draws the ciphertext instead
+of stopping.
+
+## 4. What the wire shows: the login retried 33 times, no round ever asked
+
+Over the whole game there is not one bit-0 consultation — no keyed round, as on I.G.O. 3
+(`docs/research/32` § 9). What there is, with our answers under it, is the login loop:
+
+```
+RAMP (80..FE, 64 STATUS reads)  →  fifteen command bytes (0x1B50)  →  probe
+→  64-step SWEEP  →  46  →  C7 C6 C0  →  command bytes  →  RAMP again …   × 33
+```
+
+then the record read proceeds regardless (the game is not checking). On I.G.O. 2 the
+same library completes this once and goes on to 4,720 consultations; here it never
+accepts the answers. The two families answer the same questions differently:
+
+- the **measured** `68BB/1329` answers (`HD_SIGNATURE`, `HS_SWEEP_A`) make the 6B91 build
+  say `wrong dongle version` before it reads anything (1.7–1.9.1);
+- the **synthesised** `0x1C` rule (1.5, and 1.9.2 for I.G.O. 5 only) gets the record read
+  and the menu up, but not through service 5 / 0x3D.
+
+The obvious hypothesis — that the ramp and the sweep are the picture oracle run over their
+64 inputs, which would make the 6B91 answers computable from key `AB32E970` — was tried
+against the 68BB measurements with `softpart.consult` over `(w>>1)&0x1F`, `w&0x1F`,
+`(w>>2)&0x1F`, four register starts and both bit orders: no match, and nothing within 8
+bits of one. Whatever the session answers are, they are not that.
+
+## 5. Where that leaves it
+
+One measurement closes this and I.G.O. 3 together: the login exchange of a real
+`6B91/24A3` part — any 2003 or 2005 dongle on the passthrough port, `dongcap` as for
+I.G.O. 2. The 2005 h5dmp dumps hold that family's crypto table, but the session answers
+have not been derived from a table for any family, so the dump alone does not do it.
+Failing a part, the check is in the library at `TOWERS.EXE` segment `0x2E51` (file
+`0x32910`), service 5, which is where it decides the ramp and sweep were wrong.
