@@ -89,7 +89,7 @@ dongles (`docs/research/20`), not from inference.
 | Photo Play 2.0 | Microcosm CopyControl (disk layout) | plain PCX | **runs** — games and photo games |
 | Photo Play 99 | funworld two-chip, parallel | encrypted, per-picture key | **runs** — games and photo games |
 | Photo Play 2000 | CDONGLE, parallel | encrypted, per-picture key | **runs** — games and photo games |
-| Photo Play 2001 / I.G.O. 1 | HASP4 `7477/7D57` | encrypted, dongle-computed | boots and plays; key solved, **pictures not retested yet** |
+| Photo Play 2001 / I.G.O. 1 | HASP4 `7477/7D57` | encrypted, dongle-computed | **runs** — games and photo games |
 | I.G.O. 2 (2002) | HASP4 `68BB/1329` | encrypted, dongle-computed | **runs** — games and photo games |
 | I.G.O. 3 (2003) | HASP4 `6B91/24A3` | encrypted, dongle-computed | **fails at boot** — cipher solved, the check still refuses |
 | I.G.O. 4 (2004) | CDONGLE, parallel | plain GIF | **runs** — games and photo games |
@@ -148,7 +148,9 @@ clear what I.G.O. 2 and 3 carry enciphered, and Photo Play 2000 does the same fo
 The check on that is I.G.O. 2's: its key was fitted from I.G.O. 4's plaintext
 alone, then run against all **46,036 rounds a real dongle answered** over a
 passed-through parallel port.  It agrees on every one.  I.G.O. 2 now plays FIND IT
-with its photographs decrypting, which is what that table row means.
+with its photographs decrypting, which is what that table row means.  2001 has
+since been confirmed the same way on screen: its key was fitted from Photo Play
+2000's plaintext, and its photo games play with the pictures decrypting.
 
 funworld stopped encrypting pictures from I.G.O. 4 on, which is why the later
 generations need only the record.
