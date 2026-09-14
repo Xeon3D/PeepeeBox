@@ -1310,19 +1310,10 @@ pp_touchscreen_dialog(QWidget *parent)
     }
     form->addRow(QObject::tr("Touchscreen:"), combo);
 
-    /* The interrupt is a setting because of fun.link: the link driver seizes
-       IRQ 4's vector and does not chain, so a cabinet running both cannot have
-       the touchscreen there too.  funworld's own calibration offers these four. */
-    auto      *irq     = new QComboBox();
-    const int  cur_irq = photoplay_com3_irq_setting();
-    irq->addItem(QObject::tr("Automatic (%1)").arg(photoplay_com3_irq()), 0);
-    for (const int cand : { 3, 4, 10, 12 }) {
-        irq->addItem(QString::number(cand), cand);
-        if (cand == cur_irq)
-            irq->setCurrentIndex(irq->count() - 1);
-    }
-    form->addRow(QObject::tr("Interrupt:"), irq);
-
+    /* The port, the interrupt and the line speed are all the device's own, under
+       Options.  The interrupt used to have a second box here too, and the two could
+       disagree; the Options one is the one the device obeys, so it is the one left.
+       Its Automatic is photoplay_com3_irq(), which is what moves to 3 for fun.link. */
     auto *opts = new QPushButton(QObject::tr("&Options..."));
     form->addRow(QString(), opts);
 
@@ -1330,10 +1321,10 @@ pp_touchscreen_dialog(QWidget *parent)
         "The cabinets wired their touchscreen to COM3. A different port, or a "
         "controller the game does not expect, stops touch working with no error "
         "on screen."
-        "\n\nThe interrupt is 4, and 3 when fun.link is fitted. That is what "
-        "the cabinets did: the link driver takes IRQ 4 for itself and does not hand "
-        "it back, and funworld's service manual jumpers the touchscreen controller "
-        "to I3 on a machine with an adapter. Automatic follows that."
+        "\n\nThe interrupt is under Options. Automatic is 4, and 3 when fun.link "
+        "is fitted. That is what the cabinets did: the link driver takes IRQ 4 for "
+        "itself and does not hand it back, and funworld's service manual jumpers the "
+        "touchscreen controller to I3 on a machine with an adapter."
         "\n\nChanging any of this restarts the machine."));
     note->setWordWrap(true);
     form->addRow(note);
@@ -1361,11 +1352,6 @@ pp_touchscreen_dialog(QWidget *parent)
         return inner_changed;   /* the device dialog saves its own, Cancel here cannot undo it */
 
     int changed = inner_changed;
-
-    if (irq->currentData().toInt() != cur_irq) {
-        photoplay_set_com3_irq(irq->currentData().toInt());
-        changed = 1;
-    }
 
     const QString chosen = combo->currentData().toString();
     if (chosen != QString::fromUtf8(current)) {

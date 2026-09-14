@@ -190,6 +190,21 @@ pp_apply_input(void)
 
         if ((dev != NULL) && (config_get_int((char *) dev->name, "port", -1) < 0))
             config_set_int((char *) dev->name, "port", PHOTOPLAY_TABLET_PORT);
+
+        /* Up to 1.10.1 the Touchscreen dialog had an interrupt box of its own,
+           stored as [Photo Play] touch_irq, beside the IRQ in the device's Options
+           -- two knobs for one line.  Only the device's is left.  A value set in
+           the old box moves across once, into the part that is fitted, unless that
+           already names one; then the old key goes, so there is one answer.
+           Dropping it instead would move a rig's touchscreen back to the automatic
+           interrupt, and a wrong interrupt fails silently. */
+        const int old_irq = config_get_int(PHOTOPLAY_SECTION, "touch_irq", 0);
+
+        if (old_irq > 0) {
+            if ((dev != NULL) && (config_get_int((char *) dev->name, "irq", -1) < 0))
+                config_set_int((char *) dev->name, "irq", old_irq);
+            config_delete_var(PHOTOPLAY_SECTION, "touch_irq");
+        }
     }
 
     for (int i = 0; i < GAMEPORT_MAX; i++)
@@ -206,8 +221,18 @@ pp_apply_ports(void)
         com_ports[i].device  = 0;
     }
 
-    pp_profile_log("PP: COM3 touchscreen: %s (0x%04X, IRQ %d)\n",
-                   photoplay_touchscreen(), COM3_ADDR, photoplay_com3_irq());
+    /* The interrupt the touchscreen will really be on: the port's automatic one,
+       unless its Options name another -- a wrong one fails without a word, so the
+       log says which. */
+    {
+        const device_t *ts  = tablet_get_device(tablet_type);
+        const int       ovr = (ts != NULL) ? config_get_int((char *) ts->name, "irq", -1) : -1;
+
+        pp_profile_log("PP: COM3 touchscreen: %s (0x%04X, IRQ %d%s)\n",
+                       photoplay_touchscreen(), COM3_ADDR,
+                       (ovr >= 0) ? ovr : photoplay_com3_irq(),
+                       (ovr >= 0) ? ", from its options" : "");
+    }
 
     /* COM4 exists only when a modem is fitted.  An empty port would be harmless
        in itself, but the cabinet's own NET.CFG puts the modem at 0x2E8 on IRQ 10,
@@ -730,8 +755,9 @@ photoplay_com3_irq(void)
        The cabinets clearly did not all run COM3 on 4: the calibration paths in
        AUTOPTS.BAT are `monitor /c3 /i12`, `/i10`, `/i4` and `/i3`, so funworld
        shipped it on any of four interrupts and an operator with an adapter fitted
-       would have moved it.  So this is a setting, defaulting to what the rigs
-       here were measured on.
+       would have moved it.  So it can be moved -- in the touchscreen's own
+       Options, whose IRQ overrides this -- and this is the automatic value, what
+       the port comes up on when that says Automatic.
 
        Which one it moves to is not a guess.  funworld's service manual lists the
        cabinet's four serial ports as
@@ -748,35 +774,11 @@ photoplay_com3_irq(void)
        free on these machines -- it was only taken when an ISA MicroTouch bus card
        stood in for the SMT3 serial controller.
 
-       0 means automatic.  An explicit value still wins, because the guest has to
-       agree: its own driver installs on whatever interrupt it believes COM3 is
-       on, and if that turns out to be fixed, this is the knob that says so. */
-    const int set = config_get_int(PHOTOPLAY_SECTION, "touch_irq", 0);
-    const int irq = set ? set : (photoplay_funlink_enabled() ? 3 : COM3_IRQ);
-
-    switch (irq) {
-        case 3:
-        case 4:
-        case 10:
-        case 12:
-            return irq;
-        default:
-            return COM3_IRQ;
-    }
-    /* NOTREACHED */
-}
-
-/* The stored choice rather than the effective one: 0 means automatic. */
-int
-photoplay_com3_irq_setting(void)
-{
-    return config_get_int(PHOTOPLAY_SECTION, "touch_irq", 0);
-}
-
-void
-photoplay_set_com3_irq(int irq)
-{
-    config_set_int(PHOTOPLAY_SECTION, "touch_irq", irq);
+       An explicit IRQ in the touchscreen's Options still wins over this, because
+       the guest has to agree: its own driver installs on whatever interrupt it
+       believes COM3 is on, and if that turns out to be fixed, that is the knob
+       that says so. */
+    return photoplay_funlink_enabled() ? 3 : COM3_IRQ;
 }
 
 /* The optional modem on COM4, by device internal name; "" when none is fitted.

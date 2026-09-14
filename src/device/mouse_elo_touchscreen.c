@@ -1540,7 +1540,9 @@ static const device_config_t elo_config[] = {
         .file_filter    = NULL,
         .spinner        = { 0 },
         .selection      = {
-            { .description = "Default (from the port)", .value = -1 },
+            /* PeepeeBox: the port's own IRQ -- on COM3, 4, or 3 with fun.link
+               fitted (photoplay_com3_irq()).  The only interrupt setting there is. */
+            { .description = "Automatic (4, or 3 with fun.link)", .value = -1 },
             { .description = "IRQ 3",                   .value =  3 },
             { .description = "IRQ 4",                   .value =  4 },
             { .description = "IRQ 5",                   .value =  5 },
