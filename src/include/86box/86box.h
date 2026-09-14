@@ -257,6 +257,8 @@ extern int    update_check;                 /* (G) PeepeeBox: how often to look 
                                                    a new release on GitHub: 0 never,
                                                    1 hourly, 2 daily, 3 weekly,
                                                    4 monthly */
+extern int    update_on_startup;            /* (G) PeepeeBox: also look once at
+                                                   every start */
 extern long long update_last_check;         /* (G) PeepeeBox: when the last look
                                                    finished, Unix seconds; 0 = never */
 extern int    gdbstub_port;                 /* (C) The GDB stub port. */

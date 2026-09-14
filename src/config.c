@@ -195,6 +195,7 @@ load_global_emulator(void)
     update_check = ini_section_get_int(cat, "update_check", 2);
     if ((update_check < 0) || (update_check > 4))
         update_check = 2;
+    update_on_startup = ini_section_get_int(cat, "update_on_startup", 1);
     p = ini_section_get_string(cat, "update_last_check", NULL);
     update_last_check = (p != NULL) ? strtoll(p, NULL, 10) : 0;
     if (update_last_check < 0)
@@ -2313,6 +2314,11 @@ save_global_emulator(void)
         ini_section_set_int(cat, "update_check", update_check);
     else
         ini_section_delete_var(cat, "update_check");
+
+    if (update_on_startup != 1)
+        ini_section_set_int(cat, "update_on_startup", update_on_startup);
+    else
+        ini_section_delete_var(cat, "update_on_startup");
 
     if (update_last_check > 0) {
         snprintf(buffer, sizeof(buffer), "%lld", update_last_check);

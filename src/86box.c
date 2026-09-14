@@ -224,6 +224,7 @@ char     hdd_images_path[1024]                  = { '\0' };       /* (G) PeepeeB
                                                                          disk image library */
 int      update_check                           = 2;              /* (G) PeepeeBox: look for a new release
                                                                          daily unless told otherwise */
+int      update_on_startup                      = 1;              /* (G) PeepeeBox: and once at every start */
 long long update_last_check                     = 0;              /* (G) PeepeeBox: Unix time of the last
                                                                          completed look, 0 = never */
 

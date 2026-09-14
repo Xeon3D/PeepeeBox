@@ -43,6 +43,7 @@ extern "C" {
 
 #include "qt_preferencesemulator.hpp"
 #include "qt_preferenceshdd.hpp"
+#include "qt_preferencesupdates.hpp"
 #include "qt_preferencesinput.hpp"
 #include "qt_preferenceskeybindings.hpp"
 #include "qt_defs.hpp"
@@ -86,12 +87,14 @@ private:
     QStringList pages = {
         "Emulator",
         "Machine Manager",
+        "Updates",
         "Input",
         "Key bindings",
     };
     QStringList page_icons = {
         "emulator",
         "hard_disk",
+        "network",
         "input_devices",
         "key_bindings",
     };
@@ -170,12 +173,14 @@ Preferences::Preferences(QWidget *parent)
 
     emulator                  = new PreferencesEmulator(this);
     hdd                       = new PreferencesHdd(this);
+    updates                   = new PreferencesUpdates(this);
     input                     = new PreferencesInput(this);
     key_bindings              = new PreferencesKeyBindings(this);
 
     /* Page order must match PreferencesModel::pages. */
     ui->stackedWidget->addWidget(emulator);
     ui->stackedWidget->addWidget(hdd);
+    ui->stackedWidget->addWidget(updates);
     ui->stackedWidget->addWidget(input);
     ui->stackedWidget->addWidget(key_bindings);
 
@@ -203,6 +208,7 @@ Preferences::save()
 {
     emulator->save();
     hdd->save();
+    updates->save();
     input->save();
     key_bindings->save();
 

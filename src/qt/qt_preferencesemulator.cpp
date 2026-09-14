@@ -42,9 +42,6 @@ extern "C" {
 #include "qt_deviceconfig.hpp"
 #include "qt_joystickconfiguration.hpp"
 #include "qt_keybind.hpp"
-#include "qt_autoupdate.hpp"
-
-#include <QDateTime>
 
 extern MainWindow *main_window;
 
@@ -82,18 +79,6 @@ PreferencesEmulator::PreferencesEmulator(QWidget *parent)
 #ifndef Q_OS_WINDOWS
     ui->groupBox->setHidden(true);
 #endif
-
-    /* PeepeeBox: automatic updates.  The combo's rows are the setting's
-       values in order: never, hourly, daily, weekly, monthly. */
-    ui->comboBoxUpdateCheck->setCurrentIndex(update_check);
-    ui->labelUpdateLastCheck->setText(update_last_check > 0
-        ? tr("Last checked: %1").arg(QLocale().toString(QDateTime::fromSecsSinceEpoch(update_last_check), QLocale::ShortFormat))
-        : tr("Last checked: never"));
-    if (auto *updater = AutoUpdate::instance()) {
-        ui->labelUpdateStatus->setText(updater->lastStatusText());
-        connect(updater, &AutoUpdate::status, this, &PreferencesEmulator::showUpdateStatus);
-    } else
-        ui->pushButtonUpdateCheckNow->setEnabled(false);
 }
 
 PreferencesEmulator::~PreferencesEmulator()
@@ -123,7 +108,6 @@ PreferencesEmulator::save()
     confirm_reset           = ui->checkBoxConfirmHardReset->isChecked() ? 1 : 0;
     confirm_drive_change    = ui->checkBoxConfirmDriveChange->isChecked() ? 1 : 0;
     chd_precache_level      = ui->checkBoxCHDPrecache->isChecked() ? 1 : 0;
-    update_check            = ui->comboBoxUpdateCheck->currentIndex();
 
     color_scheme       = (ui->radioButtonSystem->isChecked()) ? 0 : (ui->radioButtonLight->isChecked() ? 1 : 2);
 
@@ -158,19 +142,4 @@ void
 PreferencesEmulator::on_pushButtonLanguage_released()
 {
     ui->comboBoxLanguage->setCurrentIndex(0);
-}
-
-void
-PreferencesEmulator::on_pushButtonUpdateCheckNow_released()
-{
-    if (auto *updater = AutoUpdate::instance())
-        updater->checkNow();
-}
-
-void
-PreferencesEmulator::showUpdateStatus(const QString &text)
-{
-    ui->labelUpdateStatus->setText(text);
-    if (update_last_check > 0)
-        ui->labelUpdateLastCheck->setText(tr("Last checked: %1").arg(QLocale().toString(QDateTime::fromSecsSinceEpoch(update_last_check), QLocale::ShortFormat)));
 }

@@ -10,6 +10,7 @@ class Preferences;
 
 class PreferencesEmulator;
 class PreferencesHdd;
+class PreferencesUpdates;
 class PreferencesInput;
 class PreferencesKeyBindings;
 
@@ -58,6 +59,7 @@ private:
 
     PreferencesEmulator        *emulator;
     PreferencesHdd             *hdd;
+    PreferencesUpdates         *updates;
     PreferencesInput           *input;
     PreferencesKeyBindings     *key_bindings;
 };

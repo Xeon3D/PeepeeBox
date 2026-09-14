@@ -161,7 +161,20 @@ AutoUpdate::start()
 void
 AutoUpdate::tick()
 {
-    if ((update_check == 0) || busy())
+    if (busy())
+        return;
+
+    /* The start-up look is one per run, whatever the schedule says; it is
+       the first tick's job, and once taken the schedule has the rest. */
+    if (!startupDone) {
+        startupDone = true;
+        if (update_on_startup) {
+            checkNow(Trigger::Startup);
+            return;
+        }
+    }
+
+    if (update_check == 0)
         return;
 
     const qint64 now = QDateTime::currentSecsSinceEpoch();
@@ -174,7 +187,7 @@ AutoUpdate::tick()
     if ((update_last_check > 0) && (update_last_check <= now) && (now - update_last_check < interval))
         return;
 
-    checkNow();
+    checkNow(Trigger::Scheduled);
 }
 
 void
@@ -186,14 +199,16 @@ AutoUpdate::report(const QString &text)
 }
 
 void
-AutoUpdate::checkNow()
+AutoUpdate::checkNow(Trigger who)
 {
     if (busy()) {
         report(tr("An update is already in progress."));
         return;
     }
 
-    state = State::Checking;
+    trigger = who;
+    state   = State::Checking;
+    emit availableChanged();
     report(tr("Checking for a new release…"));
 
     QNetworkRequest req(QUrl(QStringLiteral("https://api.github.com/repos/%1/releases/latest").arg(repository())));
@@ -213,6 +228,7 @@ AutoUpdate::finishCheck(bool stamp)
         update_last_check = QDateTime::currentSecsSinceEpoch();
         config_save_global();
     }
+    emit availableChanged();
 }
 
 void
@@ -227,6 +243,7 @@ AutoUpdate::onReleaseReply()
         reply      = nullptr;
         retryAfter = QDateTime::currentSecsSinceEpoch() + RETRY_SECONDS;
         state      = State::Idle;
+        emit availableChanged();
         return;
     }
     reply = nullptr;
@@ -247,6 +264,7 @@ AutoUpdate::onReleaseReply()
         report(tr("GitHub's answer was not a release."));
         retryAfter = QDateTime::currentSecsSinceEpoch() + RETRY_SECONDS;
         state      = State::Idle;
+        emit availableChanged();
         return;
     }
 
@@ -259,6 +277,7 @@ AutoUpdate::onReleaseReply()
     }
 
     if (versionCompare(latest.version, current) <= 0) {
+        available = Release();
         report(tr("Up to date: %1 is the latest release.").arg(current));
         finishCheck(true);
         return;
@@ -275,12 +294,44 @@ AutoUpdate::onReleaseReply()
         }
     }
     if (wanted.isEmpty() || latest.assetUrl.isEmpty()) {
+        available = Release();
         report(tr("Release %1 is out, but has no download for this platform.").arg(latest.version));
         finishCheck(true);
         return;
     }
 
-    pending = latest;
+    available = latest;
+    report(tr("PeepeeBox %1 is available; this is %2.").arg(latest.version, current));
+    finishCheck(true);
+
+    /* The page shows the version and its Update button to whoever is looking
+       at it; the looks nobody asked for have to speak up. */
+    if (trigger != Trigger::Manual)
+        askToUpdate();
+}
+
+void
+AutoUpdate::askToUpdate()
+{
+    QMessageBox box(QMessageBox::Information, QString::fromLatin1(EMU_NAME),
+                    tr("PeepeeBox %1 is available; this is %2.\n\nUpdate now? The release is installed over this folder while the cabinet keeps running, and you are offered a restart afterwards. It can also be done later under Preferences > Updates.")
+                        .arg(available.version, currentRelease()),
+                    QMessageBox::NoButton, main_window);
+    QPushButton *update = box.addButton(tr("Update now"), QMessageBox::AcceptRole);
+    box.addButton(tr("Later"), QMessageBox::RejectRole);
+    box.setDefaultButton(update);
+    box.exec();
+
+    if (box.clickedButton() == update)
+        installAvailable();
+}
+
+void
+AutoUpdate::installAvailable()
+{
+    if (!hasAvailable() || busy())
+        return;
+    pending = available;
     beginDownload();
 }
 
@@ -355,14 +406,14 @@ AutoUpdate::onDownloadFinished()
         QFile::remove(archive);
         report(tr("Download failed: %1").arg(netErr));
         emit main_window->statusBarMessage(tr("Update download failed."));
-        finishCheck(true);
+        finishCheck(false);
         return;
     }
     if ((pending.assetSize > 0) && (got != pending.assetSize)) {
         QFile::remove(archive);
         report(tr("Download was %1 bytes, expected %2.").arg(got).arg(pending.assetSize));
         emit main_window->statusBarMessage(tr("Update download failed."));
-        finishCheck(true);
+        finishCheck(false);
         return;
     }
 
@@ -377,13 +428,15 @@ AutoUpdate::onDownloadFinished()
     if (!ok) {
         report(tr("Installing %1 failed: %2").arg(pending.version, error));
         emit main_window->statusBarMessage(tr("Update failed; see the log."));
-        finishCheck(true);
+        finishCheck(false);
         return;
     }
 
+    /* Installed is not available any more: the page's Update button goes. */
+    available = Release();
     report(tr("PeepeeBox %1 is installed and will run from the next start.").arg(pending.version));
     emit main_window->statusBarMessage(tr("PeepeeBox %1 installed.").arg(pending.version));
-    finishCheck(true);
+    finishCheck(false);
     offerRestart();
 }
 

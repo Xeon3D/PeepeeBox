@@ -149,6 +149,9 @@ add_library(ui STATIC
     qt_preferenceshdd.cpp
     qt_preferenceshdd.hpp
     qt_preferenceshdd.ui
+    qt_preferencesupdates.cpp
+    qt_preferencesupdates.hpp
+    qt_preferencesupdates.ui
     qt_preferencesinput.cpp
     qt_preferencesinput.hpp
     qt_preferencesinput.ui
