@@ -176,7 +176,6 @@ typedef struct {
     uint8_t  rx[FUNLINK_RX_SIZE];
     uint32_t rx_head;
     uint32_t rx_tail;
-    uint32_t rx_bit; /* bit-time cursor into a character; see funlink_read() */
 
     uint8_t  tx[FUNLINK_TX_SIZE];
     uint32_t tx_len;
@@ -639,7 +638,7 @@ funlink_start_connecting(char_funlink_t *dev)
 }
 
 /* Everything that touches a socket, throttled to once a millisecond.  read() is
-   called once per bit time -- ~115000 times a second at this baud rate -- so it
+   called once per character time -- ~11500 times a second at this baud rate -- so it
    is the heartbeat for the whole device, but it must not be the rate at which
    the network is asked anything. */
 static void
@@ -742,24 +741,6 @@ funlink_poll(char_funlink_t *dev)
 
 /* ------------------------------------------------------- char device hooks */
 
-/* Bits on the wire per character, from the way the guest has programmed the
-   port -- 10 for the 8N1 the bus runs at, and 10 again before it has said
-   anything, which is when the token is read. */
-static uint32_t
-funlink_char_bits(const char_funlink_t *dev)
-{
-    uint32_t bits;
-
-    if ((dev->port == NULL) || (dev->port->com.data_bits == 0))
-        return 10;
-
-    bits = 1u /* start */ + dev->port->com.data_bits + dev->port->com.stop_bits;
-    if (dev->port->com.parity & 1)
-        bits++;
-
-    return bits;
-}
-
 static size_t
 funlink_read(uint8_t *buf, size_t len, void *priv)
 {
@@ -767,18 +748,16 @@ funlink_read(uint8_t *buf, size_t len, void *priv)
 
     funlink_poll(dev);
 
-    /* One byte per character time, because that is how long a character takes.
-       serial.c asks once per *bit* time and takes whatever it is given, so a
-       device that answers every call delivers ten bytes for every one a 115200
-       line could carry -- harmless for a modem, wrong for this bus.  fun.link
-       is CSMA with no master: a cabinet decides the wire is free by watching how
-       long its own receiver has been quiet, so a frame handed over ten times too
-       fast leaves a busy bus looking idle, both cabinets talk into each other,
-       and neither ever gets to the other side of the handshake. */
-    if (++dev->rx_bit < funlink_char_bits(dev))
-        return 0;
-    dev->rx_bit = 0;
-
+    /* One byte per call, and no pacing of our own: serial_receive_timer() asks
+       once per *character* time now, which is the line rate.  This device used
+       to count bit times here because the core once asked once per bit -- ten
+       bytes for every one a 115200 line carries -- and fun.link is CSMA with no
+       master, so a frame handed over ten times too fast left a busy bus looking
+       idle.  When the core was fixed the same way (0942a86) the two divisions
+       stacked, the bus ran at 11,520 baud, and a cabinet could no longer hear
+       its own echo in time: every send read as a collision, parsing was off
+       through all the retries, and no join ever got through whole.  Pace in one
+       place only. */
     if ((len == 0) || (dev->rx_tail == dev->rx_head))
         return 0;
 
