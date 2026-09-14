@@ -214,6 +214,8 @@ typedef struct {
     int      hd_n;              /* bits done in this part */
     int      hd_op;             /* the two opcode bits */
     uint8_t  hd_addr;
+    int      hd_abits;          /* address bits per instruction: HD_ABITS, or 8 when
+                                   the synthesised identity has advertised 256 words */
     uint16_t hd_sr;             /* the word going out, or the one coming in */
     int      hd_do;             /* the level this chip is driving on DO */
     int      hd_wen;            /* EWEN seen, so a write will take */
@@ -232,6 +234,8 @@ typedef struct {
     /* The keyed round the picture cipher asks for -- see the section above t_query(). */
     uint32_t t_key;             /* this release's 32 key bits, 0 if it has none */
     int      t_sess_hi;         /* this release's session layer carries bit 7 */
+    int      t_synth_ident;     /* answer the session layer with the synthesised
+                                   0x1C rule rather than the measured 68BB part */
     uint8_t  t_hold_val;        /* the DATA value a held answer belongs to */
     int      t_burst;           /* consultations since the last preamble */
     int      t_bursts;          /* how many bursts have been logged */
@@ -1510,18 +1514,37 @@ static const struct {
        hardware gives 4,720 consultations in 118 rounds of exactly 40, I.G.O. 3 gives
        zero.  The clock never moved. */
     int         sess_hi;
+
+    /* Answer the identity ramp, the sweep and the probe with the rule that used to
+       stand in for a part -- XOR over addr %% 3 == 0, address 14 toggled, landing the
+       library's accumulator on 0x1C, whose handler picks the size unconditionally --
+       instead of the answer measured off the 68BB/1329 dongle.  That measured answer
+       lands on 0x18, whose handler is conditional, and a 6B91/24A3 build evidently
+       fails the condition: I.G.O. 5 reached its menu on the synthesised rule (1.5,
+       2026-09-01) and says "wrong dongle version" on the measured one, having done
+       nothing on the wire after the probe.  So the 68BB part's identity is the 68BB
+       part's, and the family this build wants has never been captured. */
+    int         synth_ident;
 } hd_keys[] = {
-    { "Version 2001",  0x7477, 0, 0, HD_R2001, 160678,     -35733698, 0xCF47CB42, 0x7DF, 0 },
-    { "Version 2002",  0x68BB, 0, 1, HD_RSION, 160678,   -371202944, 0x3B227944, 0x7DF, 0 }, /* I.G.O. 2 */
-    { "Version 2003",  0x6B91, 0, 1, HD_RSION, 160678,   -738037894, 0xAB32E970, 0x5DF, 1 }, /* I.G.O. 3 */
+    { "Version 2001",  0x7477, 0, 0, HD_R2001, 160678,     -35733698, 0xCF47CB42, 0x7DF, 0, 0 },
+    { "Version 2002",  0x68BB, 0, 1, HD_RSION, 160678,   -371202944, 0x3B227944, 0x7DF, 0, 0 }, /* I.G.O. 2 */
+    { "Version 2003",  0x6B91, 0, 1, HD_RSION, 160678,   -738037894, 0xAB32E970, 0x5DF, 1, 0 }, /* I.G.O. 3 */
     /* I.G.O. 5 shares I.G.O. 3's password pair, so it should share the key.  Its FINDIT
        is plain, so nothing here has been able to check that -- it is the pair talking,
-       not a measurement. */
-    { "Version 2005",  0x6B91, 0, 1, HD_RVERS,      0,            0, 0xAB32E970, 0x5DF, 0 }, /* I.G.O. 5 */
+       not a measurement.
+
+       It does share I.G.O. 3's transport, and that IS measured: on 1.9.1 the PT MB001
+       image put the identity ramp on the wire as 80 82 .. FE and the liveness probe as
+       C0, 8A/8B, F8/F9, DA/DB -- bit 7 set throughout, I.G.O. 3's form to the byte.
+       Left bit-7-clear here the sweep matcher never recognised the probe, no sweep was
+       served, the bytes were clocked into the Microwire decoder instead, and the menu
+       stopped at "wrong dongle version" -- where the same image had reached the menu
+       (garbled buttons) before the two forms were told apart. */
+    { "Version 2005",  0x6B91, 0, 1, HD_RVERS,      0,            0, 0xAB32E970, 0x5DF, 1, 1 }, /* I.G.O. 5 */
     /* 2006 and later ship plain GIF: there is nothing for the round to decrypt, and a
        key would only be guessing at a part no game asks. */
-    { "Version 2006",  0x68BB, 1, 1, HD_RVERS,      0,            0,          0,     0, 0 }, /* I.G.O. 6 */
-    { "Version 2007",  0x68BB, 0, 1, HD_RVERS,      0,            0,          0,     0, 0 }, /* I.G.O. 7 */
+    { "Version 2006",  0x68BB, 1, 1, HD_RVERS,      0,            0,          0,     0, 0, 0 }, /* I.G.O. 6 */
+    { "Version 2007",  0x68BB, 0, 1, HD_RVERS,      0,            0,          0,     0, 0, 0 }, /* I.G.O. 7 */
     /* I.G.O. Italy reports NDONGLE rather than HDONGLE, which was read as meaning it is
        not on this path at all.  It is, and it is not even a special case: MENU.EXE
        0x3C322 is the same filler every other I.G.O. build uses, down to the format
@@ -1534,7 +1557,7 @@ static const struct {
        Its passwords are not literals either -- 0x3C252 is the same probe I.G.O. 6 runs,
        so the key is zero here too.  The 2008 pair is on record for when service 5 can
        tell the two apart. */
-    { "Version 08",    0x68BB, 1, 1, HD_RVERS,      0,            0,          0,     0, 0 }  /* I.G.O. Italy */
+    { "Version 08",    0x68BB, 1, 1, HD_RVERS,      0,            0,          0,     0, 0, 0 }  /* I.G.O. Italy */
 };
 
 /* The row this banner belongs to, or -1 if no release in the table claims it.  That
@@ -1740,8 +1763,12 @@ hd_write_data(pp_t *dev, uint8_t val)
 
             case HD_ADDR:
                 dev->hd_addr = (uint8_t) ((dev->hd_addr << 1) | dat);
-                if (++dev->hd_n == HD_ABITS) {
+                if (++dev->hd_n == dev->hd_abits) {
                     dev->hd_n = 0;
+                    /* Eight address bits reach past the 64 words there are; the record
+                       is read from word 8 and never gets there, so wrap rather than
+                       overrun. */
+                    dev->hd_addr &= HD_WORDS - 1;
                     switch (dev->hd_op) {
                         case 2: /* READ */
                             dev->hd_sr = dev->hd_mem[dev->hd_addr];
@@ -1761,7 +1788,7 @@ hd_write_data(pp_t *dev, uint8_t val)
                             dev->hd_ph    = HD_DONE;
                             break;
                         default: /* EWEN/EWDS/ERAL/WRAL, told apart by the top address bits */
-                            dev->hd_wen = (dev->hd_addr >> (HD_ABITS - 2)) == 3;
+                            dev->hd_wen = (dev->hd_addr >> (dev->hd_abits - 2)) == 3;
                             dev->hd_ph  = HD_DONE;
                             break;
                     }
@@ -2050,7 +2077,12 @@ pp_write_data(uint8_t val, void *priv)
            Microwire traffic is bit-7-clear, so gating on that bit separates them
            exactly, and the record read is untouched.  I.G.O. 2 keeps its session layer
            bit-7-clear and is deliberately left alone. */
-        if (!dev->t_sess_hi || !(val & 0x80))
+        /* ...except on the synthesised-identity path, which is 1.5's behaviour whole:
+           there the decoder saw every byte, bit 7 or not, and the record read on I.G.O. 5
+           -- which drives the Microwire lines with bit 7 set, like the rest of its
+           traffic -- only ever decoded that way.  Gated, the read never reached the
+           decoder and the menu formatted an empty buffer into its banner. */
+        if (!dev->t_sess_hi || !(val & 0x80) || dev->t_synth_ident)
             hd_write_data(dev, val);
     }
     cd_write_data(dev, val);
@@ -2277,7 +2309,14 @@ pp_read_status(void *priv)
         dev->hd_ph = HD_IDLE;
         dev->hd_n  = 0;
 
-        if (dev->hs_ramping && (w == (uint8_t) (dev->hs_ramp_prev + 2))) {
+        if (dev->t_synth_ident) {
+            /* The pre-measurement rule, for the family the capture does not cover:
+               see synth_ident in hd_keys.  One rule for ramp, sweep and probe alike,
+               which is what 1.5 did and what I.G.O. 5 booted on. */
+            bit             = ((addr % 3) == 0) != (addr == 14);
+            dev->hs_ramping = 0;
+            dev->hs_sweep   = 0;
+        } else if (dev->hs_ramping && (w == (uint8_t) (dev->hs_ramp_prev + 2))) {
             dev->hs_ramp_prev = w;                 /* the ramp, continuing */
             dev->hs_sweep     = 0;
             bit               = (int) ((HD_SIGNATURE >> addr) & 1u);
@@ -2690,6 +2729,8 @@ static void *
 pp_init(const device_t *info)
 {
     pp_t      *dev = calloc(1, sizeof(pp_t));
+
+    dev->hd_abits = HD_ABITS; /* until a release's identity says otherwise */
     const int  bi  = device_get_config_int("banner");
     const int  ti  = device_get_config_int("territory");
     char       banner[31];   /* the record's field: 30 characters plus the NUL */
@@ -2870,10 +2911,17 @@ pp_init(const device_t *info)
         dev->t_init = hd_keys[trel].tinit;
         dev->t_cur  = dev->t_init;
         dev->t_sess_hi = hd_keys[trel].sess_hi;
+        dev->t_synth_ident = hd_keys[trel].synth_ident;
+        /* 0x1C selects the 256-word size, so the library addresses the part with eight
+           bits; the measured 0x18 selects 64 words and six.  The decoder has to expect
+           what the identity it gave promised. */
+        dev->hd_abits      = dev->t_synth_ident ? 8 : HD_ABITS;
         if (dev->t_key)
             pp_log("PP: picture cipher key %08X, register %03X (%s)%s\n",
                    dev->t_key, dev->t_init, hd_keys[trel].banner,
                    dev->t_sess_hi ? ", session layer carries bit 7" : "");
+        if (dev->t_synth_ident)
+            pp_log("PP: session layer answered by the synthesised 0x1C rule, not the measured 68BB part\n");
         else
             pp_log("PP: no picture cipher on this release -- its pictures are plain\n");
     }
