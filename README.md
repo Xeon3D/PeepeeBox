@@ -93,7 +93,7 @@ dongles (`docs/research/20`), not from inference.
 | I.G.O. 2 (2002) | HASP4 `68BB/1329` | encrypted, dongle-computed | **runs** — games and photo games |
 | I.G.O. 3 (2003) | HASP4 `6B91/24A3` | encrypted, dongle-computed | **fails at boot** — cipher solved, the check still refuses |
 | I.G.O. 4 (2004) | CDONGLE, parallel | plain GIF | **runs** — games and photo games |
-| I.G.O. 5 (2005) | HASP4 `6B91/24A3` | plain GIF | menu and photo games run; **menu buttons garbled** |
+| I.G.O. 5 (2005) | HASP4 `6B91/24A3` | plain GIF | **runs** — games and photo games; three start-screen buttons draw as noise, which `docs/research/36` traces to the shipped software rather than the emulation |
 | I.G.O. 6 (2006) | HASP4, probed | plain GIF | **runs** — games and photo games |
 | I.G.O. 7 (2007) | HASP4 `68BB/1329` | plain GIF | **runs** — games and photo games |
 | I.G.O. 8 (2008) | serial reader, COM2 | plain GIF | **runs** — games and photo games |

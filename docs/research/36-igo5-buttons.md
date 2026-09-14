@@ -124,3 +124,52 @@ menu runs ramp → command bytes → probe → sweep, twice, and says `wrong don
 without one memory read, where `0x1C` runs the same cycle three times and then reads.
 Whatever the type-1 path checks between the sweep and the first read is not the sweep
 and not the ramp, and is not yet located. `0x1C` is back in the build.
+
+## 7. The type-1 path, and why it does not matter: the decode call is refused before the wire
+
+Following the menu's own check (`MENU.EXE` `0x3A879`): `hasp(1)` must find a part,
+`hasp(5)`, then `hasp(0x32)` ReadBlock of 56 words from word 0, then the banner is formatted
+and compared. With `0x0C` or `0x08` the trace ends after the second detection: ReadBlock
+never reaches the wire, so the buffer the menu formats is whatever was on the stack. The
+read handler (`0x2D67F`) is common to types 1 and 5 once the size is set, so the difference
+sits in the login (`0x2E89D`) or in a type-1 memory primitive this device has never seen a
+part answer; it is not resolved here, and it does not need to be, because of what follows.
+
+**The 2005 library's `HaspEncodeData`/`HaspDecodeData` take one or two 8-byte blocks per
+call, and nothing else.** The packet translator (`0x30C9A`, cases `0x3C`/`0x3D` at
+`0x30E4A`/`0x30EFC`) requires `p1 <= 4` and `p2 >= 8`, and stores `p2 >> 3` — the block
+count — at `ctx+0x16`. The handler (`0x2DDB7`) then checks, before any detection or port
+access:
+
+```
+02DE28  cmp [bp-0xA],0 ; cmp [bp-0xC],2 ; je ok      ; ctx+0x16 == 2  (16 bytes)
+02DE34  cmp [bp-0xA],0 ; cmp [bp-0xC],1 ; je ok      ; ctx+0x16 == 1  ( 8 bytes)
+02DE40  mov es:[bx+0x1A],0xA  ; error 10, invalid parameter
+```
+
+and the cipher itself (`0x2FBEE`, the `0x803425C3` Feistel) runs on one block, with the
+second at `+8` when there are two. That is the API I.G.O. 2's FINDIT uses correctly — its
+own `0x2D04C` loops over the picture and hands the library eight bytes at a time — and it
+is what I.G.O. 3's boot check uses for its 20 bytes (two blocks).
+
+`TOWERS.EXE` (Version 4.0, dated 04.09.2000 in `TOWERS.INF`) does not do that. Its loader
+(`0x1A22A`) reads the file in 4 KB chunks and passes each whole chunk to service `0x3D`:
+`p2 = bytes read = 0x1000`, so `ctx+0x16 = 512`, so **error 10, on every chunk, before
+the library has looked for a dongle at all**. The return value is never checked, the
+ciphertext is drawn, and the three buttons come out as noise. No identity answer, no
+sweep, no captured 6B91 part changes that: the refusal is arithmetic on the caller's own
+arguments.
+
+So the garbled buttons on I.G.O. 5 are, on this reading, **what a real cabinet shows
+too**: a 2000-vintage game calling a 2005 library with a buffer it cannot take, over two
+files funworld packaged enciphered in the 2005 set and plain in every other. Three things
+would falsify it, in order of cost: a photograph or video of a real I.G.O. 5 start
+screen with clean *Play / Hi-Score / Change game* buttons; a game in the set whose loader
+chunks at 8 or 16 bytes; or a `0x3D` call in the trace that reaches the wire. None of
+the traces taken today has the last, and the disassembly says none can.
+
+What this does settle for the emulator: `0x1C` is the right synthesised answer for this
+build, the record read is the only dongle traffic the game needs, and the README row's
+"menu buttons garbled" is a property of the image, not of the emulation. I.G.O. 3 is
+untouched by any of this: its boot check is a two-block call, which the library accepts,
+and it still fails on the answers themselves.
