@@ -53,24 +53,17 @@ About::About(QWidget *parent)
        86Box 7.0.  Which 86Box it is built on is attribution, and is said below. */
     setText(QString("<b>%1 %2%3</b>")
                 .arg(EMU_NAME, PEEPEEBOX_RELEASE, versioninfo));
-    setInformativeText(QString("<b>%1</b><br><br>%2")
-                           .arg(tr("%1 is a fork of %2, adding emulation of the funworld "
-                                   "Photo Play / I.G.O. protection hardware: the "
-                                   "parallel-port dongle and the Dallas DS1982 iButton.")
-                                    .arg(EMU_NAME, EMU_UPSTREAM_NAME),
-                                tr("All credit for the emulator itself belongs to the %1 "
-                                   "project and its authors.")
-                                    .arg(EMU_UPSTREAM_NAME))
+    /* The credit line is Marcos's wording, verbatim and capitalisation included
+       (2026-09-14) -- not something to tidy. */
+    setInformativeText(tr("x86 hardware emulation &amp; gui design by the 86box team. "
+                          "All photoplay-related emulation by Xeon3D / Team HUEG PP.")
                        + "<br><br>"
                        + tr("Built on %1 %2.").arg(EMU_UPSTREAM_NAME, EMU_VERSION_FULL)
                        + "<br><br>"
-                       + tr("This fork was entirely vibecoded by Claude, steered by the "
-                            "HUEG PP team.")
-                       + "<br><br>"
                        /* Upstream's block carried a description, its author
                           roll and the licence in one string.  The credit above
-                          already says whose emulator this is and points at the
-                          project; what has to stay is the licence. */
+                          already says whose emulator this is; what has to stay
+                          is the licence. */
                        + tr("Released under the GNU General Public License "
                             "version 2 or later. See LICENSE for more "
                             "information."));
@@ -78,7 +71,7 @@ About::About(QWidget *parent)
     const auto closeButton = addButton("OK", QMessageBox::ButtonRole::AcceptRole);
     setEscapeButton(closeButton);
     /* There was an 86box.net button here.  This is a fork's About box and the
-       text above already credits the project by name; a button that takes the
+       text above already credits the team by name; a button that takes the
        reader somewhere else is upstream's to offer, not this build's. */
     setIconPixmap(QIcon(EMU_ICON_PATH).pixmap(32, 32));
     setWindowFlags(Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
