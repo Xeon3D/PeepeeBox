@@ -343,13 +343,15 @@ static const char *pp_banners[] = {
    so both have to be offered.  SE is included because an IGO 3 image reads
    "Version 2003 (SE)".
 
-   SA is appended rather than sorted in: these are indices, and a config that pinned
-   a territory before SA existed still has to mean what it meant.  The dialog lists
-   them alphabetically regardless. */
+   ZA is appended rather than sorted in: these are indices, and a config that pinned
+   a territory before it existed still has to mean what it meant.  The dialog lists
+   them alphabetically regardless.  It is ZA and not SA: the one South African image
+   known, an IGO 3, says "Version 2003 (ZA)" and Country=ZA in its MAIN.SET.  This
+   slot offered "SA" until 1.10.1, which no image uses. */
 static const char *pp_terrs[] = {
     "AT", "BE", "CY", "CZ", "DE", "ES", "FR",
     "GR", "IT", "NL", "PT", "SE", "SP",
-    "SA"
+    "ZA"
 };
 #define PP_NTERRS ((int) (sizeof(pp_terrs) / sizeof(pp_terrs[0])))
 
@@ -3088,9 +3090,9 @@ static const device_config_t pp_config[] = {
             { .description = "IT - Italy",                .value =  8 },
             { .description = "NL - Netherlands",          .value =  9 },
             { .description = "PT - Portugal",             .value = 10 },
-            { .description = "SA - South Africa",        .value = 13 },
             { .description = "SE - Sweden",               .value = 11 },
             { .description = "SP - Spain (1999)",         .value = 12 },
+            { .description = "ZA - South Africa",         .value = 13 },
             { .description = ""                                       }
         },
         .bios           = { { 0 } }
