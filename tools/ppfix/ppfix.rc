@@ -14,7 +14,7 @@
 
 1 ICON "ppfix.ico"
 
-IDD_MAIN DIALOGEX 0, 0, 320, 176
+IDD_MAIN DIALOGEX 0, 0, 320, 192
 STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Photo Play 2.0 HDD Image Fixer"
 FONT 9, "Segoe UI", 400, 0, 0x1
@@ -27,11 +27,11 @@ BEGIN
     PUSHBUTTON      "&Browse...", IDC_BROWSE, 254, 75, 54, 15
     LTEXT           "Status:", -1, 12, 95, 28, 9
     LTEXT           "", IDC_STATUS, 44, 95, 264, 9, SS_ENDELLIPSIS
-    LTEXT           "", IDC_DETAIL, 12, 112, 296, 34
-    LTEXT           "(c) HUEG PP Team & Claude", IDC_COPY, 12, 154, 120, 9, SS_NOPREFIX
-    PUSHBUTTON      "Ad&vanced...", IDC_ADV_BTN, 140, 150, 56, 16
-    DEFPUSHBUTTON   "&Fix image", IDC_FIX, 200, 150, 56, 16
-    PUSHBUTTON      "E&xit", IDCANCEL, 260, 150, 48, 16
+    LTEXT           "", IDC_DETAIL, 12, 112, 296, 50
+    LTEXT           "(c) HUEG PP Team & Claude", IDC_COPY, 12, 170, 120, 9, SS_NOPREFIX
+    PUSHBUTTON      "Ad&vanced...", IDC_ADV_BTN, 140, 166, 56, 16
+    DEFPUSHBUTTON   "&Fix image", IDC_FIX, 200, 166, 56, 16
+    PUSHBUTTON      "E&xit", IDCANCEL, 260, 166, 48, 16
 END
 
 IDD_ADV DIALOGEX 0, 0, 240, 150
@@ -39,7 +39,7 @@ STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMEN
 CAPTION "Advanced"
 FONT 9, "Segoe UI", 400, 0, 0x1
 BEGIN
-    LTEXT           "Neither of these is stored in the image. CCONTROL.SYS's cluster is built at run time by the protection stub, and the fill byte is picked out of a table by an index the stub passes. The defaults are what the install this tool was built against used.",
+    LTEXT           "CCONTROL.SYS's cluster is normally read out of CCONTROL.SYS itself. The fill byte is picked out of a table by an index the protection stub passes; the stub is the same on every install seen, and 5A is what it asked for. Defaults goes back to reading both from the image.",
                     -1, 10, 8, 220, 44
     RTEXT           "CCONTROL.SYS cluster:", -1, 10, 60, 90, 9
     EDITTEXT        IDC_ADV_SYS, 106, 58, 60, 13, ES_AUTOHSCROLL | ES_NUMBER

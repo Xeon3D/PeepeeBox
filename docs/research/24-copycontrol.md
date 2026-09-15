@@ -187,16 +187,16 @@ as fixed, unfixed, or not a 2.0 image at all, and writes nothing until the user
 presses Fix. The scan runs the repair as a dry run first, which is also what
 catches a target cluster that is already occupied, before anything is written.
 
-`PP2000.CCC`'s cluster comes out of the licence (§ 9). The other two values are
-not in the image at all, so they sit behind an Advanced button and default to
-the layout CCMOVE wrote for the install we have: `CCONTROL.SYS` two clusters
-below `PP2000.CCC`, slack `0x5A`. Both can also be pinned on the command line,
-`--ccontrol N` and `--slack XX`, which is how an install nobody has seen yet
-gets repaired without rebuilding the tool.
+`PP2000.CCC`'s cluster comes out of the licence and `CCONTROL.SYS`'s out of
+`CCONTROL.SYS` (§ 9); an image too small to reach them is grown first (§ 10).
+The slack byte defaults to `0x5A`. Both overridable values sit behind an Advanced
+button and can be pinned on the command line, `--ccontrol N` and `--slack XX`,
+which is how an install nobody has seen yet gets repaired without rebuilding the
+tool. `--fix` repairs without the window.
 
-Only two directory entries, two FAT entries and cluster slack are ever written.
-No game file is modified, and no other release has that directory, so nothing
-else is touched.
+Apart from the grow, only two directory entries, two FAT entries and cluster
+slack are ever written. No game file is modified, and no other release has that
+directory, so nothing else is touched.
 
 **PeepeeBox detects.** `pp_check_copycontrol()` in `src/photoplay.c` runs once,
 before the machine starts, and is read-only. It parses the image's FAT16, and if
@@ -255,16 +255,20 @@ cf = bh & 1;  bh = ((bh >> 1) | (cf << 7)) + cf
 So `plain = transpose(cipher ^ LFSR) ^ bh`. Verified against the image we have:
 **all 1520 bytes**.
 
-**The key is public.** The seed is the PCODE with **one added to each byte**,
-NUL-padded to eight:
+**The key is public.** The seed is the PCODE, NUL-padded to eight, **XOR the key
+byte kept in the clear at `+0x08` of the `.CCC`**:
 
 ```
 "PP2000" + 00 00  =  50 50 32 30 30 30 00 00
-                  ->  51 51 33 31 31 31 01 01
+key 01 (NL, DE)   ->  51 51 33 31 31 31 01 01
+key 2C (ES)       ->  7C 7C 1E 1C 1C 1C 2C 2C
 ```
 
-and the PCODE is the `.CCC`'s own filename. So any install decrypts. The licence
-then reads straight off:
+and the PCODE is the `.CCC`'s own filename. So any install decrypts. (This was
+first written up as "PCODE plus one", which is the same thing only when the key
+byte is `01`. The ES images carry `2C` and `2E` -- the byte changes when the
+engine rewrites the licence -- and the seed was recovered from them by solving
+the LFSR over GF(2) against known plaintext.) The licence then reads straight off:
 
 ```
 +0010  "PP2000"
@@ -280,12 +284,37 @@ the cluster from the licence instead of the table:
 PP: licence decrypts; PP2000.CCC belongs at cluster 54525
 ```
 
-**Still tabulated:** `CCONTROL.SYS`'s expected cluster is not in the `.CCC` — it
-comes from `CCONTROL.SYS`, which does not yield to this key — and the slack fill
-byte is picked from an 8-entry table at `0x39C4` by a per-call index. Those two
-are what a new install would still need traced.
+**`CCONTROL.SYS`'s cluster is in `CCONTROL.SYS`**: the word at `+6`, XOR `4343`.
+On NL that gives `0xD4FB` = 54523, the value read live from the stub's control
+block in § 5. On every install seen it is two below `PP2000.CCC`'s.
 
-## 10. Method note
+**Still assumed:** the slack fill byte, picked from the 8-entry table at `0x39C4`
+by a per-call index. The stub is identical on NL, DE and ES apart from a few
+per-program bytes, and the engine is identical past the licence, so nothing
+install-specific is there to choose a different index; `5A` is used for all.
+
+## 10. The clusters belong to the cabinet's disk
+
+The cabinets' disks were **2,111,864,832 bytes** (4092/16/63; the original NL
+image was that size). Images that were copied onto a 1,655,635,968-byte disk have
+a FAT16 volume of 48,378 clusters -- and the clusters CCMOVE recorded lie past its
+end:
+
+| install | licence key | `CCONTROL.SYS` | `PP2000.CCC` |
+|---|---|---|---|
+| NL | `01` | 54523 | 54525 |
+| DE (2.0 and 2.01) | `01` | 52683 | 52685 |
+| ES | `2C` / `2E` | 51231 | 51233 |
+
+So `ppfix` first grows such an image back to the cabinet's size. Cluster numbers
+are what the protection checks, so they must not move: the cluster size stays, the
+FAT grows from 189 to 252 sectors, and the root directory and data shift down 126
+sectors as one block. MBR partition size and the BPB's sector count and FAT size
+are the only other bytes that change. The grown image is written beside the
+original and swapped in only when complete. PeepeeBox takes the geometry from the
+file size, so it boots as 4092/16/63.
+
+## 11. Method note
 
 Five hypotheses in this phase came from real evidence in real code and were all
 wrong: the recorded `D:` path, the system date, an absent floppy drive, the

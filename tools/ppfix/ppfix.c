@@ -20,21 +20,26 @@
  * Where the three values come from:
  *
  *   PP2000.CCC's cluster   decrypted out of the licence.  The cipher is broken: an LFSR
- *                          seeded from the PCODE, an 8x8 bit transpose, and a rotating
- *                          XOR (docs/research/24).  The PCODE is the .CCC's own filename,
- *                          so this works for any install.
- *   CCONTROL.SYS's cluster built at runtime by the stub through several indirections and
- *                          not stored anywhere readable.  Known per install, or assumed
- *                          from the layout CCMOVE writes -- see --ccontrol.
- *   the slack fill byte    chosen from an 8-entry table by an index the stub passes.
- *                          Known per install; --slack overrides.
+ *                          seeded from the PCODE XOR the key byte at +8 of the .CCC, an
+ *                          8x8 bit transpose, and a rotating XOR (docs/research/24).  The
+ *                          PCODE is the .CCC's own filename, so this works for any install.
+ *   CCONTROL.SYS's cluster the word at +6 of CCONTROL.SYS, XOR 4343.  On the NL install
+ *                          that is the value the stub was measured comparing against;
+ *                          --ccontrol overrides.
+ *   the slack fill byte    chosen from an 8-entry table by an index the stub passes.  The
+ *                          stub is the same on every install seen; --slack overrides.
+ *
+ * The clusters CCMOVE recorded belong to the cabinet's own disk, which was 2,111,864,832
+ * bytes.  Images that were copied onto a smaller disk may not reach that far, and are
+ * grown back to the cabinet's size first: the FAT gets longer, and the root directory and
+ * data move down behind it, with every cluster number left as it was.
  *
  * It is a small window: it opens HardDisk.img from its own folder, or asks for one,
  * says whether that image is fixed, unfixed, or not a 2.0 image at all, and repairs it
- * only when the user presses Fix.  The two values that cannot be derived are behind
- * the Advanced button, and can also be pinned on the command line:
+ * only when the user presses Fix.  The two overridable values are behind the Advanced
+ * button, and can also be pinned on the command line; --fix repairs without the window:
  *
- *     ppfix [--ccontrol N] [--slack XX] [<image>]
+ *     ppfix [--ccontrol N] [--slack XX] [--fix] [<image>]
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -51,6 +56,14 @@
 #define SECTOR       512
 #define MARKER_LBA   1
 #define MARKER_MAGIC "PPBOXCC1"
+
+/* The disk a 2.0 cabinet shipped with: 4092/16/63.  PeepeeBox takes the geometry from
+   the image's size, so this is also what the grown image boots as. */
+#define CABINET_SECS 4124736u
+#define CABINET_SIZE "2,111,864,832"
+
+/* CCONTROL.SYS keeps the cluster it expects to sit at in its word at +6, under this. */
+#define SYS_XOR      0x4343u
 
 /* There is no console to print to, so what the repair has to say is collected here
    and shown in the window. */
@@ -109,16 +122,20 @@ lfsr_step(lfsr_t *s)
     return s->reg[0];
 }
 
-/* plain = transpose(cipher ^ LFSR) ^ bh, bh rotating once per 8-byte block. */
+/* plain = transpose(cipher ^ LFSR) ^ bh, bh rotating once per 8-byte block.  The LFSR is
+   seeded with the NUL-padded PCODE XOR the key byte kept in the clear at +8 of the .CCC.
+   It is 01 on some installs -- which is how "PCODE plus one" once looked right -- and
+   2C or 2E on others. */
 static void
-licence_decrypt(const uint8_t *ct, uint32_t len, const char *pcode, uint8_t bh0, uint8_t *out)
+licence_decrypt(const uint8_t *ct, uint32_t len, const char *pcode, uint8_t key, uint8_t bh0,
+                uint8_t *out)
 {
     lfsr_t  s;
     uint8_t bh = bh0;
     size_t  n  = strlen(pcode);
 
     for (int i = 0; i < 8; i++)
-        s.reg[i] = (uint8_t) ((((size_t) i < n) ? (uint8_t) pcode[i] : 0) + 1);
+        s.reg[i] = (uint8_t) ((((size_t) i < n) ? (uint8_t) pcode[i] : 0) ^ key);
     for (int i = 0; i < 256; i++)
         lfsr_step(&s);
 
@@ -145,6 +162,8 @@ licence_decrypt(const uint8_t *ct, uint32_t len, const char *pcode, uint8_t bh0,
 typedef struct {
     FILE    *f;
     uint32_t part;
+    uint32_t tot;       /* sectors in the partition */
+    uint32_t rsvd;
     uint32_t spc;
     uint32_t nfat;
     uint32_t spf;
@@ -152,25 +171,33 @@ typedef struct {
     uint32_t root_lba;
     uint32_t root_secs;
     uint32_t data_lba;
-    uint32_t clusters;
+    uint32_t clusters;  /* one past the highest cluster number */
     uint8_t *fat;
 } vol_t;
 
 static uint16_t rd16(const uint8_t *p) { return (uint16_t) (p[0] | (p[1] << 8)); }
 static uint32_t rd32(const uint8_t *p) { return (uint32_t) (p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24)); }
+static void     wr16(uint8_t *p, uint16_t v) { p[0] = (uint8_t) v; p[1] = (uint8_t) (v >> 8); }
+static void     wr32(uint8_t *p, uint32_t v) { wr16(p, (uint16_t) v); wr16(&p[2], (uint16_t) (v >> 16)); }
+
+/* A cabinet's disk is past 2 GB's worth of sector offsets once it is grown, so every seek
+   is 64-bit. */
+static int
+seek_to(FILE *f, int64_t off)
+{
+    return _fseeki64(f, off, SEEK_SET) == 0;
+}
 
 static int
 sec_read(vol_t *v, uint32_t lba, uint32_t n, uint8_t *buf)
 {
-    return (fseek(v->f, (long) (lba * SECTOR), SEEK_SET) == 0) &&
-           (fread(buf, SECTOR, n, v->f) == n);
+    return seek_to(v->f, (int64_t) lba * SECTOR) && (fread(buf, SECTOR, n, v->f) == n);
 }
 
 static int
 sec_write(vol_t *v, uint32_t lba, uint32_t n, const uint8_t *buf)
 {
-    return (fseek(v->f, (long) (lba * SECTOR), SEEK_SET) == 0) &&
-           (fwrite(buf, SECTOR, n, v->f) == n);
+    return seek_to(v->f, (int64_t) lba * SECTOR) && (fwrite(buf, SECTOR, n, v->f) == n);
 }
 
 static uint16_t fat_get(const vol_t *v, uint16_t c)          { return rd16(&v->fat[c * 2]); }
@@ -202,18 +229,20 @@ vol_open(vol_t *v, const char *fn, int rw)
         pf_logf("not a 512-byte-sector FAT volume\n");
         return 0;
     }
+    v->tot       = rd16(&sec[0x13]) ? rd16(&sec[0x13]) : rd32(&sec[0x20]);
+    v->rsvd      = rd16(&sec[0x0E]);
     v->spc       = sec[0x0D];
     v->nfat      = sec[0x10];
     v->spf       = rd16(&sec[0x16]);
-    v->fat_lba   = v->part + rd16(&sec[0x0E]);
+    v->fat_lba   = v->part + v->rsvd;
     v->root_lba  = v->fat_lba + (v->nfat * v->spf);
     v->root_secs = ((uint32_t) rd16(&sec[0x11]) * 32) / SECTOR;
     v->data_lba  = v->root_lba + v->root_secs;
-    v->clusters  = ((rd32(&sec[0x20]) - (v->data_lba - v->part)) / v->spc) + 2;
-    if (!v->spc || !v->nfat || !v->spf) {
+    if (!v->spc || !v->nfat || !v->spf || (v->tot <= (v->data_lba - v->part))) {
         pf_logf("bad BPB\n");
         return 0;
     }
+    v->clusters = ((v->tot - (v->data_lba - v->part)) / v->spc) + 2;
     v->fat = malloc(v->spf * SECTOR);
     return (v->fat != NULL) && sec_read(v, v->fat_lba, v->spf, v->fat);
 }
@@ -227,11 +256,11 @@ vol_close(vol_t *v)
 }
 
 /* Find "NAME    EXT" in a directory; dir_cl 0 means the root. */
-static long
+static int64_t
 dir_find(vol_t *v, uint16_t dir_cl, const char *name11, uint16_t *cl, uint32_t *size)
 {
     uint8_t *buf = malloc(v->spc * SECTOR);
-    long     hit = -1;
+    int64_t  hit = -1;
 
     if (buf == NULL)
         return -1;
@@ -247,7 +276,7 @@ dir_find(vol_t *v, uint16_t dir_cl, const char *name11, uint16_t *cl, uint32_t *
             if ((e[0] == 0x00) || (e[0] == 0xE5))
                 continue;
             if (!memcmp(e, name11, 11)) {
-                hit = (long) ((lba * SECTOR) + (i * 32));
+                hit = ((int64_t) lba * SECTOR) + (i * 32);
                 if (cl)
                     *cl = rd16(&e[0x1A]);
                 if (size)
@@ -279,7 +308,7 @@ slack_span(const vol_t *v, uint32_t size, uint32_t *len)
 }
 
 static int
-relocate(vol_t *v, long ent, uint16_t from, uint16_t to, uint32_t size, uint8_t fill, int dry)
+relocate(vol_t *v, int64_t ent, uint16_t from, uint16_t to, uint32_t size, uint8_t fill, int dry)
 {
     const uint32_t clb = v->spc * SECTOR;
     uint8_t       *buf;
@@ -323,11 +352,10 @@ relocate(vol_t *v, long ent, uint16_t from, uint16_t to, uint32_t size, uint8_t 
     for (uint32_t n = 0; n < v->nfat; n++)
         sec_write(v, v->fat_lba + (n * v->spf), v->spf, v->fat);
 
-    if ((fseek(v->f, ent, SEEK_SET) != 0) || (fread(e, 1, 32, v->f) != 32))
+    if (!seek_to(v->f, ent) || (fread(e, 1, 32, v->f) != 32))
         return -1;
-    e[0x1A] = (uint8_t) to;
-    e[0x1B] = (uint8_t) (to >> 8);
-    if ((fseek(v->f, ent, SEEK_SET) != 0) || (fwrite(e, 1, 32, v->f) != 32))
+    wr16(&e[0x1A], to);
+    if (!seek_to(v->f, ent) || (fwrite(e, 1, 32, v->f) != 32))
         return -1;
     return 1;
 }
@@ -355,6 +383,144 @@ fill_slack(vol_t *v, uint16_t cl, uint32_t size, uint8_t fill, int dry)
         return 1;
     memset(&sec[soff % SECTOR], fill, slen);
     return sec_write(v, lba, 1, sec) ? 1 : -1;
+}
+
+/* ---------------------------------------------------------------- growing the volume */
+
+/* The clusters CCMOVE recorded are the cabinet disk's.  An image restored onto a smaller
+   disk has a volume that simply ends before them, so it is grown back to the cabinet's
+   size.  Cluster numbers are what the protection checks, so they must not change: the
+   cluster size stays, the FAT gets longer, and the root directory and the data move down
+   behind it as one block. */
+typedef struct {
+    uint32_t tot;       /* partition sectors */
+    uint32_t spf;
+    uint32_t clusters;
+} grow_t;
+
+static int
+grow_plan(const vol_t *v, grow_t *g)
+{
+    uint32_t spf = v->spf;
+    uint32_t n;
+
+    if ((v->part + v->tot) >= CABINET_SECS)
+        return 0;
+    g->tot = CABINET_SECS - v->part;
+    for (;;) {
+        n = (g->tot - v->rsvd - (v->nfat * spf) - v->root_secs) / v->spc;
+        if (((n + 2) * 2) <= (spf * SECTOR))
+            break;
+        spf++;
+    }
+    if ((n + 2) > 0xFFF0)
+        return 0;   /* it would stop being FAT16 */
+    g->spf      = spf;
+    g->clusters = n + 2;
+    return 1;
+}
+
+/* For the dry run: make the in-memory FAT look like the grown one, so relocate() can
+   check its targets against it.  Never written back. */
+static int
+vol_widen(vol_t *v, const grow_t *g)
+{
+    uint8_t *fat = realloc(v->fat, g->spf * SECTOR);
+
+    if (fat == NULL)
+        return 0;
+    memset(&fat[v->clusters * 2], 0, (g->spf * SECTOR) - (v->clusters * 2));
+    v->fat      = fat;
+    v->spf      = g->spf;
+    v->clusters = g->clusters;
+    return 1;
+}
+
+/* Write the grown image beside the original and swap it in only once it is complete, so
+   a failure part way leaves the original untouched. */
+static int
+grow_image(const char *path, const grow_t *g)
+{
+    const uint32_t chunk = 2048;
+    char           tmp[MAX_PATH + 16] = "";
+    vol_t          v;
+    FILE          *out  = NULL;
+    uint8_t       *buf  = NULL;
+    uint8_t       *fat  = NULL;
+    uint32_t       done = 0;
+    uint32_t       lba;
+    uint32_t       end;
+    int            ok = 0;
+
+    if (!vol_open(&v, path, 0))
+        goto fail;
+    snprintf(tmp, sizeof(tmp), "%s.ppfix-tmp", path);
+    out = fopen(tmp, "wb");
+    buf = malloc(chunk * SECTOR);
+    fat = calloc(g->spf, SECTOR);
+    if ((out == NULL) || (buf == NULL) || (fat == NULL) || (v.fat_lba > chunk)) {
+        pf_logf("cannot create %s\n", tmp);
+        goto fail;
+    }
+
+    /* The MBR track, the boot sector and any reserved sectors, with the partition and the
+       BPB told about the new size. */
+    if (!sec_read(&v, 0, v.fat_lba, buf))
+        goto fail;
+    wr32(&buf[0x1BE + 12], g->tot);
+    wr16(&buf[(v.part * SECTOR) + 0x13], 0);
+    wr16(&buf[(v.part * SECTOR) + 0x16], (uint16_t) g->spf);
+    wr32(&buf[(v.part * SECTOR) + 0x20], g->tot);
+    if (fwrite(buf, SECTOR, v.fat_lba, out) != v.fat_lba)
+        goto fail;
+    done += v.fat_lba;
+
+    /* Every FAT copy: the old chain entries, then free space. */
+    memcpy(fat, v.fat, v.clusters * 2);
+    for (uint32_t n = 0; n < v.nfat; n++) {
+        if (fwrite(fat, SECTOR, g->spf, out) != g->spf)
+            goto fail;
+        done += g->spf;
+    }
+
+    /* The root directory and the data, unchanged, now further in. */
+    end = v.part + v.tot;
+    for (lba = v.root_lba; lba < end; lba += chunk) {
+        const uint32_t n = ((end - lba) < chunk) ? (end - lba) : chunk;
+
+        if (!sec_read(&v, lba, n, buf) || (fwrite(buf, SECTOR, n, out) != n)) {
+            pf_logf("copy failed at sector %u\n", lba);
+            goto fail;
+        }
+        done += n;
+    }
+
+    /* And the new free clusters. */
+    memset(buf, 0, chunk * SECTOR);
+    while (done < CABINET_SECS) {
+        const uint32_t n = ((CABINET_SECS - done) < chunk) ? (CABINET_SECS - done) : chunk;
+
+        if (fwrite(buf, SECTOR, n, out) != n) {
+            pf_logf("cannot write %s -- is the disk full?\n", tmp);
+            goto fail;
+        }
+        done += n;
+    }
+    ok = (fflush(out) == 0);
+
+fail:
+    if (out != NULL)
+        ok = (fclose(out) == 0) && ok;
+    vol_close(&v);
+    free(buf);
+    free(fat);
+    if (ok && !MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        pf_logf("cannot replace %s\n", path);
+        ok = 0;
+    }
+    if (!ok && (tmp[0] != '\0'))
+        DeleteFileA(tmp);
+    return ok;
 }
 
 /* --------------------------------------------------------------------------- the marker */
@@ -393,20 +559,23 @@ typedef struct {
     uint16_t cl_ccc;
     uint32_t sz_sys;
     uint32_t sz_ccc;
-    long     ent_sys;     /* their directory entries, as file offsets */
-    long     ent_ccc;
+    int64_t  ent_sys;     /* their directory entries, as file offsets */
+    int64_t  ent_ccc;
     uint16_t want_sys;    /* where the protection expects them */
     uint16_t want_ccc;
     uint8_t  slack;
-    int      sys_assumed; /* want_sys was derived, not known */
+    const char *sys_from; /* where want_sys came from */
     int      slk_default;
     int      marker;      /* PeepeeBox's marker is already in LBA 1 */
     int      changes;     /* what a repair would have to do */
+    int      grow;        /* the volume has to reach the cabinet disk's size first */
+    uint32_t clus_now;
+    grow_t   gp;
     char     install[80];
 } scan_t;
 
-/* The two values that are not in the image (docs/research/24 s11).  -1 means "work it
-   out"; the Advanced dialog and the command line can pin either. */
+/* The two overridable values.  -1 means "read it from the image"; the Advanced dialog
+   and the command line can pin either. */
 static long g_opt_sys = -1;
 static int  g_opt_slk = -1;
 
@@ -436,24 +605,50 @@ locate(vol_t *v, scan_t *s, int rw)
         return 0;
     }
 
-    /* The licence is the one value that is not a guess: it says outright which cluster
-       PP2000.CCC has to start at, and the key is the file's own name. */
+    /* The licence says outright which cluster PP2000.CCC has to start at; the key is the
+       file's own name and a byte kept in the clear beside it. */
     if (!sec_read(v, clus_lba(v, s->cl_ccc), 4, raw)) {
         pf_logf("cannot read PP2000.CCC\n");
         s->state = ST_ERROR;
         return 0;
     }
-    licence_decrypt(&raw[0x10], sizeof(lic), "PP2000", 0x35, lic);
-    if (memcmp(lic, "PP2000", 6) != 0) {
+    licence_decrypt(&raw[0x10], sizeof(lic), "PP2000", raw[8], 0x35, lic);
+    s->want_ccc = rd16(&lic[0x12]);
+    if ((memcmp(lic, "PP2000", 6) != 0) || (s->want_ccc < 2) || (s->want_ccc > 0xFFEF)) {
         pf_logf("the licence did not decrypt (unexpected PCODE or key)\n");
         s->state = ST_ERROR;
         return 0;
     }
-    s->want_ccc    = rd16(&lic[0x12]);
-    s->want_sys    = (g_opt_sys >= 0) ? (uint16_t) g_opt_sys : (uint16_t) (s->want_ccc - 2);
+
+    /* CCONTROL.SYS says where it has to be itself.  Should that word ever be nonsense,
+       fall back on the layout CCMOVE wrote on every install seen: two clusters below. */
+    if (!sec_read(v, clus_lba(v, s->cl_sys), 1, raw)) {
+        pf_logf("cannot read CCONTROL.SYS\n");
+        s->state = ST_ERROR;
+        return 0;
+    }
+    s->want_sys = (uint16_t) (rd16(&raw[6]) ^ SYS_XOR);
+    s->sys_from = "from CCONTROL.SYS";
+    if (g_opt_sys >= 0) {
+        s->want_sys = (uint16_t) g_opt_sys;
+        s->sys_from = "set by hand";
+    } else if ((s->want_sys < 2) || (s->want_sys > 0xFFEF) || (s->want_sys == s->want_ccc)) {
+        s->want_sys = (uint16_t) (s->want_ccc - 2);
+        s->sys_from = "assumed";
+    }
     s->slack       = (g_opt_slk >= 0) ? (uint8_t) g_opt_slk : 0x5A;
-    s->sys_assumed = (g_opt_sys < 0);
     s->slk_default = (g_opt_slk < 0);
+
+    /* Recorded on a bigger disk than this image is? */
+    s->clus_now = v->clusters;
+    s->grow     = (s->want_sys >= v->clusters) || (s->want_ccc >= v->clusters);
+    if (s->grow && (!grow_plan(v, &s->gp) || (s->want_sys >= s->gp.clusters) ||
+                    (s->want_ccc >= s->gp.clusters))) {
+        pf_logf("the protection wants clusters %u and %u, but this volume ends at %u and "
+                "cannot be grown far enough\n", s->want_sys, s->want_ccc, v->clusters - 1);
+        s->state = ST_ERROR;
+        return 0;
+    }
 
     for (size_t i = 0; i < (sizeof(s->install) - 1); i++) {
         const uint8_t c = lic[0x17 + i];
@@ -489,6 +684,15 @@ scan_image(scan_t *s)
     if (sec_read(&v, MARKER_LBA, 1, sec) && !memcmp(sec, MARKER_MAGIC, 8))
         s->marker = 1;
 
+    if (s->grow) {
+        pf_logf("  grow the volume from %u to %u clusters\n", s->clus_now - 2,
+                s->gp.clusters - 2);
+        if (!vol_widen(&v, &s->gp)) {
+            vol_close(&v);
+            s->state = ST_ERROR;
+            return;
+        }
+    }
     r1 = relocate(&v, s->ent_sys, s->cl_sys, s->want_sys, s->sz_sys, s->slack, 1);
     r2 = relocate(&v, s->ent_ccc, s->cl_ccc, s->want_ccc, s->sz_ccc, s->slack, 1);
     if ((r1 < 0) || (r2 < 0)) {
@@ -496,9 +700,11 @@ scan_image(scan_t *s)
         s->state = ST_ERROR;
         return;
     }
-    s->changes = (r1 > 0) + (r2 > 0);
-    s->changes += (fill_slack(&v, s->want_ccc, s->sz_ccc, s->slack, 1) > 0);
-    s->changes += (fill_slack(&v, s->want_sys, s->sz_sys, s->slack, 1) > 0);
+    s->changes = s->grow + (r1 > 0) + (r2 > 0);
+    if (!s->grow) {
+        s->changes += (fill_slack(&v, s->want_ccc, s->sz_ccc, s->slack, 1) > 0);
+        s->changes += (fill_slack(&v, s->want_sys, s->sz_sys, s->slack, 1) > 0);
+    }
     vol_close(&v);
 
     /* Repaired means both: the layout the protection wants, and the marker that tells
@@ -513,6 +719,19 @@ fix_image(scan_t *s)
     int   ok = 0;
 
     pf_clear();
+    if (!locate(&v, s, 0)) {
+        vol_close(&v);
+        return 0;
+    }
+    vol_close(&v);
+    if (s->grow) {
+        if (!grow_image(s->path, &s->gp)) {
+            pf_logf("the volume could not be grown; the image is unchanged\n");
+            return 0;
+        }
+        pf_logf("  volume grown from %u to %u clusters; the image is now " CABINET_SIZE
+                " bytes\n", s->clus_now - 2, s->gp.clusters - 2);
+    }
     if (!locate(&v, s, 1)) {
         vol_close(&v);
         return 0;
@@ -612,15 +831,23 @@ detail_text(const scan_t *s, char *out, size_t sz)
                          "The layout is already right, but PeepeeBox's marker is missing, so "
                          "it cannot tell and will warn about this image.\r\n"
                          "Fixing it writes the marker and changes nothing else.");
-            else
+            else {
+                char grow[160] = "";
+
+                if (s->grow)
+                    snprintf(grow, sizeof(grow),
+                             "The volume ends at cluster %u, so the image is first grown "
+                             "to the cabinet's " CABINET_SIZE "-byte disk.\r\n",
+                             s->clus_now - 1);
                 snprintf(out, sz,
-                         "CCONTROL.SYS  cluster %u  ->  %u%s\r\n"
+                         "%sCCONTROL.SYS  cluster %u  ->  %u  (%s)\r\n"
                          "PP2000.CCC    cluster %u  ->  %u  (from the licence, install "
                          "path %s)\r\n"
                          "slack fill %02X%s",
-                         s->cl_sys, s->want_sys, s->sys_assumed ? "   (assumed)" : "",
+                         grow, s->cl_sys, s->want_sys, s->sys_from,
                          s->cl_ccc, s->want_ccc, s->install,
                          s->slack, s->slk_default ? "   (default)" : "");
+            }
             break;
     }
 }
@@ -674,9 +901,10 @@ adv_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         case WM_COMMAND:
             switch (LOWORD(wp)) {
                 case IDC_ADV_DEF:
-                    snprintf(t, sizeof(t), "%u", (unsigned) (g_scan.want_ccc - 2));
-                    SetDlgItemTextA(h, IDC_ADV_SYS, t);
-                    SetDlgItemTextA(h, IDC_ADV_SLK, "5A");
+                    /* Back to reading it from the image. */
+                    g_opt_sys = -1;
+                    g_opt_slk = -1;
+                    EndDialog(h, 1);
                     return TRUE;
 
                 case IDOK: {
@@ -786,8 +1014,12 @@ main_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
                     return TRUE;
 
                 case IDC_FIX: {
-                    const int ok = fix_image(&g_scan);
-                    char      msg[2048];
+                    /* Growing an image copies all of it, which takes a while. */
+                    const HCURSOR was = SetCursor(LoadCursor(NULL, IDC_WAIT));
+                    const int     ok  = fix_image(&g_scan);
+                    char          msg[2048];
+
+                    SetCursor(was);
 
                     if (ok)
                         snprintf(msg, sizeof(msg),
@@ -826,6 +1058,8 @@ main_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 /* An image can be named on the command line, and the two values the Advanced dialog holds
    can be pinned there too -- which is how a install nobody has seen yet gets repaired
    without rebuilding the tool. */
+static int g_headless;
+
 static void
 parse_cmdline(int argc, char **argv)
 {
@@ -834,9 +1068,53 @@ parse_cmdline(int argc, char **argv)
             g_opt_sys = strtol(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--slack") && ((i + 1) < argc))
             g_opt_slk = (int) strtol(argv[++i], NULL, 16);
+        else if (!strcmp(argv[i], "--fix"))
+            g_headless = 1;
         else if (argv[i][0] != '-')
             snprintf(g_scan.path, sizeof(g_scan.path), "%s", argv[i]);
     }
+}
+
+/* --fix: repair without the window, for scripts and for a batch of images.  What it has
+   to say goes to the console it was started from, if any; the exit code is 0 for an image
+   that is repaired or already was, 1 for one that is not 2.0, 2 for a failure. */
+static int
+run_headless(void)
+{
+    static const char *const state[] = { "error", "not a Photo Play 2.0 image", "unfixed",
+                                         "fixed" };
+    char  detail[sizeof(pf_msg) + 512];
+    FILE *con = NULL;
+    int   rc;
+
+    /* Output redirected to a file or pipe reaches a window program too; otherwise borrow
+       the console it was started from. */
+    if (GetFileType(GetStdHandle(STD_OUTPUT_HANDLE)) != FILE_TYPE_UNKNOWN)
+        con = stdout;
+    else if (AttachConsole(ATTACH_PARENT_PROCESS))
+        con = fopen("CONOUT$", "w");
+
+    scan_image(&g_scan);
+    detail_text(&g_scan, detail, sizeof(detail));
+    if (con != NULL)
+        fprintf(con, "%s: %s\n%s\n", g_scan.path, state[g_scan.state], detail);
+
+    if (g_scan.state == ST_UNFIXED) {
+        const int ok = fix_image(&g_scan);
+
+        if (con != NULL)
+            fprintf(con, "%s%s\n", pf_msg, ok ? "repaired" : "NOT repaired");
+        scan_image(&g_scan);
+    }
+    rc = (g_scan.state == ST_FIXED) ? 0 : (g_scan.state == ST_NOT20) ? 1 : 2;
+    if (con != NULL) {
+        fprintf(con, "%s: %s\n", g_scan.path, state[g_scan.state]);
+        if (con == stdout)
+            fflush(con);
+        else
+            fclose(con);
+    }
+    return rc;
 }
 
 int WINAPI
@@ -850,6 +1128,8 @@ WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     parse_cmdline(__argc, __argv);
     if (g_scan.path[0] == '\0')
         default_image(g_scan.path, sizeof(g_scan.path));
+    if (g_headless)
+        return (g_scan.path[0] != '\0') ? run_headless() : 2;
 
     InitCommonControls();
     DialogBoxA(inst, MAKEINTRESOURCEA(IDD_MAIN), NULL, main_proc);
