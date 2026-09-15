@@ -72,6 +72,15 @@ worth knowing because folder names in circulation are often wrong. The result is
 saved, so the window opens on the list next time; the button then reads
 **Update list** and scans again over the top.
 
+Photo Play 2.0 has no `MAIN.SET`. Its version comes from `MAIN\VERSION.STR`, the
+file its menu reads and shows, which is how a 2.01 image filed as 2.0 is caught.
+The territory is nowhere in plain text: the menu is built per country and names the
+country's currency, but it is encrypted. Menus whose text has been read are
+recognised directly; any other falls back to the language of the Funquiz and
+Hangman questions installed — or, where every language is, the one that has been
+played. A language only points at a country, so a German-speaking cabinet outside
+Germany would still read DE.
+
 **Double-click a release to run it.** That image goes into the drive and the
 cabinet hard resets onto it. The pick lasts for the run — hard resets included —
 and is not written anywhere, so the next launch starts on nothing again and a rig

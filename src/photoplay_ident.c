@@ -31,6 +31,9 @@
  *             -- a malformed or foreign image must fail quietly, not crash the
  *             emulator before it has drawn a window.
  *
+ *             Photo Play 2.0 predates MAIN.SET and is identified from what it
+ *             has instead; that is the last section of this file.
+ *
  * Authors:    The HUEG PP team.
  *
  *             Released under the GNU General Public License version 2 or
@@ -187,15 +190,18 @@ pp_read_chain(pp_fat_t *fs, uint16_t clus, uint32_t size, uint32_t cap)
     return buf;
 }
 
-/* Find `name83` (11 bytes, space padded, upper case) in a directory.  `clus` of
+/* Hand every live entry of a directory to `fn` -- deleted entries and long-name
+   fragments skipped -- until it returns non-zero, and return that.  `clus` of
    zero means the fixed root directory. */
+typedef int (*pp_dir_fn)(const uint8_t *ent, void *ctx);
+
 static int
-pp_dir_find(pp_fat_t *fs, uint16_t clus, const char *name83,
-            uint16_t *out_clus, uint32_t *out_size, int *out_isdir)
+pp_dir_each(pp_fat_t *fs, uint16_t clus, pp_dir_fn fn, void *ctx)
 {
     const uint32_t csz  = fs->spc * fs->bps;
     uint8_t        ent[32];
     int            guard = 0;
+    int            r;
 
     if (clus == 0) {
         for (uint32_t i = 0; i < fs->root_ents; i++) {
@@ -205,12 +211,8 @@ pp_dir_find(pp_fat_t *fs, uint16_t clus, const char *name83,
                 return 0;
             if ((ent[0] == 0xE5) || (ent[11] == 0x0F))
                 continue;
-            if (!memcmp(ent, name83, 11)) {
-                *out_clus  = rd16(&ent[26]);
-                *out_size  = rd32(&ent[28]);
-                *out_isdir = !!(ent[11] & 0x10);
-                return 1;
-            }
+            if ((r = fn(ent, ctx)) != 0)
+                return r;
         }
         return 0;
     }
@@ -225,16 +227,50 @@ pp_dir_find(pp_fat_t *fs, uint16_t clus, const char *name83,
                 return 0;
             if ((ent[0] == 0xE5) || (ent[11] == 0x0F))
                 continue;
-            if (!memcmp(ent, name83, 11)) {
-                *out_clus  = rd16(&ent[26]);
-                *out_size  = rd32(&ent[28]);
-                *out_isdir = !!(ent[11] & 0x10);
-                return 1;
-            }
+            if ((r = fn(ent, ctx)) != 0)
+                return r;
         }
         clus = pp_fat_next(fs, clus);
     }
     return 0;
+}
+
+typedef struct {
+    const char *name83;
+    uint16_t    clus;
+    uint32_t    size;
+    int         isdir;
+} pp_find_t;
+
+static int
+pp_find_cb(const uint8_t *ent, void *ctx)
+{
+    pp_find_t *q = (pp_find_t *) ctx;
+
+    if (memcmp(ent, q->name83, 11))
+        return 0;
+
+    q->clus  = rd16(&ent[26]);
+    q->size  = rd32(&ent[28]);
+    q->isdir = !!(ent[11] & 0x10);
+    return 1;
+}
+
+/* Find `name83` (11 bytes, space padded, upper case) in a directory.  `clus` of
+   zero means the fixed root directory. */
+static int
+pp_dir_find(pp_fat_t *fs, uint16_t clus, const char *name83,
+            uint16_t *out_clus, uint32_t *out_size, int *out_isdir)
+{
+    pp_find_t q = { name83, 0, 0, 0 };
+
+    if (!pp_dir_each(fs, clus, pp_find_cb, &q))
+        return 0;
+
+    *out_clus  = q.clus;
+    *out_size  = q.size;
+    *out_isdir = q.isdir;
+    return 1;
 }
 
 /* dst[i] ^= keystream(seed)[i], the keystream restarting at `seed` every call */
@@ -431,4 +467,257 @@ int
 photoplay_identify(const char *img_path, char *out, size_t outsz)
 {
     return photoplay_identify_ex(img_path, out, outsz, NULL, 0, NULL, 0);
+}
+
+/* ------------------------------------------------------------------------------------
+ * Photo Play 2.0.
+ *
+ * 2.0 predates MAIN.SET.  Its version is in MAIN\VERSION.STR -- "Version 2.0" or
+ * "Version 2.01" -- which the menu reads and puts on screen; the menu carries no
+ * version of its own, so that file is the version by definition.  (One image in
+ * circulation is filed as 2.0 and says 2.01 there, and its menu is byte-identical to
+ * the other 2.01's.)
+ *
+ * Nothing on the disk states the territory in the clear.  The menu, MAIN\MENU.EXE, is
+ * built per country: its text is in the country's language and it names the currency
+ * the coin mechanism counts in -- "D.Mark", "Pesetas", "Gulden".  But it is wrapped in
+ * Protect! v6.0, a polymorphic self-decrypting envelope, so none of that can be read
+ * without running the envelope.  That was done once, offline, for each menu build in
+ * pp20_menus[]; the build is recognised by its size and CRC-32 and named after the
+ * currency it was found to use.
+ *
+ * A menu not in that table falls back to the questions installed.  Funquiz and
+ * Hangman keep one set per language, named by a prefix -- FUNQUIZ\DATA\D_ALLG1.DAB,
+ * HANGMAN\GROUPS\S_KINO.DBF -- and the DE and ES images carry only their own.  Where
+ * an image carries several (the NL one has all six), the set that has been played
+ * has .BUF files beside it recording what was already asked, and that settles it.
+ * A language is not a country, though: a German set reads DE on an Austrian cabinet
+ * too, which only the currency could tell apart.
+ */
+
+/* Menu builds whose envelope has been run and whose text has been read. */
+static const struct {
+    uint32_t    size;
+    uint32_t    crc;
+    const char *terr;
+} pp20_menus[] = {
+    { 141449, 0xCBB96DF2, "DE" }, /* "D.Mark"  -- the 2.01 menu */
+    { 141559, 0xAB7FCD16, "NL" }, /* "Gulden"  */
+    { 141816, 0x20D66C70, "ES" }, /* "Pesetas" */
+};
+
+/* Question-set prefix -> country.  Funquiz and Hangman do not agree on spelling (GR
+   and SP against G and S), so both are here.  English is left out: it names no one
+   country. */
+static const struct {
+    const char *lang;
+    const char *terr;
+} pp20_langs[] = {
+    { "D",  "DE" },
+    { "H",  "NL" },
+    { "I",  "IT" },
+    { "F",  "FR" },
+    { "SP", "ES" },
+    { "S",  "ES" },
+    { "GR", "GR" },
+    { "G",  "GR" },
+};
+
+#define PP20_MAX_LANGS 16
+
+typedef struct {
+    const char *ext; /* what the question sets are stored as: "DAB" or "DBF" */
+    int         n;
+    struct {
+        char code[4];
+        int  sets;   /* question files in this language */
+        int  played; /* .BUF files beside them */
+    } lang[PP20_MAX_LANGS];
+} pp20_langs_t;
+
+static uint32_t
+pp_crc32(const uint8_t *p, uint32_t len)
+{
+    uint32_t c = 0xFFFFFFFFu;
+
+    for (uint32_t i = 0; i < len; i++) {
+        c ^= p[i];
+        for (int k = 0; k < 8; k++)
+            c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u)));
+    }
+    return ~c;
+}
+
+/* Tally one directory entry: "D_ALLG1 DAB" is a German question set, "D_ALLG1 BUF"
+   says it has been played. */
+static int
+pp20_lang_cb(const uint8_t *ent, void *ctx)
+{
+    pp20_langs_t *l   = (pp20_langs_t *) ctx;
+    char          code[4];
+    int           len = 0;
+    int           i;
+
+    if (ent[11] & 0x18) /* a directory, or the volume label */
+        return 0;
+
+    while ((len < 3) && (ent[len] >= 'A') && (ent[len] <= 'Z'))
+        len++;
+    if ((len == 0) || (ent[len] != '_'))
+        return 0;
+
+    memcpy(code, ent, len);
+    code[len] = '\0';
+
+    const int set    = !memcmp(&ent[8], l->ext, 3);
+    const int played = !memcmp(&ent[8], "BUF", 3);
+
+    if (!set && !played)
+        return 0;
+
+    for (i = 0; i < l->n; i++)
+        if (!strcmp(l->lang[i].code, code))
+            break;
+
+    if (i == l->n) {
+        if (l->n == PP20_MAX_LANGS)
+            return 0;
+        snprintf(l->lang[i].code, sizeof(l->lang[i].code), "%s", code);
+        l->lang[i].sets   = 0;
+        l->lang[i].played = 0;
+        l->n++;
+    }
+
+    l->lang[i].sets += set;
+    l->lang[i].played += played;
+    return 0;
+}
+
+/* The country one folder of question sets points to: its only language, or failing
+   that the only one that has been played.  NULL when neither settles it. */
+static const char *
+pp20_lang_terr(pp_fat_t *fs, uint16_t dir, const char *ext)
+{
+    pp20_langs_t l;
+    const char  *lang = NULL;
+    int          n    = 0;
+
+    memset(&l, 0, sizeof(l));
+    l.ext = ext;
+    pp_dir_each(fs, dir, pp20_lang_cb, &l);
+
+    for (int i = 0; i < l.n; i++)
+        if (l.lang[i].sets) {
+            lang = l.lang[i].code;
+            n++;
+        }
+
+    if (n != 1) {
+        lang = NULL;
+        n    = 0;
+        for (int i = 0; i < l.n; i++)
+            if (l.lang[i].sets && l.lang[i].played) {
+                lang = l.lang[i].code;
+                n++;
+            }
+    }
+
+    if (n != 1)
+        return NULL;
+
+    for (size_t i = 0; i < (sizeof(pp20_langs) / sizeof(pp20_langs[0])); i++)
+        if (!strcmp(pp20_langs[i].lang, lang))
+            return pp20_langs[i].terr;
+
+    return NULL;
+}
+
+int
+photoplay_identify_pp20(const char *img_path, char *out, size_t outsz,
+                        char *banner_out, size_t bsz, char *terr_out, size_t tsz)
+{
+    pp_fat_t    fs;
+    uint16_t    main_dir    = 0;
+    uint16_t    clus;
+    uint16_t    dir;
+    uint32_t    size;
+    int         isdir;
+    char        version[32] = { 0 };
+    const char *terr        = NULL;
+
+    if ((out == NULL) || (outsz < 8))
+        return 0;
+    out[0] = '\0';
+    if (banner_out != NULL)
+        banner_out[0] = '\0';
+    if (terr_out != NULL)
+        terr_out[0] = '\0';
+
+    if (!pp_fat_open(&fs, img_path))
+        return 0;
+
+    /* The version -- and whether this is a 2.0 image at all. */
+    if (pp_dir_find(&fs, 0, "MAIN       ", &main_dir, &size, &isdir) && isdir &&
+        pp_dir_find(&fs, main_dir, "VERSION STR", &clus, &size, &isdir) && !isdir) {
+        uint8_t *raw = pp_read_chain(&fs, clus, size, 256);
+
+        if (raw != NULL) {
+            size_t n = 0;
+
+            while ((n < size) && (n < (sizeof(version) - 1)) && (raw[n] >= 0x20) && (raw[n] < 0x7F)) {
+                version[n] = (char) raw[n];
+                n++;
+            }
+            while ((n > 0) && (version[n - 1] == ' '))
+                n--;
+            version[n] = '\0';
+            free(raw);
+        }
+    }
+
+    if (strncmp(version, "Version ", 8) || (version[8] == '\0')) {
+        fclose(fs.f);
+        return 0;
+    }
+
+    /* The territory: the menu, if it is a build that has been read... */
+    if (pp_dir_find(&fs, main_dir, "MENU    EXE", &clus, &size, &isdir) && !isdir) {
+        uint8_t *raw = pp_read_chain(&fs, clus, size, 1024 * 1024);
+
+        if (raw != NULL) {
+            const uint32_t crc = pp_crc32(raw, size);
+
+            for (size_t i = 0; i < (sizeof(pp20_menus) / sizeof(pp20_menus[0])); i++)
+                if ((size == pp20_menus[i].size) && (crc == pp20_menus[i].crc)) {
+                    terr = pp20_menus[i].terr;
+                    break;
+                }
+            free(raw);
+        }
+    }
+
+    /* ...otherwise the language the questions are in. */
+    if ((terr == NULL) &&
+        pp_dir_find(&fs, 0, "FUNQUIZ    ", &dir, &size, &isdir) && isdir &&
+        pp_dir_find(&fs, dir, "DATA       ", &dir, &size, &isdir) && isdir)
+        terr = pp20_lang_terr(&fs, dir, "DAB");
+
+    if ((terr == NULL) &&
+        pp_dir_find(&fs, 0, "HANGMAN    ", &dir, &size, &isdir) && isdir &&
+        pp_dir_find(&fs, dir, "GROUPS     ", &dir, &size, &isdir) && isdir)
+        terr = pp20_lang_terr(&fs, dir, "DBF");
+
+    fclose(fs.f);
+
+    if (terr != NULL)
+        snprintf(out, outsz, "Photo Play %s %s", &version[8], terr);
+    else
+        snprintf(out, outsz, "Photo Play %s", &version[8]);
+
+    if (banner_out != NULL)
+        snprintf(banner_out, bsz, "%s", version);
+    if ((terr_out != NULL) && (terr != NULL))
+        snprintf(terr_out, tsz, "%s", terr);
+
+    return 1;
 }

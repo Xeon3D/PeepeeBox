@@ -12,12 +12,15 @@
  *
  *             What each image *is* comes out of the image, never out of the
  *             folder name.  photoplay_identify_ex() reads the release and the
- *             territory from \FOTO\SETTINGS\MAIN.SET, and photoplay_image_nsb()
- *             reads the build number from \MENU\NSB.NR, so an image nobody has
- *             seen before is identified on exactly the same terms as a known
- *             one.  Folder names in circulation are frequently wrong -- images
- *             filed under one release that are another, filed under one country
- *             that are another -- so they are never consulted.
+ *             territory from \FOTO\SETTINGS\MAIN.SET; Photo Play 2.0 has none,
+ *             and photoplay_identify_pp20() reads its MAIN\VERSION.STR and works
+ *             the territory out from its menu and question sets instead.
+ *             photoplay_image_nsb() reads the build number from \MENU\NSB.NR
+ *             (MAIN\KEY.DAT on 2.0), so an image nobody has seen before is
+ *             identified on exactly the same terms as a known one.  Folder and
+ *             file names in circulation are frequently wrong -- images filed
+ *             under one release that are another, filed under one country that
+ *             are another, a 2.01 filed as 2.0 -- so they are never consulted.
  *
  *             Identifying an image means opening it and walking its FAT, which
  *             is quick for one and adds up over a library on an external disk.
@@ -56,7 +59,7 @@ extern "C" {
    how an existing one is spelled.  A list written by an older build is thrown
    away rather than shown, because a stale list is worse than no list: it looks
    authoritative while naming releases the way the build no longer does. */
-#define PP_LIST_VERSION   2
+#define PP_LIST_VERSION   3
 
 enum {
     COL_RELEASE = 0,
@@ -371,7 +374,9 @@ HddManager::scan()
         char nsb[64]              = { 0 };
 
         if (!photoplay_identify_ex(imagePath.constData(), label, sizeof(label),
-                                   banner, sizeof(banner), terr, sizeof(terr)))
+                                   banner, sizeof(banner), terr, sizeof(terr)) &&
+            !photoplay_identify_pp20(imagePath.constData(), label, sizeof(label),
+                                     banner, sizeof(banner), terr, sizeof(terr)))
             continue;
 
         /* A second walk of the same image, for the one field MAIN.SET does not

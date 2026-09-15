@@ -149,11 +149,26 @@ extern int  photoplay_identify_ex(const char *img_path, char *out, size_t outsz,
                                   char *banner_out, size_t bsz,
                                   char *terr_out, size_t tsz);
 
+/* The same three answers for a Photo Play 2.0 image, which has no MAIN.SET: the
+   version out of MAIN\VERSION.STR ("Photo Play 2.01 DE", "Version 2.01", "DE"),
+   and the territory from the menu program or the languages installed.  Kept
+   apart from photoplay_identify_ex() on purpose -- that one is also what the
+   dongle is built from, and 2.0 has no dongle to describe.  The territory may
+   come back empty when the image does not settle it. */
+extern int  photoplay_identify_pp20(const char *img_path, char *out, size_t outsz,
+                                    char *banner_out, size_t bsz,
+                                    char *terr_out, size_t tsz);
+
 /* What the disk image sitting next to the executable says it is.  Answers from a
    cache, so the dongle can ask at every hard reset without re-reading the FAT.
    Returns 1 when the image identified itself. */
 extern int  photoplay_image_ident(char *banner_out, size_t bsz,
                                   char *terr_out, size_t tsz);
+
+/* Whether that image is Photo Play 2.0, which photoplay_image_ident() deliberately
+   reports as not identified -- it has no MAIN.SET and no dongle.  From the same
+   cache. */
+extern int  photoplay_image_is_pp20(void);
 
 #ifdef __cplusplus
 }

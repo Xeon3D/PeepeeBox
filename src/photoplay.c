@@ -498,8 +498,8 @@ photoplay_image_nsb(const char *fn, char *out, size_t sz)
 }
 
 /* What to call this image in the window title: the release it says it is, plus its NSB
-   number.  Photo Play 2.0 does not carry a MAIN.SET to name itself, so it is recognised
-   by its CopyControl directory instead.
+   number.  Photo Play 2.0 does not carry a MAIN.SET to name itself, so it is identified
+   from its VERSION.STR and its menu instead -- which also tells 2.01 from 2.0.
 
    Public because the hard disk image manager has to name the machine the moment it
    picks an image: pc_reset_hard() only raises a flag, so the reset that would set
@@ -507,32 +507,15 @@ photoplay_image_nsb(const char *fn, char *out, size_t sz)
 void
 photoplay_image_label(const char *fn, char *out, size_t sz)
 {
-    pp_fat_t v;
-    char     nsb[32] = "";
-    char     name[64] = "";
-    uint16_t dir      = 0;
-    uint16_t sub      = 0;
-    int      is20     = 0;
+    char nsb[32]  = "";
+    char name[64] = "";
 
     out[0] = '\0';
 
     photoplay_image_nsb(fn, nsb, sizeof(nsb));
 
-    if (!pp_fat_open(&v, fn)) {
-        pp_fat_close(&v);
-        return;
-    }
-
-    if (pp_dir_find(&v, 0, "EXE        ", &dir, NULL) &&
-        pp_dir_find(&v, dir, "PP2000  081", &sub, NULL) &&
-        pp_dir_find(&v, sub, "PP2000  CCC", NULL, NULL))
-        is20 = 1;
-
-    pp_fat_close(&v);
-
-    if (is20)
-        snprintf(name, sizeof(name), "Photo Play 2.0");
-    else if (!photoplay_identify(fn, name, sizeof(name)))
+    if (!photoplay_identify(fn, name, sizeof(name)) &&
+        !photoplay_identify_pp20(fn, name, sizeof(name), NULL, 0, NULL, 0))
         name[0] = '\0';
 
     if (name[0] && nsb[0])
@@ -688,6 +671,7 @@ pp_apply_disk(void)
    FAT is walked once. */
 static int  pp_ident_done = 0;
 static int  pp_ident_ok   = 0;
+static int  pp_ident_pp20 = 0;
 static char pp_ident_banner[64];
 static char pp_ident_terr[16];
 
@@ -703,6 +687,12 @@ photoplay_image_ident(char *banner_out, size_t bsz, char *terr_out, size_t tsz)
         pp_ident_ok   = photoplay_identify_ex(fn, disp, sizeof(disp),
                                               pp_ident_banner, sizeof(pp_ident_banner),
                                               pp_ident_terr, sizeof(pp_ident_terr));
+
+        /* 2.0 has no MAIN.SET, so it lands here as not identified -- which is the
+           right answer for the dongle, and is left that way.  Whether it was 2.0 is
+           kept as a separate answer, for photoplay_image_is_pp20(). */
+        pp_ident_pp20 = !pp_ident_ok &&
+                        photoplay_identify_pp20(fn, disp, sizeof(disp), NULL, 0, NULL, 0);
     }
 
     if (banner_out != NULL)
@@ -711,6 +701,19 @@ photoplay_image_ident(char *banner_out, size_t bsz, char *terr_out, size_t tsz)
         snprintf(terr_out, tsz, "%s", pp_ident_terr);
 
     return pp_ident_ok && (pp_ident_banner[0] != 0);
+}
+
+/* Whether the image this run boots is Photo Play 2.0.  Not part of
+   photoplay_image_ident()'s answer on purpose: the dongle's banner is built from that,
+   and 2.0 has no dongle to describe.  This is for decisions that only need to know the
+   image was read and which generation it is -- whether the 2008 reader may take COM2
+   away from the Dataprint, for one.  Same cache, same invalidation. */
+int
+photoplay_image_is_pp20(void)
+{
+    photoplay_image_ident(NULL, 0, NULL, 0);
+
+    return pp_ident_pp20;
 }
 
 /* The optional CD-ROM drive.
@@ -830,6 +833,7 @@ photoplay_set_selected_image(const char *path)
        previous image and every check fails. */
     pp_ident_done = 0;
     pp_ident_ok   = 0;
+    pp_ident_pp20 = 0;
     pp_ident_banner[0] = '\0';
     pp_ident_terr[0]   = '\0';
 

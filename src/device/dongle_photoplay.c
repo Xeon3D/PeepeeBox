@@ -2877,14 +2877,22 @@ pp_init(const device_t *info)
        So it is attached when the image is a 2008 one, and when the image cannot
        be identified at all.  That second case is deliberate: an unreadable image
        keeps the old behaviour, because losing the dongle is a worse failure than
-       losing the printer.  PEEPEEBOX_NO_SC=1 still forces it off. */
+       losing the printer.  PEEPEEBOX_NO_SC=1 still forces it off.
+
+       Photo Play 2.0 is not that second case, though photoplay_image_ident() says
+       "not identified" for it: it has no MAIN.SET, so there is no banner to give
+       the dongle.  The image was read all the same, it has no dongle of any kind to
+       lose, and its menu does drive a Data-Print -- so it gets COM2 for that. */
     if (getenv("PEEPEEBOX_NO_SC") != NULL)
         pp_log("PP: PEEPEEBOX_NO_SC set -- the 2008 reader is not attached, COM2 is free\n");
     else {
         char banner[64] = "";
         const int known = photoplay_image_ident(banner, sizeof(banner), NULL, 0);
 
-        if (!known || (strstr(banner, "2008") != NULL)) {
+        if (!known && photoplay_image_is_pp20())
+            pp_log("PP: Photo Play 2.0 image, which has no dongle -- the 2008 reader is not "
+                   "attached, COM2 is free\n");
+        else if (!known || (strstr(banner, "2008") != NULL)) {
             device_add(&igo8_reader_device);
             if (!known)
                 pp_log("PP: image not identified -- attaching the 2008 reader anyway\n");
