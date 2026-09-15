@@ -34,6 +34,7 @@ private slots:
 
 private:
     Ui::PreferencesUpdates *ui;
+    QString                 notesVersion; /* whose notes the page is showing */
 };
 
 #endif // QT_PREFERENCESUPDATES_HPP

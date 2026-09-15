@@ -10,19 +10,25 @@
  */
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDialog>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLabel>
 #include <QMessageBox>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QProcess>
 #include <QPushButton>
+#include <QStyle>
 #include <QSysInfo>
+#include <QTextBrowser>
 #include <QTextStream>
+#include <QVBoxLayout>
 
 #include "qt_autoupdate.hpp"
 #include "qt_mainwindow.hpp"
@@ -259,6 +265,7 @@ AutoUpdate::onReleaseReply()
     latest.tag     = rel.value(QStringLiteral("tag_name")).toString();
     latest.name    = rel.value(QStringLiteral("name")).toString();
     latest.pageUrl = rel.value(QStringLiteral("html_url")).toString();
+    latest.notes   = rel.value(QStringLiteral("body")).toString().trimmed();
     latest.version = latest.tag.startsWith('v') ? latest.tag.mid(1) : latest.tag;
     if (latest.version.isEmpty() || !latest.version.at(0).isDigit()) {
         report(tr("GitHub's answer was not a release."));
@@ -310,19 +317,71 @@ AutoUpdate::onReleaseReply()
         askToUpdate();
 }
 
+/* A message box, but with a "Show changelog" button that grows the dialog
+   downwards to show the release notes under the buttons.  QMessageBox's own
+   details area is plain text and cannot be relabelled, hence a dialog of our
+   own that looks like one. */
 void
 AutoUpdate::askToUpdate()
 {
-    QMessageBox box(QMessageBox::Information, QString::fromLatin1(EMU_NAME),
-                    tr("PeepeeBox %1 is available; this is %2.\n\nUpdate now? The release is installed over this folder while the cabinet keeps running, and you are offered a restart afterwards. It can also be done later under Preferences > Updates.")
-                        .arg(available.version, currentRelease()),
-                    QMessageBox::NoButton, main_window);
-    QPushButton *update = box.addButton(tr("Update now"), QMessageBox::AcceptRole);
-    box.addButton(tr("Later"), QMessageBox::RejectRole);
-    box.setDefaultButton(update);
-    box.exec();
+    QDialog dlg(main_window);
+    dlg.setWindowTitle(QString::fromLatin1(EMU_NAME));
 
-    if (box.clickedButton() == update)
+    auto *icon  = new QLabel(&dlg);
+    const int s = dlg.style()->pixelMetric(QStyle::PM_MessageBoxIconSize, nullptr, &dlg);
+    icon->setPixmap(dlg.style()->standardIcon(QStyle::SP_MessageBoxInformation, nullptr, &dlg).pixmap(s, s));
+    icon->setAlignment(Qt::AlignTop);
+
+    auto *text = new QLabel(tr("PeepeeBox %1 is available; this is %2.\n\nUpdate now? The release is installed over this folder while the cabinet keeps running, and you are offered a restart afterwards. It can also be done later under Preferences > Updates.")
+                                .arg(available.version, currentRelease()),
+                            &dlg);
+    text->setWordWrap(true);
+    text->setMinimumWidth(400);
+
+    auto *changelog = new QPushButton(tr("Show changelog"), &dlg);
+    auto *update    = new QPushButton(tr("Update now"), &dlg);
+    auto *later     = new QPushButton(tr("Later"), &dlg);
+    changelog->setAutoDefault(false);
+    changelog->setVisible(!available.notes.isEmpty());
+    update->setDefault(true);
+
+    auto *notes = new QTextBrowser(&dlg);
+    notes->setOpenExternalLinks(true);
+    notes->setMarkdown(available.notes);
+    notes->setMinimumHeight(120);
+    notes->setVisible(false);
+
+    auto *message = new QHBoxLayout;
+    message->addWidget(icon);
+    message->addSpacing(8);
+    message->addWidget(text, 1);
+
+    auto *buttons = new QHBoxLayout;
+    buttons->addWidget(changelog);
+    buttons->addStretch(1);
+    buttons->addWidget(update);
+    buttons->addWidget(later);
+
+    auto *layout = new QVBoxLayout(&dlg);
+    layout->addLayout(message);
+    layout->addSpacing(8);
+    layout->addLayout(buttons);
+    layout->addWidget(notes, 1);
+
+    connect(changelog, &QPushButton::clicked, &dlg, [&]() {
+        const bool show = !notes->isVisible();
+        notes->setVisible(show);
+        changelog->setText(show ? tr("Hide changelog") : tr("Show changelog"));
+        layout->activate();
+        if (show)
+            dlg.resize(qMax(dlg.width(), 560), dlg.sizeHint().height() + 120);
+        else
+            dlg.resize(dlg.width(), dlg.minimumSizeHint().height());
+    });
+    connect(update, &QPushButton::clicked, &dlg, &QDialog::accept);
+    connect(later, &QPushButton::clicked, &dlg, &QDialog::reject);
+
+    if (dlg.exec() == QDialog::Accepted)
         installAvailable();
 }
 

@@ -63,6 +63,9 @@ public:
     bool    hasAvailable() const { return !available.version.isEmpty(); }
     QString availableVersion() const { return available.version; }
 
+    /* Its release notes, as written on the release page: Markdown. */
+    QString availableNotes() const { return available.notes; }
+
     /* Download and install it. */
     void installAvailable();
 
@@ -114,6 +117,7 @@ private:
         QString version;  /* "1.9.2" */
         QString name;     /* "Release 1.9.2" */
         QString pageUrl;
+        QString notes;    /* the release's body, Markdown */
         QString assetName;
         QUrl    assetUrl;
         qint64  assetSize = 0;

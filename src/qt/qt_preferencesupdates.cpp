@@ -3,7 +3,8 @@
  *             forked from 86Box.
  *
  *             The Updates preferences page: when to look for a new release,
- *             a look right now, and the Update button for one that was found.
+ *             a look right now, and the Update button and release notes for
+ *             one that was found.
  *
  * Authors:    Marcos Alves
  *
@@ -69,6 +70,19 @@ PreferencesUpdates::refresh()
         ui->pushButtonCheckNow->setEnabled(!updater->busy());
         ui->pushButtonUpdate->setEnabled(false);
     }
+
+    /* The release notes of the waiting release take the space the spacer
+       keeps free at the bottom otherwise.  They are only set when the release
+       changes, so a refresh does not scroll them back to the top. */
+    const bool notes = (updater != nullptr) && updater->hasAvailable() && !updater->availableNotes().isEmpty();
+    if (notes && (notesVersion != updater->availableVersion())) {
+        notesVersion = updater->availableVersion();
+        ui->groupBoxNotes->setTitle(tr("What's new in %1").arg(notesVersion));
+        ui->textBrowserNotes->setMarkdown(updater->availableNotes());
+    }
+    ui->groupBoxNotes->setVisible(notes);
+    ui->verticalSpacer->changeSize(20, notes ? 0 : 40, QSizePolicy::Minimum, notes ? QSizePolicy::Fixed : QSizePolicy::Expanding);
+    ui->verticalLayout->invalidate();
 
     ui->labelLastCheck->setText(update_last_check > 0
         ? tr("Last checked: %1").arg(QLocale().toString(QDateTime::fromSecsSinceEpoch(update_last_check), QLocale::ShortFormat))
