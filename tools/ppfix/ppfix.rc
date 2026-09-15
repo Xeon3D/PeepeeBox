@@ -39,7 +39,7 @@ STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMEN
 CAPTION "Advanced"
 FONT 9, "Segoe UI", 400, 0, 0x1
 BEGIN
-    LTEXT           "CCONTROL.SYS's cluster is normally read out of CCONTROL.SYS itself. The fill byte is picked out of a table by an index the protection stub passes; the stub is the same on every install seen, and 5A is what it asked for. Defaults goes back to reading both from the image.",
+    LTEXT           "Both are normally read out of the image: CCONTROL.SYS's cluster from CCONTROL.SYS itself, and the fill byte from a table in the protection, picked by the cluster the licence gives PP2000.CCC. Override them only for an install that does not follow that. Defaults goes back to reading both from the image.",
                     -1, 10, 8, 220, 44
     RTEXT           "CCONTROL.SYS cluster:", -1, 10, 60, 90, 9
     EDITTEXT        IDC_ADV_SYS, 106, 58, 60, 13, ES_AUTOHSCROLL | ES_NUMBER

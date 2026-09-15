@@ -26,8 +26,13 @@
  *   CCONTROL.SYS's cluster the word at +6 of CCONTROL.SYS, XOR 4343.  On the NL install
  *                          that is the value the stub was measured comparing against;
  *                          --ccontrol overrides.
- *   the slack fill byte    chosen from an 8-entry table by an index the stub passes.  The
- *                          stub is the same on every install seen; --slack overrides.
+ *   the slack fill byte    entry (cluster & 7) of an 8-entry table in the engine, cluster
+ *                          being PP2000.CCC's from the licence: 5A on NL and DE, E5 on ES.
+ *                          --slack overrides.
+ *
+ * And a fourth thing has to be true: PP2000.081\NFS, the directory CCMOVE made, has to
+ * carry the time and date the licence recorded for it.  A file-by-file copy restamps it,
+ * and the games then stop with CopyControl error 155.
  *
  * The clusters CCMOVE recorded belong to the cabinet's own disk, which was 2,111,864,832
  * bytes.  Images that were copied onto a smaller disk may not reach that far, and are
@@ -64,6 +69,10 @@
 
 /* CCONTROL.SYS keeps the cluster it expects to sit at in its word at +6, under this. */
 #define SYS_XOR      0x4343u
+
+/* The slack fill is picked from this table, at engine offset 39C4, by the low three bits
+   of the cluster the licence puts PP2000.CCC at: 5A on NL and DE, E5 on ES. */
+static const uint8_t fill_table[8] = { 0xFF, 0xE5, 0x1A, 0xF6, 0x20, 0x5A, 0xA5, 0xFF };
 
 /* There is no console to print to, so what the repair has to say is collected here
    and shown in the window. */
@@ -571,6 +580,11 @@ typedef struct {
     int      grow;        /* the volume has to reach the cabinet disk's size first */
     uint32_t clus_now;
     grow_t   gp;
+    int64_t  ent_nfs;     /* the NFS subdirectory's entry, and its time and date */
+    uint16_t nfs_time;
+    uint16_t nfs_date;
+    uint16_t want_time;   /* ...as the licence recorded them */
+    uint16_t want_date;
     char     install[80];
 } scan_t;
 
@@ -636,8 +650,35 @@ locate(vol_t *v, scan_t *s, int rw)
         s->want_sys = (uint16_t) (s->want_ccc - 2);
         s->sys_from = "assumed";
     }
-    s->slack       = (g_opt_slk >= 0) ? (uint8_t) g_opt_slk : 0x5A;
+    s->slack       = (g_opt_slk >= 0) ? (uint8_t) g_opt_slk : fill_table[s->want_ccc & 7];
     s->slk_default = (g_opt_slk < 0);
+
+    /* CCMOVE made PP2000.081\NFS when it installed, and the licence keeps its time (+3B9
+       in the file) and date (+44E: day, month, year).  The protection checks the directory
+       entry against them, and copying the files over gives NFS a new time. */
+    s->ent_nfs = dir_find(v, dir_cc, "NFS        ", NULL, NULL);
+    if (s->ent_nfs >= 0) {
+        uint8_t        e[32];
+        const unsigned day  = lic[0x43E];
+        const unsigned mon  = lic[0x43F];
+        const unsigned year = rd16(&lic[0x440]);
+
+        if (!seek_to(v->f, s->ent_nfs) || (fread(e, 1, 32, v->f) != 32)) {
+            s->state = ST_ERROR;
+            return 0;
+        }
+        s->nfs_time = rd16(&e[0x16]);
+        s->nfs_date = rd16(&e[0x18]);
+        if ((day >= 1) && (day <= 31) && (mon >= 1) && (mon <= 12) && (year >= 1980) &&
+            (year <= 2107)) {
+            s->want_time = rd16(&lic[0x3A9]);
+            s->want_date = (uint16_t) (((year - 1980) << 9) | (mon << 5) | day);
+        } else {
+            /* No date to restore; leave NFS as it is. */
+            s->want_time = s->nfs_time;
+            s->want_date = s->nfs_date;
+        }
+    }
 
     /* Recorded on a bigger disk than this image is? */
     s->clus_now = v->clusters;
@@ -658,6 +699,22 @@ locate(vol_t *v, scan_t *s, int rw)
             break;
     }
     return 1;
+}
+
+static int
+nfs_stamped(const scan_t *s)
+{
+    return (s->ent_nfs < 0) || ((s->nfs_time == s->want_time) && (s->nfs_date == s->want_date));
+}
+
+static const char *
+dos_stamp(uint16_t t, uint16_t d)
+{
+    static char buf[32];
+
+    snprintf(buf, sizeof(buf), "%04u-%02u-%02u %02u:%02u:%02u", 1980 + (d >> 9), (d >> 5) & 15,
+             d & 31, t >> 11, (t >> 5) & 63, (t & 31) * 2);
+    return buf;
 }
 
 /* Look, and say what a repair would do.  Nothing is written: the dry run exists so the
@@ -700,7 +757,9 @@ scan_image(scan_t *s)
         s->state = ST_ERROR;
         return;
     }
-    s->changes = s->grow + (r1 > 0) + (r2 > 0);
+    s->changes = s->grow + (r1 > 0) + (r2 > 0) + !nfs_stamped(s);
+    if (!nfs_stamped(s))
+        pf_logf("  stamp NFS %s\n", dos_stamp(s->want_time, s->want_date));
     if (!s->grow) {
         s->changes += (fill_slack(&v, s->want_ccc, s->sz_ccc, s->slack, 1) > 0);
         s->changes += (fill_slack(&v, s->want_sys, s->sz_sys, s->slack, 1) > 0);
@@ -740,6 +799,14 @@ fix_image(scan_t *s)
         (relocate(&v, s->ent_ccc, s->cl_ccc, s->want_ccc, s->sz_ccc, s->slack, 0) >= 0)) {
         fill_slack(&v, s->want_ccc, s->sz_ccc, s->slack, 0);
         fill_slack(&v, s->want_sys, s->sz_sys, s->slack, 0);
+        if (!nfs_stamped(s)) {
+            uint8_t td[4];
+
+            wr16(&td[0], s->want_time);
+            wr16(&td[2], s->want_date);
+            if (seek_to(v.f, s->ent_nfs + 0x16) && (fwrite(td, 1, 4, v.f) == 4))
+                pf_logf("  NFS stamped %s\n", dos_stamp(s->want_time, s->want_date));
+        }
         marker_write(&v, s->want_sys, s->want_ccc, s->slack);
         pf_logf("  marker written to LBA %d\n", MARKER_LBA);
         ok = 1;
@@ -820,7 +887,8 @@ detail_text(const scan_t *s, char *out, size_t sz)
         case ST_FIXED:
             snprintf(out, sz,
                      "CCONTROL.SYS is at cluster %u and PP2000.CCC at %u, with %02X in the "
-                     "slack past its end -- which is what the protection asks for.\r\n"
+                     "slack past its end, and NFS carries its install date -- which is what "
+                     "the protection asks for.\r\n"
                      "PeepeeBox will run this image's games.",
                      s->cl_sys, s->cl_ccc, s->slack);
             break;
@@ -833,20 +901,24 @@ detail_text(const scan_t *s, char *out, size_t sz)
                          "Fixing it writes the marker and changes nothing else.");
             else {
                 char grow[160] = "";
+                char nfs[80]   = "";
 
                 if (s->grow)
                     snprintf(grow, sizeof(grow),
                              "The volume ends at cluster %u, so the image is first grown "
                              "to the cabinet's " CABINET_SIZE "-byte disk.\r\n",
                              s->clus_now - 1);
+                if (!nfs_stamped(s))
+                    snprintf(nfs, sizeof(nfs), "\r\nNFS directory dated %s  (from the licence)",
+                             dos_stamp(s->want_time, s->want_date));
                 snprintf(out, sz,
                          "%sCCONTROL.SYS  cluster %u  ->  %u  (%s)\r\n"
                          "PP2000.CCC    cluster %u  ->  %u  (from the licence, install "
                          "path %s)\r\n"
-                         "slack fill %02X%s",
+                         "slack fill %02X  (%s)%s",
                          grow, s->cl_sys, s->want_sys, s->sys_from,
                          s->cl_ccc, s->want_ccc, s->install,
-                         s->slack, s->slk_default ? "   (default)" : "");
+                         s->slack, s->slk_default ? "from the licence" : "set by hand", nfs);
             }
             break;
     }
@@ -892,9 +964,9 @@ adv_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             snprintf(t, sizeof(t), "%02X", g_scan.slack);
             SetDlgItemTextA(h, IDC_ADV_SLK, t);
             snprintf(info, sizeof(info),
-                     "PP2000.CCC goes to cluster %u -- that one is read out of the "
-                     "licence.\nKnown fill bytes: FF E5 1A F6 20 5A A5 FF.",
-                     (unsigned) g_scan.want_ccc);
+                     "PP2000.CCC goes to cluster %u -- read out of the licence -- so the "
+                     "fill is entry %u of FF E5 1A F6 20 5A A5 FF.",
+                     (unsigned) g_scan.want_ccc, (unsigned) (g_scan.want_ccc & 7));
             SetDlgItemTextA(h, IDC_ADV_CCC, info);
             return TRUE;
 

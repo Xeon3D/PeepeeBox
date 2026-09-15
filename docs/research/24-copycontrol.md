@@ -6,7 +6,7 @@ layout of the disk**: where two files sit, and a pattern hidden in FAT cluster
 slack. Imaging a cabinet's disk file-by-file destroys both, which is why every
 2.0 image found so far refuses to start a game.
 
-**It runs.** All three checks pass on the original, unmodified game files, and
+**It runs.** All four checks (§ 4, § 5, § 11) pass on the original, unmodified game files, and
 PeepeeBox now detects and repairs an affected image by itself (§ 8).
 
 Images: `PP20NL-Asure_` (original from a machine) and `PP20NL Keyless` (shells
@@ -189,12 +189,13 @@ catches a target cluster that is already occupied, before anything is written.
 
 `PP2000.CCC`'s cluster comes out of the licence and `CCONTROL.SYS`'s out of
 `CCONTROL.SYS` (§ 9); an image too small to reach them is grown first (§ 10).
-The slack byte defaults to `0x5A`. Both overridable values sit behind an Advanced
+The slack byte is picked by the licence cluster (§ 9), and `NFS` is restamped
+from the licence (§ 11). The cluster and the fill byte sit behind an Advanced
 button and can be pinned on the command line, `--ccontrol N` and `--slack XX`,
 which is how an install nobody has seen yet gets repaired without rebuilding the
 tool. `--fix` repairs without the window.
 
-Apart from the grow, only two directory entries, two FAT entries and cluster
+Apart from the grow, only three directory entries, two FAT entries and cluster
 slack are ever written. No game file is modified, and no other release has that
 directory, so nothing else is touched.
 
@@ -288,10 +289,18 @@ PP: licence decrypts; PP2000.CCC belongs at cluster 54525
 On NL that gives `0xD4FB` = 54523, the value read live from the stub's control
 block in § 5. On every install seen it is two below `PP2000.CCC`'s.
 
-**Still assumed:** the slack fill byte, picked from the 8-entry table at `0x39C4`
-by a per-call index. The stub is identical on NL, DE and ES apart from a few
-per-program bytes, and the engine is identical past the licence, so nothing
-install-specific is there to choose a different index; `5A` is used for all.
+**The slack fill byte comes from the licence too.** Service 6 is entered with
+`AX` = the licence's `PP2000.CCC` cluster (`mov ax,[si+22]` at `23E8`), and the
+index into the table at `0x39C4` is its **low three bits**: `BX` arrives at the
+`4300` call as `0x39C4 + n`.
+
+| install | licence cluster | `& 7` | fill |
+|---|---|---|---|
+| NL | `D4FD` | 5 | `5A` |
+| DE | `CDCD` | 5 | `5A` |
+| ES | `C821` | 1 | `E5` |
+
+A wrong fill byte gives error **152**, as § 4 has it.
 
 ## 10. The clusters belong to the cabinet's disk
 
@@ -314,7 +323,42 @@ are the only other bytes that change. The grown image is written beside the
 original and swapped in only when complete. PeepeeBox takes the geometry from the
 file size, so it boots as 4092/16/63.
 
-## 11. Method note
+## 11. Check four -- the NFS directory's date (error 155)
+
+With the clusters and the slack right, DE and ES still stopped, with **error 155**.
+NL, repaired the same way, ran. `CCMOVE` makes an empty subdirectory
+`PP2000.081\NFS` when it installs, and the licence records when:
+
+```
++03B9  DOS time word       NL 456F = 08:43:30
++044E  day, month, year    NL 06 0B CD07 = 6 Nov 1997
+```
+
+The protection wants `NFS`'s directory entry to carry exactly that. On NL it
+still does; a file-by-file copy restamps it (DE's said 2014, ES's 2024). Nothing
+else in the directory matters -- `.` and `..`, the reserved bytes `0C-15`, the
+leftover long-name entries, `PP2000.000`, which slot each entry sits in, and the
+directory's own cluster were each changed on a working image without effect.
+
+| install | `NFS` must read |
+|---|---|
+| NL | 1997-11-06 08:43:30 |
+| DE | 1998-01-31 08:37:04 |
+| ES | 1997-10-07 13:09:40 |
+| ES v2 | 1997-10-07 12:54:58 |
+
+It was found by bisection, not by reading the code. A DOS-call trace showed NL
+and DE making the same calls in the same order; transplanting pieces between the
+two images then narrowed it down: DE's game files ran on NL's disk, NL's
+CopyControl files still failed on DE's, NL's whole `PP2000.081` directory cluster
+made DE run, and within that cluster only `NFS`'s timestamp mattered. How the
+engine sees the timestamp -- none of the traced DOS calls return it -- is still
+open.
+
+`ppfix` stamps `NFS` from the licence. With that, all four installs start their
+games from an untouched original in one pass.
+
+## 12. Method note
 
 Five hypotheses in this phase came from real evidence in real code and were all
 wrong: the recorded `D:` path, the system date, an absent floppy drive, the
