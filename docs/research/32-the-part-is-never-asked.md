@@ -4,6 +4,10 @@ Marcos ran the staged build: I.G.O. 2's FIND IT threw `error 60.344.42 — Inval
 for PCX-File`, the photographs came up garbled with only the difference overlay drawing,
 and I.G.O. 3 still did not boot.
 
+> **I.G.O. 3 boots as of `docs/research/37`.** This phase's reading of it -- that the
+> guest never asks, so the fault is upstream of the round -- was right, and the thing
+> upstream was the liveness probe.
+
 None of that is Phase 31 going wrong. **The keyed round was never consulted once.**
 
 ## 1. The build was inert

@@ -469,6 +469,36 @@ photoplay_identify(const char *img_path, char *out, size_t outsz)
     return photoplay_identify_ex(img_path, out, outsz, NULL, 0, NULL, 0);
 }
 
+/* One file out of the image, by its path in 8.3 form ("FOTO       ", "GAMESTATOLD").
+   The caller frees what comes back; NULL if any part of the path is missing, the file
+   is larger than `cap`, or the image cannot be read. */
+uint8_t *
+photoplay_read_file(const char *img_path, const char *const *path83, int depth,
+                    uint32_t *size_out, uint32_t cap)
+{
+    pp_fat_t fs;
+    uint16_t clus = 0;
+    uint32_t size = 0;
+    int      isdir = 1;
+    uint8_t *buf = NULL;
+
+    if ((depth < 1) || !pp_fat_open(&fs, img_path))
+        return NULL;
+
+    for (int i = 0; i < depth; i++) {
+        if (!pp_dir_find(&fs, clus, path83[i], &clus, &size, &isdir) ||
+            (isdir != (i < (depth - 1))))
+            goto done;
+    }
+    buf = pp_read_chain(&fs, clus, size, cap);
+    if ((buf != NULL) && (size_out != NULL))
+        *size_out = size;
+
+done:
+    fclose(fs.f);
+    return buf;
+}
+
 /* ------------------------------------------------------------------------------------
  * Photo Play 2.0.
  *

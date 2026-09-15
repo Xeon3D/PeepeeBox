@@ -2,6 +2,11 @@
 
 Branch: `picturedecryptingtest`.
 
+> **Superseded in part.** Section 5's "now there is a way to know `f`" was the step to
+> phase 31, which recovered the whole keyed round in software -- key and register, not
+> pairs -- and that is what the emulator uses. Knowing `f` did not make I.G.O. 3 boot:
+> what stopped it was five faults elsewhere in the part (`docs/research/37`).
+
 ## 1. Result
 
 The two dwords the dongle contributes to a 4 KB buffer are **recovered by search**, and

@@ -165,6 +165,15 @@ extern int  photoplay_identify_pp20(const char *img_path, char *out, size_t outs
 extern int  photoplay_image_ident(char *banner_out, size_t bsz,
                                   char *terr_out, size_t tsz);
 
+/* One file out of a disk image, by its path as 8.3 names ("FOTO       ",
+   "GAMESTATOLD"), read-only.  The caller frees the result; NULL when the path is
+   missing, the file is bigger than `cap`, or the image cannot be read.  The second
+   form reads from the image this run boots. */
+extern uint8_t *photoplay_read_file(const char *img_path, const char *const *path83,
+                                    int depth, uint32_t *size_out, uint32_t cap);
+extern uint8_t *photoplay_image_read_file(const char *const *path83, int depth,
+                                          uint32_t *size_out, uint32_t cap);
+
 /* Whether that image is Photo Play 2.0, which photoplay_image_ident() deliberately
    reports as not identified -- it has no MAIN.SET and no dongle.  From the same
    cache. */

@@ -100,7 +100,7 @@ dongles (`docs/research/20`), not from inference.
 | Photo Play 2000 | CDONGLE, parallel | encrypted, per-picture key | **runs** — games and photo games |
 | Photo Play 2001 / I.G.O. 1 | HASP4 `7477/7D57` | encrypted, dongle-computed | **runs** — games and photo games |
 | I.G.O. 2 (2002) | HASP4 `68BB/1329` | encrypted, dongle-computed | **runs** — games and photo games |
-| I.G.O. 3 (2003) | HASP4 `6B91/24A3` | encrypted, dongle-computed | **fails at boot** — cipher solved, the check still refuses |
+| I.G.O. 3 (2003) | HASP4 `6B91/24A3` | encrypted, dongle-computed | **beta** — boots, games and photo games play; the games' own dongle check is answered from the known-answer table the image ships, which is a replay of a real part rather than its function (`docs/research/37`) |
 | I.G.O. 4 (2004) | CDONGLE, parallel | plain GIF | **runs** — games and photo games |
 | I.G.O. 5 (2005) | HASP4 `6B91/24A3` | plain GIF | **runs** — the 2005B builds and the earlier plain-2005 one (IT CZ033), games and photo games; three start-screen buttons draw as noise, which `docs/research/36` traces to the shipped software rather than the emulation |
 | I.G.O. 6 (2006) | HASP4, probed | plain GIF | **runs** — games and photo games |
@@ -164,12 +164,23 @@ since been confirmed the same way on screen: its key was fitted from Photo Play
 funworld stopped encrypting pictures from I.G.O. 4 on, which is why the later
 generations need only the record.
 
-I.G.O. 3 is still the worst case: it asks the dongle to encrypt 20 bytes before it
-will boot at all.  It now *asks* -- where before it never got that far -- and is
-refused.  The round itself is not the suspect, since that block comes out as
-`c:/foto/` under the fitted key; what is unverified is the session exchange around
-it, which has only ever been measured on a `68BB/1329` part while I.G.O. 3 is
-`6B91/24A3` (`docs/research/32`).
+I.G.O. 3 was the last to fall, and not because of the cipher -- its key was right
+all along.  It runs a newer HASP library than I.G.O. 2's, and five things stood in
+front of it, each hidden behind the one before: a liveness probe sent with bit 7
+set, keyed-round queries that only show themselves at the read, a record read that
+is Microwire with bit 7 set, an anti-replay gate that refuses a part whose two
+sweeps agree, and a check in every game against `\FOTO\GAMESTAT.OLD` -- a table
+of 1,912 answers a real dongle gave in four EncodeData modes this device had never
+modelled.  Those modes are answered from the table itself, read off the disk image
+at start-up.  All five were found by running the release's own library under
+unicorn rather than by reading it (`docs/research/37`).
+
+**I.G.O. 3's dongle is marked beta** for that last reason: what a real part computes
+in those four modes is still unknown, so the device replays a real one's recorded
+answers instead of computing them.  It satisfies everything the shipped software
+asks -- menu, photo games, the per-game check -- and it would not satisfy anything
+that asked a question the table does not hold.  A capture of any 2003 or 2005
+dongle would close it.
 
 What you *can* change
 ---------------------

@@ -274,11 +274,10 @@ like the others, and FINDIT and AMORE give the same key independently.
 **I.G.O. 2 (BE)** boots, and FIND IT plays with the photographs decrypting — the whole
 chain end to end, from a key fitted with no dongle in the room.
 
-**I.G.O. 3 (DE)** is served the session layer exactly as a real part answers it — two
-complete sweeps a boot, no lost sync — and still stops at
-`error number 228.250.107, in module MENU, dongle error`. It never enters a keyed round at
-all. See `5.6` for what is and is not different about it, `5.7` for what raises the error,
-and `09.2` for the measurement that would unblock it.
+**I.G.O. 3 (DE)** boots, FIND IT plays with the photographs decrypting, and SHANGAI, FIND
+IT and AMORE all pass the games' own dongle check. `5.6` and `5.7` are the state before
+that and are kept because they are how it was narrowed down; `5.8` is what was actually
+wrong.
 
 ## 5.6 What is different about I.G.O. 3, and what is not
 
@@ -351,4 +350,33 @@ A gate at `0x20BB` — 64 folded bits compared against `DS:0x4C86` — was inves
 length and is **not** this failure. It is a real check, it passes and fails on its own
 terms, and forcing it to pass changes nothing on screen. Recorded here so nobody follows
 that trail twice.
+
+*Corrected by `5.8`:* forcing it changed nothing *yet*. Its penalty lands five calls later,
+and it was one of the five faults.
+
+## 5.8 What was actually wrong on I.G.O. 3
+
+Found by running `MENU.EXE`'s own HASP library under unicorn (`tools/dongcap/hasplib.py`)
+and, for the encrypted games, their library out of a memory dump; the full account is
+`docs/research/37`. The key was right. Five faults, each behind the one before:
+
+1. **The liveness probe arrives as `9E`.** Matched on the raw byte it fell through to the
+   signature and was answered 0; `HaspEncodeData` refuses with `-8`, which is `dongle
+   error`. Matched with bit 7 masked, like the sweep.
+2. **Queries are found at the read.** The framing is I.G.O. 2's, but the session payloads
+   move bit 4, so the edge cannot be used; three distinct writes `p, p|0x10, p` before a
+   STATUS read are a query. The boot check's rounds are then 40 and 40, and the block
+   decodes to `c:/foto/gamestat.old`.
+3. **The record read is Microwire with bit 7 set** (`9E/BE`, `DE/FE`, `9C`). Bit-7 writes
+   with bits 2..4 set now reach the decoder; without them the banner was empty and the
+   menu said `IDONGLE not found`.
+4. **An anti-replay gate** (core `0x20EA`): the newer library sweeps twice and flags the
+   part if any folded byte repeats; five calls later everything is refused. Every byte of
+   sweep *k* is XORed with *k* mod 255. I.G.O. 2's library has no such gate.
+5. **A known-answer table.** `\FOTO\GAMESTAT.OLD` holds a real part's answers to 1,912
+   challenges in `HaspEncodeData` modes 1..4, which the games check at start-up. The mode
+   is sent as *k* bit-4 clocks on `CA` after the `84/A4` run; modes 1..4 are not this shift
+   register under any key or register (`09.11`), so the part answers them from the table,
+   read off the image: it follows every table input consistent with the queries and, once
+   one is left, answers so the round yields its recorded output.
 

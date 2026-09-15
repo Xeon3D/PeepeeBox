@@ -703,6 +703,17 @@ photoplay_image_ident(char *banner_out, size_t bsz, char *terr_out, size_t tsz)
     return pp_ident_ok && (pp_ident_banner[0] != 0);
 }
 
+/* A file out of the disk image this run boots -- see photoplay_read_file(). */
+uint8_t *
+photoplay_image_read_file(const char *const *path83, int depth, uint32_t *size_out,
+                          uint32_t cap)
+{
+    char fn[MAX_IMAGE_PATH_LEN];
+
+    pp_disk_path(fn, sizeof(fn));
+    return photoplay_read_file(fn, path83, depth, size_out, cap);
+}
+
 /* Whether the image this run boots is Photo Play 2.0.  Not part of
    photoplay_image_ident()'s answer on purpose: the dongle's banner is built from that,
    and 2.0 has no dongle to describe.  This is for decisions that only need to know the

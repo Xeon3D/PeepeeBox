@@ -3,47 +3,23 @@
 Everything in the other files is measured, verified or explicitly recorded. This is the
 complement: the gaps, stated as gaps so nobody has to rediscover that they are gaps.
 
-## 9.1 I.G.O. 3 does not boot
+## 9.1 I.G.O. 3 does not boot — closed
 
-Its transport is now right (`05.6`): the session layer is served exactly as a real part
-answered it — two complete 64-step sweeps a boot, replying `F5 7A 37 E7 8F 8F BD DA`, no
-lost sync, no spurious rounds. It still stops at
-`error number 228.250.107, in module MENU, dongle error`.
+It boots. The five faults behind it are `05.8` and `docs/research/37`; what was written
+here was the state before them, and two of its conclusions were wrong in instructive ways:
 
-**What raises that is known** (`05.7`): `p3 != 0` after service `0x3C`, HaspEncodeData.
-The library sets `p3` to zero in exactly one place, `lib+0x183`, reached only when its
-internal status `[bp-6]` comes back zero from the dispatcher. What makes that non-zero has
-not been read yet. The library ships inside `MENU.EXE` at segment `0x3AE3`, so this is
-static work — but it is the HASP library's internals rather than the wire, and a bigger
-job than the transport was.
+- **"The gate at `0x20BB` is not this failure."** It was one of them. Forcing it to pass
+  changes nothing on the screen *that boot*, because the penalty lands five calls later.
+- **"I.G.O. 3 never enters a keyed round at all."** True at the time, and it was the
+  liveness probe that stopped it — not anything about the round or its key.
 
-**And I.G.O. 3 never enters a keyed round at all.** Counted with
-`tools/dongcap/framing.py`: I.G.O. 2 on real hardware gives 4,720 consultations in 118
-rounds of exactly 40; I.G.O. 3 gives **zero**. It stops inside the 15-step service
-exchange, before EncodeData ever consults the part. So the picture cipher's key is not the
-suspect and never was — `AB32E970` is right (it turns the boot-check block into
-`c:/foto/`, which a wrong key does not do), and it is downstream of a gate that never
-opens.
-
-**The live unknown is what the part should answer during that service exchange.** That is
-not in the binary: it is the dongle's side of the conversation. Which is why `09.2` is not
-a footnote here but the thing actually blocking progress — the sweep reply this device
-serves belongs to a `68BB/1329` part and I.G.O. 3 is `6B91/24A3`.
-
-Two trails recorded so they are not followed twice:
-
-- **The gate at `0x20BB` is not this failure.** It folds 64 sweep bits into eight bytes
-  and compares them against `DS:0x4C86`, which is eight zero bytes written nowhere — so it
-  reads as "any folded byte is zero". Serving a fold whose first byte is `00`, verified on
-  the wire, changes nothing on screen. Four builds went into that before the error string
-  was located, which took one search.
-- **The oracle clock does not move on I.G.O. 3.** Its bit-0 triples are command bytes, not
-  queries; see `05.6`. Reading them as a relocated query clock made the device answer
-  service-request bits with picture-cipher key bits.
+What remains open from it is `09.2`: the session answers are still a `68BB/1329` part's.
+They are evidently accepted, which is not the same as being what a `6B91/24A3` part says.
 
 ## 9.2 Whether the session layer generalises
 
-**This is the question actually blocking I.G.O. 3**, not a footnote. The whole session
+No longer blocking anything -- I.G.O. 3 boots on these answers (`05.8`) -- but still
+unmeasured, and the answer would settle what this device is entitled to claim. The whole session
 model (`05.3`) comes from one boot of one game on one **`68BB/1329`** part, and it is
 being served to a **`6B91/24A3`** release. Two things are unverified:
 
@@ -142,3 +118,18 @@ Do not restart that search.
 A `68BB/1329` dongle on a parallel port, and an unpatched original I.G.O. 2 PT cabinet.
 The passthrough rig and capture tooling are in `tools/dongcap/`. Several of the questions
 above — `9.1` and `9.2` in particular — are capture problems, not analysis problems.
+
+## 9.11 What the part really does in EncodeData modes 1..4
+
+`HaspEncodeData`'s `p1` selects a mode, sent as *k* bit-4 clocks on payload `CA` in the
+round preamble, and modes 1..4 are **not** this device's shift register under any key or
+starting register. That was tested exhaustively against 1,912 real (challenge, answer)
+rows from `\FOTO\GAMESTAT.OLD`: encode and decode, both directions, all 4,096 registers,
+with the key free. Nothing fits, so the mode changes the part's internals in a way the
+model does not express. The public HASP4 reference model's variants are all inside what
+was searched.
+
+The games are satisfied anyway, because the table holds the answer to every question they
+ask and the device answers those from it (`05.8`). That is a replay of a real part, not
+the function. A capture of a `6B91/24A3` part in modes 1..4 would give the function; any
+2003 or 2005 dongle would do.

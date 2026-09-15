@@ -139,3 +139,20 @@ u32 magic 'DOUT'      u32 count      u32 seed      u32 nenc
 Drives MSVC x86. It prints a harmless `vswhere.exe` warning on this machine; the build
 still completes. Verify the result is XP-compatible: machine `014C`, magic `010B`,
 subsystem 3, subsystem version 5.01, imports `KERNEL32.dll` only.
+
+`hasplib.py` — run a release's own HASP library under unicorn
+-------------------------------------------------------------
+
+Loads `MENU.EXE`, finds the boot check's call sites and the library by pattern, makes the
+same calls, and answers the parallel port with a Python port of the device in
+`src/device/dongle_photoplay.c`.  So what the library does with the answers is its own
+code rather than a reading of it, which is how the five faults that kept I.G.O. 3 from
+booting were found -- `docs/research/37`.
+
+```
+python tools/dongcap/hasplib.py <MENU.EXE>              the boot check, as the menu makes it
+python tools/dongcap/hasplib.py --old-probe <MENU.EXE>  the same with a pre-fix part, for contrast
+```
+
+Needs `unicorn`.  Nothing here touches hardware, and it never writes to the image it
+reads `MENU.EXE` out of.
