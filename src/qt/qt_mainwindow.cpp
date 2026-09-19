@@ -38,6 +38,7 @@
 
 extern "C" {
 #include <86box/86box.h>
+#include <86box/ini.h>
 #include <86box/config.h>
 #include <86box/keyboard.h>
 #include <86box/plat.h>
@@ -1586,17 +1587,14 @@ pp_funlink_dialog(QWidget *parent)
    The dongle is the exception, and it genuinely has to stay adjustable: the
    version banner it reports must match MAIN.SET["Version"] for the image being
    run, and that differs per image and per territory.  Get it wrong and the game
-   reports "Wrong Version".  Those settings belong to the device, so Options
-   hands off to its own config dialog.
+   reports "Wrong Version".  Those are the first thing this dialog shows.
 
-   What this dialog adds is the machine licence the dongle presents -- the
+   Behind its Machine licence button is the licence the dongle presents -- the
    iButton serial FN_SYS.EXE turns into "machlic", which is how a fun.net
    server tells one cabinet from another (photoplay_machlic()).  Left at the
    old fixed default, every image on every PeepeeBox is the same cabinet to a
    server; "Random from the pool" draws one of the licences every fun.net
-   stand-in registers in advance.
-
-   Returns 1 when something changed and the machine has to be restarted for it. */
+   stand-in registers in advance. */
 static QString
 pp_machlic_where(const QString &lic)
 {
@@ -1624,17 +1622,17 @@ pp_machlic_serial(const QString &lic)
     return bytes.join(QLatin1Char(' '));
 }
 
-static int
-pp_dongle_dialog(QWidget *parent)
+/* Edits `chosen` in place.  Nothing is saved here: the dongle dialog commits
+   it with everything else on its OK, so Cancel there still undoes it. */
+static bool
+pp_machlic_dialog(QWidget *parent, QString &chosen)
 {
     QDialog dlg(parent);
-    dlg.setWindowTitle(QObject::tr("Dongle"));
+    dlg.setWindowTitle(QObject::tr("Machine licence"));
     dlg.setWindowFlags(dlg.windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
-    const QString current = QString::fromLatin1(photoplay_machlic()).toUpper();
-
     auto *form = new QFormLayout();
-    auto *lic  = new QLineEdit(current);
+    auto *lic  = new QLineEdit(chosen);
     lic->setMaxLength(12);
     lic->setValidator(new QRegularExpressionValidator(QRegularExpression(QStringLiteral("[0-9A-Fa-f]{0,12}")), lic));
     lic->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
@@ -1656,9 +1654,6 @@ pp_dongle_dialog(QWidget *parent)
     auto *where = new QLabel();
     where->setWordWrap(true);
     form->addRow(QString(), where);
-
-    auto *opts = new QPushButton(QObject::tr("Version and territory &Options..."));
-    form->addRow(QObject::tr("Dongle:"), opts);
 
     auto *note = new QLabel(QObject::tr(
         "The machine licence (machlic) is how a fun.net server tells this cabinet from every "
@@ -1690,24 +1685,104 @@ pp_dongle_dialog(QWidget *parent)
         lic->setText(QLatin1String(entry));
     });
     QObject::connect(reset, &QPushButton::clicked, [&]() { lic->setText(QStringLiteral(PHOTOPLAY_MACHLIC_DEFAULT)); });
-
-    int inner_changed = 0;
-    QObject::connect(opts, &QPushButton::clicked, [&]() {
-        inner_changed |= DeviceConfig::ConfigureDevice(&lpt_dongle_photoplay_device, 0, &dlg);
-    });
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     refresh();
 
-    if (dlg.exec() != QDialog::Accepted)
-        return inner_changed;   /* the device dialog saves its own, Cancel here cannot undo it */
+    if ((dlg.exec() != QDialog::Accepted) || (lic->text().length() != 12))
+        return false;
+    chosen = lic->text().toUpper();
+    return true;
+}
 
-    const QString chosen = lic->text().toUpper();
-    if ((chosen.length() == 12) && (chosen != current)) {
-        photoplay_set_machlic(chosen.toLatin1().constData());
-        return 1;
+/* Version and territory are the device's own settings, so these rows are built
+   from its config table -- every entry not marked hidden -- and saved to the
+   same keys its config dialog would use.  The machine licence sits behind a
+   button, as pp_machlic_dialog() above.
+
+   Returns 1 when something changed and the machine has to be restarted for it. */
+static int
+pp_dongle_dialog(QWidget *parent)
+{
+    const device_t *dev = &lpt_dongle_photoplay_device;
+
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Dongle"));
+    dlg.setWindowFlags(dlg.windowFlags() & ~Qt::WindowContextHelpButtonHint);
+
+    device_context_t ctx;
+    device_set_context(&ctx, dev, 0);
+
+    auto *form = new QFormLayout();
+    QList<QPair<const device_config_t *, QComboBox *>> combos;
+    for (const device_config_t *c = dev->config; c->type != CONFIG_END; c++) {
+        if (c->type & CONFIG_HIDDEN)
+            continue;
+        if (c->type == CONFIG_LABEL) {
+            /* Built at runtime from what the disk says it is, so not run through tr(). */
+            auto *text = new QLabel(QString::fromUtf8(c->description));
+            text->setWordWrap(true);
+            text->setTextFormat(Qt::PlainText);
+            form->addRow(text);
+        } else if (c->type == CONFIG_SELECTION) {
+            const int value = config_get_int(ctx.name, const_cast<char *>(c->name), c->default_int);
+            auto     *cbox  = new QComboBox();
+            cbox->setMaxVisibleItems(30);
+            for (const device_config_selection_t *sel = c->selection;
+                 (sel->description != nullptr) && (sel->description[0] != '\0'); sel++) {
+                cbox->addItem(QObject::tr(sel->description), sel->value);
+                if (sel->value == value)
+                    cbox->setCurrentIndex(cbox->count() - 1);
+            }
+            form->addRow(QObject::tr(c->description) + QLatin1Char(':'), cbox);
+            combos.append({ c, cbox });
+        }
     }
-    return inner_changed;
+
+    const QString current = QString::fromLatin1(photoplay_machlic()).toUpper();
+    QString       chosen  = current;
+
+    auto *licence = new QLabel();
+    licence->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    licence->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    auto *machlic = new QPushButton(QObject::tr("Machine &licence..."));
+    auto *row     = new QHBoxLayout();
+    row->addWidget(licence, 1);
+    row->addWidget(machlic);
+    form->addRow(QObject::tr("Machine licence:"), row);
+
+    auto show_licence = [&]() {
+        licence->setText(chosen == current ? chosen : QObject::tr("%1 (was %2)").arg(chosen, current));
+    };
+    QObject::connect(machlic, &QPushButton::clicked, [&]() {
+        if (pp_machlic_dialog(&dlg, chosen))
+            show_licence();
+    });
+    show_licence();
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    auto *outer   = new QVBoxLayout(&dlg);
+    outer->addLayout(form);
+    outer->addWidget(buttons);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    if (dlg.exec() != QDialog::Accepted)
+        return 0;
+
+    int changed = 0;
+    for (const auto &entry : combos) {
+        const int value = entry.second->currentData().toInt();
+        if (value != config_get_int(ctx.name, const_cast<char *>(entry.first->name), entry.first->default_int)) {
+            config_set_int(ctx.name, const_cast<char *>(entry.first->name), value);
+            changed = 1;
+        }
+    }
+    if (chosen != current) {
+        photoplay_set_machlic(chosen.toLatin1().constData());
+        changed = 1;
+    }
+    return changed;
 }
 
 void
