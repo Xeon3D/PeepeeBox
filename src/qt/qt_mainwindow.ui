@@ -92,6 +92,8 @@
      <addaction name="actionMute_Unmute"/>
      <addaction name="separator"/>
      <addaction name="actionSound_gain"/>
+     <addaction name="separator"/>
+     <addaction name="actionModem_sounds"/>
     </widget>
     <widget class="QMenu" name="menuPrinter_type">
      <property name="title">
@@ -825,6 +827,17 @@
   <action name="actionMute_Unmute">
    <property name="text">
     <string>&amp;Mute</string>
+   </property>
+  </action>
+  <action name="actionModem_sounds">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Mo&amp;dem sounds</string>
+   </property>
+   <property name="toolTip">
+    <string>Hear the modem dial, ring and connect, as a cabinet's speaker did</string>
    </property>
   </action>
   <action name="actionSound_gain">

@@ -259,6 +259,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
     status->setSoundMenu(ui->menuSound);
     ui->actionMute_Unmute->setText(sound_muted ? tr("&Unmute") : tr("&Mute"));
+    ui->actionModem_sounds->setChecked(photoplay_modem_sounds());
     ui->stackedWidget->setMouseTracking(true);
 
     /* The printer mechanism is cabinet configuration, not a control on either
@@ -7940,6 +7941,14 @@ MainWindow::toggleFullscreenUI()
     ui->menubar->setVisible(fullscreen_ui_visible);
     ui->statusbar->setVisible(fullscreen_ui_visible && !hide_status_bar);
     ui->toolBar->setVisible(fullscreen_ui_visible && !hide_tool_bar);
+}
+
+void
+MainWindow::on_actionModem_sounds_triggered(bool checked)
+{
+    /* Only whether the speaker is heard; the call takes as long either way. */
+    photoplay_set_modem_sounds(checked);
+    config_save();
 }
 
 void

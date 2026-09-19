@@ -103,6 +103,8 @@ extern int         photoplay_machlic_pool_index(const char *lic);
 extern void        photoplay_set_machlic(const char *lic);
 #define PHOTOPLAY_MACHLIC_DEFAULT "00584F425050"   /* the old fixed "PPBOX" serial */
 extern int         photoplay_com4_irq(void);
+extern int         photoplay_modem_sounds(void);        /* Tools > Sound > Modem sounds */
+extern void        photoplay_set_modem_sounds(int on);
 
 /* Whether the fun.link adapter is fitted.  fun.link joins cabinets together so
    they can play each other, over a multi-drop serial bus on COM1 at 115200 --

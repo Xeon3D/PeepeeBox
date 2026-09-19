@@ -88,6 +88,8 @@
 #include <86box/plat.h>
 #include <86box/plat_netsocket.h>
 #include <86box/plat_unused.h>
+#include <86box/photoplay.h>
+#include <86box/modem_sound.h>
 
 #ifdef ENABLE_CHAR_MODEM_LOG
 int char_modem_do_log = ENABLE_CHAR_MODEM_LOG;
@@ -133,8 +135,13 @@ enum { /* line state machine */
    and only then raise DCD and go on line, which is the order a real modem does
    it in and what the cabinet's own logs show (CONNECT 48000/LAPM, every night
    for a decade). */
-#define MODEM_TRAIN_MS   2000 /* dial to CONNECT                          */
 #define MODEM_SETTLE_MS  100  /* CONNECT drained to DCD and data mode     */
+
+/* And the rest of a real call is not instant either: dial tone, the digits,
+   the far end ringing, then a V.34 / V.90 handshake -- ten to twenty seconds
+   in all, which is what the cabinet's own S7=20 allows for.  The modem takes
+   that long whether or not its speaker is heard; modem_sound.c plays the same
+   schedule it keeps, and is where the durations come from. */
 
 enum { /* result codes, in the numeric order every Hayes modem uses */
        RES_OK = 0,
@@ -284,6 +291,14 @@ typedef struct {
     /* +++ escape detection. */
     uint32_t last_data;
     int      pluses;
+
+    /* The speaker, and the schedule of a real call. */
+    modem_sound_t *snd;
+    int            spk_mode;   /* ATM: 0 off, 1 until carrier, 2 always, 3 after dialling */
+    int            spk_level;  /* ATL: 0..3                                   */
+    int            pulse;      /* ATP / ATT                                   */
+    uint32_t       answer_at;  /* when the far end picks up                   */
+    int            refused;    /* the connect failed: ring on, then give up   */
 } modem_t;
 
 /* ------------------------------------------------------------------ output */
@@ -374,6 +389,8 @@ modem_result(modem_t *dev, int code)
 static void
 modem_hangup(modem_t *dev)
 {
+    if (dev->state != MODEM_ST_IDLE)
+        modem_sound_event(dev->snd, MODEM_SOUND_HANGUP, NULL, 0);
     if (CHAR_FD_VALID(dev->sock)) {
         plat_netsocket_close(dev->sock);
         dev->sock = (SOCKET) -1;
@@ -390,7 +407,8 @@ modem_answered(modem_t *dev)
 {
     dev->state        = MODEM_ST_ANSWERING;
     dev->said_connect = 0;
-    dev->deadline     = plat_get_ticks() + MODEM_TRAIN_MS;
+    dev->deadline     = plat_get_ticks() + modem_sound_handshake_ms(dev->connect_rate > 33600);
+    modem_sound_event(dev->snd, MODEM_SOUND_ANSWER, NULL, 0);
 }
 
 /* CONNECT has been read: raise DCD, go on line. */
@@ -409,8 +427,16 @@ modem_dial(modem_t *dev, const char *number)
 {
     uint32_t now = plat_get_ticks();
 
-    (void) number; /* there is one line: the digits are only worth logging */
+    /* There is one line: the number goes nowhere, but dialling it takes the
+       time it takes -- tone or pulse, digit by digit, a comma for S8 -- and
+       the far end answers after its first ring. */
     char_modem_log(dev->log, "dial \"%s\"\n", number);
+    dev->refused   = 0;
+    dev->answer_at = now + modem_sound_dial_ms(number, dev->s[8], dev->pulse) + modem_sound_ring_ms();
+    if (dev->line == MODEM_LINE_TCP) {
+        modem_sound_country(dev->snd, (dev->country == 16) || (dev->country == 0xB4), dev->connect_rate > 33600);
+        modem_sound_event(dev->snd, MODEM_SOUND_DIAL, number, (dev->s[8] & 0xff) | (dev->pulse << 8));
+    }
 
     if (dev->line == MODEM_LINE_TCP) {
         dev->sock = plat_netsocket_create(NET_SOCKET_TCP);
@@ -421,8 +447,8 @@ modem_dial(modem_t *dev, const char *number)
                 dev->sock = (SOCKET) -1;
             }
             dev->state    = MODEM_ST_DIALING;
-            dev->deadline = now + 1500;
-            return; /* fail after a plausible pause rather than instantly */
+            dev->deadline = dev->answer_at + 5000;   /* it rings, and nobody answers */
+            return;
         }
         dev->state    = MODEM_ST_CONNECTING;
         dev->deadline = now + (dev->s[7] * 1000u);
@@ -455,11 +481,23 @@ modem_poll_line(modem_t *dev)
             break;
 
         case MODEM_ST_CONNECTING: {
-            const int connected = plat_netsocket_connected(dev->sock);
+            const int connected = dev->refused ? -1 : plat_netsocket_connected(dev->sock);
 
-            if (connected == 1)
-                modem_answered(dev);
-            else if ((connected == -1) || ((int32_t) (now - dev->deadline) >= 0)) {
+            if (connected == 1) {
+                /* The far end is there; it picks up after its first ring. */
+                if ((int32_t) (now - dev->answer_at) >= 0)
+                    modem_answered(dev);
+            } else if (connected == -1) {
+                /* Nobody there: a real call rings on unanswered, then gives up. */
+                if (!dev->refused) {
+                    dev->refused  = 1;
+                    dev->deadline = ((int32_t) (dev->answer_at - now) > 0 ? dev->answer_at : now) + 5000;
+                }
+                if ((int32_t) (now - dev->deadline) >= 0) {
+                    modem_hangup(dev);
+                    modem_result(dev, RES_NO_CARRIER);
+                }
+            } else if ((int32_t) (now - dev->deadline) >= 0) {
                 modem_hangup(dev);
                 modem_result(dev, RES_NO_CARRIER);
             }
@@ -470,6 +508,7 @@ modem_poll_line(modem_t *dev)
             if ((int32_t) (now - dev->deadline) < 0)
                 break;
             if (!dev->said_connect) {
+                modem_sound_event(dev->snd, MODEM_SOUND_CONNECT, NULL, 0);
                 modem_result(dev, RES_CONNECT);
                 dev->said_connect = 1;
                 dev->deadline     = now + MODEM_SETTLE_MS;
@@ -534,6 +573,10 @@ modem_load_defaults(modem_t *dev)
     dev->dsr_mode = 0;
     dev->dtr_mode = 2;
     dev->flow     = 3;
+    dev->spk_mode  = 1;
+    dev->spk_level = 2;
+    dev->pulse     = 0;
+    modem_sound_speaker(dev->snd, dev->spk_mode, dev->spk_level);
 }
 
 /* Returns the result code to report, or RES_NONE when the command has already
@@ -562,7 +605,10 @@ modem_execute(modem_t *dev, const char *line)
                 while ((*p != '\0') && (n < ((int) sizeof(number) - 1))) {
                     const char d = *p++;
 
-                    if (isdigit((unsigned char) d) || (d == '*') || (d == '#'))
+                    /* The digits, and what shapes the dialling: a comma (wait S8),
+                       W (wait for dial tone), T and P (tone or pulse). */
+                    if (isdigit((unsigned char) d) || (d == '*') || (d == '#') || (d == ',') ||
+                        (strchr("WwTtPp", d) != NULL))
                         number[n++] = d;
                 }
                 number[n] = '\0';
@@ -633,14 +679,28 @@ modem_execute(modem_t *dev, const char *line)
                 modem_load_defaults(dev);
                 break;
 
-            /* Speaker, dial mode, modulation selection and error control:
-               accepted, and nothing here has a speaker or a modulation. */
-            case 'B':
+            /* The speaker: M is when it is on, L how loud.  The cabinets send
+               M1L3 -- on until the carrier, loud. */
             case 'L':
+                dev->spk_level = modem_arg(&p);
+                modem_sound_speaker(dev->snd, dev->spk_mode, dev->spk_level);
+                break;
             case 'M':
-            case 'N':
+                dev->spk_mode = modem_arg(&p);
+                modem_sound_speaker(dev->snd, dev->spk_mode, dev->spk_level);
+                break;
+
+            /* Dial mode, for how long the dialling takes. */
             case 'P':
+                dev->pulse = 1;
+                break;
             case 'T':
+                dev->pulse = 0;
+                break;
+
+            /* Modulation selection and error control: accepted, nothing to do. */
+            case 'B':
+            case 'N':
                 (void) modem_arg(&p);
                 break;
 
@@ -1009,6 +1069,7 @@ modem_close(void *priv)
     modem_t *dev = (modem_t *) priv;
 
     modem_hangup(dev);
+    modem_sound_close(dev->snd);
     log_close(dev->log);
     free(dev);
 }
@@ -1023,6 +1084,8 @@ modem_init(const device_t *info)
                                    ? info->local
                                    : MODEM_MODEL_SUPRA];
     dev->sock  = (SOCKET) -1;
+    dev->snd   = modem_sound_init();
+    (void) photoplay_modem_sounds();   /* read the setting here, not first on the sound thread */
     modem_load_defaults(dev);
 
     dev->line         = device_get_config_int("line");

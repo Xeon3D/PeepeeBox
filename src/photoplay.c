@@ -997,6 +997,30 @@ photoplay_com4_irq(void)
     return PHOTOPLAY_MODEM_IRQ;
 }
 
+/* Whether the modem's speaker is heard (Tools > Sound > Modem sounds).
+
+   The cabinets tell their modem ATM1L3 -- speaker on, loud, until the carrier
+   -- so a real one announced every nightly call.  This only decides whether
+   you hear it: the call takes as long as a real modem's either way.  Read on
+   the sound thread, so it is kept in a plain int rather than looked up in the
+   config there. */
+static volatile int modem_sounds = -1;
+
+int
+photoplay_modem_sounds(void)
+{
+    if (modem_sounds < 0)
+        modem_sounds = !!config_get_int(PHOTOPLAY_SECTION, "modem_sounds", 1);
+    return modem_sounds;
+}
+
+void
+photoplay_set_modem_sounds(int on)
+{
+    modem_sounds = !!on;
+    config_set_int(PHOTOPLAY_SECTION, "modem_sounds", modem_sounds);
+}
+
 /* Whether the fun.link adapter is fitted to COM1.
 
    fun.link is the box that joins cabinets into one bus so their games can play

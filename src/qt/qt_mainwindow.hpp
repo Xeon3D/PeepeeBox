@@ -130,6 +130,7 @@ private slots:
     void toggleFullscreenUI();
     void on_actionMute_Unmute_triggered();
     void on_actionSound_gain_triggered();
+    void on_actionModem_sounds_triggered(bool checked);
     void on_actionPreferences_triggered();
     void on_actionRenderer_options_triggered();
 
