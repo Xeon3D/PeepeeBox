@@ -275,6 +275,16 @@ jobs:
           path: assets
           merge-multiple: true
 
+      # Installed copies of 1.11 and earlier unpack an update with a reader that
+      # fails ("inflate failed (-5)") on a deflate stream that happens to align
+      # badly with its 64 KiB buffers -- 1.11's own Windows archive did, and so
+      # did five of the nine archives from 1.10 to 1.11.  Those copies are the
+      # ones that will fetch this release, so each archive is replayed through
+      # that reader and any entry that would trip it is re-deflated until none
+      # does.  Nothing else about the archive changes.
+      - name: Make the archives installable by 1.11 and earlier
+        run: python3 tools/updatezip.py --fix assets/*.zip
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
