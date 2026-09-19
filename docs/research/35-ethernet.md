@@ -178,6 +178,12 @@ PeepeeBox was cabinet `00584F425050` to a fun.net server.  It is now a
 | `pool:N` | entry N of the pool |
 | absent | the old PPBOX default |
 
+The dongle dialog (the toolbar's settings button) shows the licence in force and
+the dongle serial it becomes, says whether it is the shared default, a pool
+entry or a licence of its own, and has **Random from the pool** and **Default**
+buttons; the version and territory options moved behind its **Options…**
+button.
+
 **The pool.** 2000 licences shared with the fun.net stand-in:
 `pool(i) = SHA3-256("PeepeeBox machlic i")[:6]` as upper-case hex
 (`photoplay_machlic_pool()` here, `machlic_pool.py` there; entry 0 is

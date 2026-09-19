@@ -97,6 +97,9 @@ extern const char *photoplay_machlic(void);
 extern void        photoplay_machlic_serial(uint8_t serial[6]);
 #define PHOTOPLAY_MACHLIC_POOL 2000            /* entries in the shared machlic pool */
 extern void        photoplay_machlic_pool(int i, char lic[13]);
+extern int         photoplay_machlic_pool_index(const char *lic);
+extern void        photoplay_set_machlic(const char *lic);
+#define PHOTOPLAY_MACHLIC_DEFAULT "00584F425050"   /* the old fixed "PPBOX" serial */
 extern int         photoplay_com4_irq(void);
 
 /* Whether the fun.link adapter is fitted.  fun.link joins cabinets together so

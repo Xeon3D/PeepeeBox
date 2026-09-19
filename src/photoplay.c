@@ -946,6 +946,30 @@ photoplay_machlic_pool(int i, char lic[13])
     lic[12] = '\0';
 }
 
+/* Which pool entry a machlic is, or -1 when it is not from the pool. */
+int
+photoplay_machlic_pool_index(const char *lic)
+{
+    char entry[13];
+
+    if ((lic == NULL) || (strlen(lic) != 12))
+        return -1;
+    for (int i = 0; i < PHOTOPLAY_MACHLIC_POOL; i++) {
+        photoplay_machlic_pool(i, entry);
+        if (!stricmp(entry, lic))
+            return i;
+    }
+    return -1;
+}
+
+/* Set the machine licence: twelve hex digits, "random" or "pool:N", as the
+   config key takes them.  Read back through photoplay_machlic(). */
+void
+photoplay_set_machlic(const char *lic)
+{
+    config_set_string(PHOTOPLAY_SECTION, "machlic", (char *) lic);
+}
+
 /* The six ROM serial bytes the dongle presents for the machlic above. */
 void
 photoplay_machlic_serial(uint8_t serial[6])

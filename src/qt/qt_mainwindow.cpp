@@ -96,7 +96,12 @@ extern bool fast_forward;
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QFontDatabase>
 #include <QLabel>
+#include <QLineEdit>
+#include <QRandomGenerator>
+#include <QRegularExpression>
+#include <QRegularExpressionValidator>
 #include <QVBoxLayout>
 #include <QActionGroup>
 #include <QOpenGLContext>
@@ -1543,14 +1548,128 @@ pp_funlink_dialog(QWidget *parent)
    The dongle is the exception, and it genuinely has to stay adjustable: the
    version banner it reports must match MAIN.SET["Version"] for the image being
    run, and that differs per image and per territory.  Get it wrong and the game
-   reports "Wrong Version".  There is only one token, so this goes straight to
-   that device's own config dialog.
+   reports "Wrong Version".  Those settings belong to the device, so Options
+   hands off to its own config dialog.
+
+   What this dialog adds is the machine licence the dongle presents -- the
+   iButton serial FN_SYS.EXE turns into "machlic", which is how a fun.net
+   server tells one cabinet from another (photoplay_machlic()).  Left at the
+   old fixed default, every image on every PeepeeBox is the same cabinet to a
+   server; "Random from the pool" draws one of the licences every fun.net
+   stand-in registers in advance.
 
    Returns 1 when something changed and the machine has to be restarted for it. */
+static QString
+pp_machlic_where(const QString &lic)
+{
+    if (lic.length() != 12)
+        return QObject::tr("Twelve hex digits (0-9, A-F).");
+    if (!lic.compare(QStringLiteral(PHOTOPLAY_MACHLIC_DEFAULT), Qt::CaseInsensitive))
+        return QObject::tr("The PeepeeBox default. Every image left on it is the same "
+                           "cabinet to a fun.net server.");
+    const int idx = photoplay_machlic_pool_index(lic.toLatin1().constData());
+    if (idx >= 0)
+        return QObject::tr("Entry %1 of the shared pool. fun.net servers register every pool "
+                           "entry in advance, so it is accepted on its first call.").arg(idx);
+    return QObject::tr("A licence of its own (not from the pool). A fun.net server has to be "
+                       "told about it before it is accepted.");
+}
+
+static QString
+pp_machlic_serial(const QString &lic)
+{
+    if (lic.length() != 12)
+        return QString();
+    QStringList bytes;
+    for (int i = 5; i >= 0; i--)
+        bytes << lic.mid(2 * i, 2).toUpper();
+    return bytes.join(QLatin1Char(' '));
+}
+
 static int
 pp_dongle_dialog(QWidget *parent)
 {
-    return DeviceConfig::ConfigureDevice(&lpt_dongle_photoplay_device, 0, parent);
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Dongle"));
+    dlg.setWindowFlags(dlg.windowFlags() & ~Qt::WindowContextHelpButtonHint);
+
+    const QString current = QString::fromLatin1(photoplay_machlic()).toUpper();
+
+    auto *form = new QFormLayout();
+    auto *lic  = new QLineEdit(current);
+    lic->setMaxLength(12);
+    lic->setValidator(new QRegularExpressionValidator(QRegularExpression(QStringLiteral("[0-9A-Fa-f]{0,12}")), lic));
+    lic->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    lic->setMinimumWidth(lic->fontMetrics().horizontalAdvance(QStringLiteral("MMMMMMMMMMMMMM")));
+
+    auto *random = new QPushButton(QObject::tr("&Random from the pool"));
+    auto *reset  = new QPushButton(QObject::tr("&Default"));
+    auto *row    = new QHBoxLayout();
+    row->addWidget(lic, 1);
+    row->addWidget(random);
+    row->addWidget(reset);
+    form->addRow(QObject::tr("Machine licence:"), row);
+
+    auto *serial = new QLabel();
+    serial->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    serial->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    form->addRow(QObject::tr("Dongle serial:"), serial);
+
+    auto *where = new QLabel();
+    where->setWordWrap(true);
+    form->addRow(QString(), where);
+
+    auto *opts = new QPushButton(QObject::tr("Version and territory &Options..."));
+    form->addRow(QObject::tr("Dongle:"), opts);
+
+    auto *note = new QLabel(QObject::tr(
+        "The machine licence (machlic) is how a fun.net server tells this cabinet from every "
+        "other one: its scripts, its games, its mail and the acknowledgement of its uploads "
+        "all go by it. Give each image its own.\n\n"
+        "The cabinet software treats a new licence as a new machine: its technical data and "
+        "counters start again, and a fun.net server sees a cabinet it has not met.\n\n"
+        "Changing this restarts the machine."));
+    note->setWordWrap(true);
+    form->addRow(note);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    auto *outer   = new QVBoxLayout(&dlg);
+    outer->addLayout(form);
+    outer->addWidget(buttons);
+
+    auto refresh = [&]() {
+        const QString v = lic->text().toUpper();
+        where->setText(pp_machlic_where(v));
+        serial->setText(v.length() == 12 ? pp_machlic_serial(v) : QStringLiteral("—"));
+        buttons->button(QDialogButtonBox::Ok)->setEnabled(v.length() == 12);
+    };
+    QObject::connect(lic, &QLineEdit::textChanged, [&](const QString &) { refresh(); });
+    QObject::connect(random, &QPushButton::clicked, [&]() {
+        char entry[13];
+        do
+            photoplay_machlic_pool((int) QRandomGenerator::global()->bounded(PHOTOPLAY_MACHLIC_POOL), entry);
+        while (!lic->text().compare(QLatin1String(entry), Qt::CaseInsensitive));
+        lic->setText(QLatin1String(entry));
+    });
+    QObject::connect(reset, &QPushButton::clicked, [&]() { lic->setText(QStringLiteral(PHOTOPLAY_MACHLIC_DEFAULT)); });
+
+    int inner_changed = 0;
+    QObject::connect(opts, &QPushButton::clicked, [&]() {
+        inner_changed |= DeviceConfig::ConfigureDevice(&lpt_dongle_photoplay_device, 0, &dlg);
+    });
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    refresh();
+
+    if (dlg.exec() != QDialog::Accepted)
+        return inner_changed;   /* the device dialog saves its own, Cancel here cannot undo it */
+
+    const QString chosen = lic->text().toUpper();
+    if ((chosen.length() == 12) && (chosen != current)) {
+        photoplay_set_machlic(chosen.toLatin1().constData());
+        return 1;
+    }
+    return inner_changed;
 }
 
 void
