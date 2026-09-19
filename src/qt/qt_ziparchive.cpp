@@ -223,6 +223,12 @@ ZipArchive::inflateTo(const Entry &entry, qint64 dataOffset, QIODevice &out)
                 zs.next_out  = reinterpret_cast<Bytef *>(outBuf);
                 zs.avail_out = sizeof(outBuf);
                 ret          = inflate(&zs, Z_NO_FLUSH);
+                /* Z_BUF_ERROR only says no progress was possible: the last
+                   call filled the output buffer exactly as the input ran out,
+                   so this one had nothing to do.  More input is the cure --
+                   the 1.11 archive's executable hit this and failed with -5. */
+                if ((ret == Z_BUF_ERROR) && (zs.avail_in == 0))
+                    break;
                 if ((ret != Z_OK) && (ret != Z_STREAM_END)) {
                     inflateEnd(&zs);
                     err = QStringLiteral("%1: inflate failed (%2)").arg(entry.name).arg(ret);
