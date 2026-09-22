@@ -93,8 +93,18 @@
      <addaction name="separator"/>
      <addaction name="actionSound_gain"/>
     </widget>
+    <widget class="QMenu" name="menuPrinter_type">
+     <property name="title">
+      <string>Printer &amp;type</string>
+     </property>
+     <addaction name="actionPrinter_DPU_414"/>
+     <addaction name="actionPrinter_DATAprint_3000"/>
+     <addaction name="separator"/>
+     <addaction name="actionPrinter_DATAprint_English"/>
+    </widget>
     <addaction name="actionOperator_setup"/>
     <addaction name="actionPrinter_paper"/>
+    <addaction name="menuPrinter_type"/>
     <addaction name="separator"/>
     <addaction name="actionSettings"/>
     <addaction name="actionTouchscreen"/>
@@ -487,6 +497,48 @@
    </property>
    <property name="toolTip">
     <string>Receipt printer</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionPrinter_DPU_414">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Seiko DPU-414</string>
+   </property>
+   <property name="toolTip">
+    <string>Use the Seiko DPU-414 thermal receipt printer</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionPrinter_DATAprint_3000">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>NSM DATAprint 3000</string>
+   </property>
+   <property name="toolTip">
+    <string>Use the NSM DATAprint 3000 impact receipt printer</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionPrinter_DATAprint_English">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>DATAprint 3000 &amp;English translation</string>
+   </property>
+   <property name="toolTip">
+    <string>Use the simulator's English translation of case labels, keyboard labels, and firmware messages</string>
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>

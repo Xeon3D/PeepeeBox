@@ -61,7 +61,7 @@ unit -> host   ENQ (0x05), continuously
 host -> unit   11 1B 53 13 03 0A 0A       XON, ESC S, XOFF, ETX, LF LF
 unit -> host   <16 chars with 'C' at index 15> LF
 host -> unit   the report
-host -> unit   04 1B 43 <4 hex> 16        EOT, ESC C, checksum, SYN
+host -> unit   04 1B 43 <4 hex> <end>     EOT, ESC C, checksum, SYN or LF
 ```
 
 **ENQ is a keepalive, not a hello.** The send loop at `0x1D47D` resets a counter
@@ -73,9 +73,16 @@ receive buffer. What a real unit puts in the other fifteen is unknown and
 probably identifies it — `Geraete-Nr.: %ld` and `serialnumber: %ld` sit near the
 DATAPRINT strings.
 
-`di` accumulates a running sum of every byte sent at `0x1EA9E`, rendered as four
-hex digits through the `"0123456789ABCDEF"` table copied in at `0x1E917`. That is
-the checksum in the trailer.
+`di` accumulates a running sum of every report byte sent at `0x1EA9E`. The EOT
+is then sent and added separately at `0x1EAD7..0x1EAE4`, so the terminator is
+part of the checksum too. DI is rendered as four hex digits through the
+`"0123456789ABCDEF"` table copied in at `0x1E917`; that is the checksum in the
+trailer.
+
+Two trailer terminators are now observed. The original 886-byte I.G.O. 6
+capture ended in `SYN` (`16`); the Photo Play image used by the emulator ended
+three consecutive live transfers in `LF` (`0A`). Both carried matching checksum
+digits, so the DATAprint accepts either firmware form.
 
 ## 4. The report
 
@@ -140,6 +147,9 @@ way back to the rest of it.
   an edit moves it.
 - Unplugging drops CTS, DSR and DCD as well as stopping the keepalive, so the
   guest sees no cable rather than a device that has gone quiet.
+- Accumulates the report transaction privately and verifies the four-hex-digit
+  trailer checksum before exposing it to paper or SRAM. RESET, cable removal,
+  malformed trailers and checksum mismatches leave no partial card record.
 - **Stands down on I.G.O. 8**, whose dongle is a serial card reader on COM2.
 
 Nothing is skipped in bulk on a guess about a dialect. `PEEPEEBOX_PRN_PORT=1..4`
@@ -349,11 +359,13 @@ attached for 2008 images and for images that cannot be identified — an unreada
 image keeps the old behaviour, because losing the dongle is worse than losing the
 printer.
 
-### Coming online by itself
+### Revealing the unplugged printer at the useful moment
 
-Opening the Dataprint brings the printer online and puts the paper on screen, so
-nobody has to find a switch. Getting there took two wrong signals and one
-measurement.
+Opening operator setup reveals the printer window, but deliberately leaves the
+VDAI cable unplugged. The user can therefore see the real operator sequence at a
+glance: reach Photo Play's connection prompt, click **VDAI cable**, observe the
+transfer and checksum-qualified commit, then unplug after the completion signal.
+Finding that moment took two wrong signals and one measurement.
 
 **Not the LCR write.** MENU.EXE programs the port at `0x1D0E5` on its way to the
 Dataprint, so an LCR write looked like the operator going looking. It fires
@@ -386,9 +398,8 @@ those numbers were got and how to check them against another image.
 
 **What this does not yet distinguish** is the operator setup from the Dataprint
 screen within it — the rate rose on the setup button and no separate figure has
-been taken for the Dataprint dialog. So the printer comes online on entering the
-setup, one step earlier than asked for. Harmless, and the ON LINE button
-overrides it either way, but it is an approximation and not the thing itself.
+been taken for the Dataprint dialog. Showing the still-unplugged printer one step
+early is harmless; connection remains an explicit operator action at the prompt.
 
 ## 6. The printer is a Seiko DPU-414
 

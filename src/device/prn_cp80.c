@@ -88,6 +88,20 @@
 #define CP80_CHAR_STEPS       8
 #define CP80_FEED_STEPS      30
 
+/* Epson specifies a 150 ms dot-line and 0.7 complete text lines/second for the
+   M-160.  A text line is seven printed dot-lines plus three blank line-spacing
+   advances, so 7 Hz keeps both rounded figures consistent.  The mechanism has
+   four solenoids and a 36-dot shuttle travel: 144 strike opportunities per
+   printed pass, while the single motor turns eighteen times per lead-cam
+   revolution through the documented 18:1 reduction train. */
+#define DP3000_CYCLE_HZ          7.0
+#define DP3000_MOTOR_HZ        126.0
+#define DP3000_PRINT_CYCLES       7
+#define DP3000_FEED_CYCLES        3
+#define DP3000_LINE_CYCLES       10
+#define DP3000_STRIKE_SLOTS     144
+#define DP3000_PRINT_FRACTION  0.76
+
 #define CP80_SOUND_Q        256
 
 enum {
@@ -99,7 +113,9 @@ enum {
 enum {
     CP80_EVENT_LINE = 0,
     CP80_EVENT_FEED,
-    CP80_EVENT_HOME
+    CP80_EVENT_HOME,
+    DP3000_EVENT_LINE,
+    DP3000_EVENT_FEED
 };
 
 typedef struct cp80_sound_event_t {
@@ -114,7 +130,11 @@ typedef struct cp80_sound_t {
     int                q_head;
     int                q_tail;
     int                button_pending;
+    int                dp_button_pending;
     int                tear_pending;
+    int                dp_tear_pending;
+    int                dp_transfer_pending;
+    int                dp_signal_requested;
 
     int      on;
     int      mode;
@@ -140,6 +160,45 @@ typedef struct cp80_sound_t {
     double   body2_z1;
     double   body2_z2;
     double   noise_lp;
+
+    /* The M-160 drives its carriage, paper feed and ribbon from one motor.  A
+       lead-cam revolution is one dot-line: four vertically arranged solenoids
+       get 144 timing opportunities on the outward shuttle, followed by the
+       audible return stop and paper-feed ratchet. */
+    int      dp_cycles;
+    int      dp_cycle_index;
+    int      dp_last_slot;
+    double   dp_cycle_phase;
+    double   dp_density;
+    double   dp_speed;
+    double   dp_case1_c;
+    double   dp_case1_r2;
+    double   dp_case1_z1;
+    double   dp_case1_z2;
+    double   dp_case2_c;
+    double   dp_case2_r2;
+    double   dp_case2_z1;
+    double   dp_case2_z2;
+    double   dp_strike1_c;
+    double   dp_strike1_r2;
+    double   dp_strike1_z1;
+    double   dp_strike1_z2;
+    double   dp_strike2_c;
+    double   dp_strike2_r2;
+    double   dp_strike2_z1;
+    double   dp_strike2_z2;
+    double   dp_ribbon_lp;
+
+    /* Section 3.5 of the DATAprint manual distinguishes four piezo patterns:
+       repeated double beeps for internal faults, rapid beeps for external
+       faults, a one-per-second completion signal, and cricket-like chirping
+       while data is moving. */
+    int      dp_signal_mode;
+    uint64_t dp_signal_samples;
+    int      dp_transfer_samples;
+    int      dp_transfer_total;
+    double   dp_beep_phase;
+    double   dp_beep_env;
 
     /* The two front-panel pushbuttons are mechanical even when the printer is
        off.  Their snap is mixed independently of the motor event queue so an
@@ -167,6 +226,7 @@ typedef struct cp80_sound_t {
     int      tear_burst_samples;
     int      tear_burst_total;
     int      tear_final;
+    double   tear_gain;
     double   tear_burst_gain;
     double   tear_hp_a;
     double   tear_lp_a;
@@ -313,6 +373,15 @@ typedef struct cp80_t {
     cp80_sound_t sound;
 
     int        dirty;              /* the guest has sent at least one byte */
+    int        transfer_active;    /* XON frame start through EOT/SYN trailer */
+    uint64_t   transfer_serial;    /* identifies records for persistent storage */
+    uint64_t   transfer_completed; /* last record whose trailer was received */
+    int        transfer_result;    /* 1 valid, -1 bad checksum/trailer, 0 none */
+    uint16_t   transfer_sum;       /* running 16-bit sum of the report body */
+    uint16_t   transfer_expected;  /* four hex digits after ESC C */
+    int        transfer_phase;     /* command, two LFs, body, or trailer */
+    int        transfer_lfs;
+    int        transfer_trailer;
     int        col;                /* for tab stops */
     int        pending_cr;         /* CR seen, waiting to see whether LF follows */
 
@@ -460,6 +529,28 @@ cp80_sound_coefficients(cp80_sound_t *sound, int rate)
     sound->body2_c   = 2.0 * r * cos((2.0 * CP80_PI * 2380.0) / (double) rate);
     sound->body2_r2  = r * r;
 
+    /* The DATAprint enclosure is larger and the M-160 is a light, metal-framed
+       mechanism mounted inside it.  Separate case modes keep its impacts from
+       inheriting the DPU's hollow thermal-carriage signature. */
+    r                   = exp(-1.0 / ((double) rate * 0.0100));
+    sound->dp_case1_c   = 2.0 * r * cos((2.0 * CP80_PI * 510.0) / (double) rate);
+    sound->dp_case1_r2  = r * r;
+    r                   = exp(-1.0 / ((double) rate * 0.0048));
+    sound->dp_case2_c   = 2.0 * r * cos((2.0 * CP80_PI * 1580.0) / (double) rate);
+    sound->dp_case2_r2  = r * r;
+
+    /* A dot is a short solenoid/lever strike through a fabric ribbon onto the
+       platen.  Two deliberately brief modes give it a hard attack without a
+       sampled click or a pitched ring between adjacent dots. */
+    r                     = exp(-1.0 / ((double) rate * 0.0016));
+    sound->dp_strike1_c   = 2.0 * r * cos((2.0 * CP80_PI * 1850.0)
+                                          / (double) rate);
+    sound->dp_strike1_r2  = r * r;
+    r                     = exp(-1.0 / ((double) rate * 0.00065));
+    sound->dp_strike2_c   = 2.0 * r * cos((2.0 * CP80_PI * 5150.0)
+                                          / (double) rate);
+    sound->dp_strike2_r2  = r * r;
+
     /* A short, sample-free pushbutton snap: a dull plastic plunger mode and a
        quicker contact/cap mode, excited together with a sub-millisecond burst
        of high-passed noise.  These are deliberately less resonant than the
@@ -545,6 +636,27 @@ cp80_sound_begin_feed(cp80_sound_t *sound)
     sound->paper3_z1 += 0.16;
 }
 
+static void
+dp3000_sound_begin(cp80_sound_t *sound, const cp80_sound_event_t *event)
+{
+    const double occupied = (event->columns > 0)
+                          ? (double) event->ink / 24.0 : 0.0;
+
+    sound->mode           = (event->kind == DP3000_EVENT_LINE)
+                          ? DP3000_EVENT_LINE : DP3000_EVENT_FEED;
+    sound->dp_cycles      = (event->kind == DP3000_EVENT_LINE)
+                          ? DP3000_LINE_CYCLES : DP3000_FEED_CYCLES;
+    sound->dp_cycle_index = 0;
+    sound->dp_cycle_phase = 0.0;
+    sound->dp_last_slot   = -1;
+    sound->dp_density     = fmin(1.0, occupied) * 0.58;
+    sound->dp_speed       = (double) event->speed / 1000.0;
+
+    /* Motor take-up, lead-cam backlash and the ribbon spool all start together. */
+    sound->dp_case1_z1 += 0.70;
+    sound->dp_case2_z1 -= 0.32;
+}
+
 static int
 cp80_sound_pop(cp80_t *dev)
 {
@@ -575,6 +687,12 @@ cp80_sound_pop(cp80_t *dev)
     sound->head_feeds = 0;
     sound->feed_turns_head = 0;
     cp80_sound_paper_speed(sound, (double) event.speed / 1000.0);
+
+    if ((event.kind == DP3000_EVENT_LINE)
+        || (event.kind == DP3000_EVENT_FEED)) {
+        dp3000_sound_begin(sound, &event);
+        return 1;
+    }
 
     if (event.kind == CP80_EVENT_HOME) {
         /* An interval home return is a carriage-only event.  The UI only asks
@@ -681,14 +799,94 @@ prn_cp80_sound_tear(void)
     thread_release_mutex(dev->lock);
 }
 
+void
+prn_dp3000_sound_line(unsigned columns, unsigned ink, unsigned speed)
+{
+    cp80_sound_enqueue(cp80_inst, columns, ink, speed,
+                       columns ? DP3000_EVENT_LINE : DP3000_EVENT_FEED);
+}
+
+void
+prn_dp3000_sound_feed(unsigned speed)
+{
+    cp80_sound_enqueue(cp80_inst, 0, 0, speed, DP3000_EVENT_FEED);
+}
+
+void
+prn_dp3000_sound_button(void)
+{
+    cp80_t *dev = cp80_inst;
+
+    if ((dev == NULL) || !dev->sound.on)
+        return;
+
+    thread_wait_mutex(dev->lock);
+    if (dev->sound.dp_button_pending < 8)
+        dev->sound.dp_button_pending++;
+    thread_release_mutex(dev->lock);
+}
+
+void
+prn_dp3000_sound_tear(void)
+{
+    cp80_t *dev = cp80_inst;
+
+    if ((dev == NULL) || !dev->sound.on)
+        return;
+
+    thread_wait_mutex(dev->lock);
+    if (dev->sound.dp_tear_pending < 2)
+        dev->sound.dp_tear_pending++;
+    thread_release_mutex(dev->lock);
+}
+
+void
+prn_dp3000_sound_transfer(void)
+{
+    cp80_t *dev = cp80_inst;
+
+    if ((dev == NULL) || !dev->sound.on)
+        return;
+
+    thread_wait_mutex(dev->lock);
+    if (dev->sound.dp_transfer_pending < 4)
+        dev->sound.dp_transfer_pending++;
+    thread_release_mutex(dev->lock);
+}
+
+void
+prn_dp3000_sound_signal(int signal)
+{
+    cp80_t *dev = cp80_inst;
+
+    if ((dev == NULL) || !dev->sound.on)
+        return;
+    if ((signal < PRN_DP3000_SIGNAL_NONE)
+        || (signal > PRN_DP3000_SIGNAL_INTERNAL_ERROR))
+        signal = PRN_DP3000_SIGNAL_NONE;
+
+    thread_wait_mutex(dev->lock);
+    dev->sound.dp_signal_requested = signal;
+    thread_release_mutex(dev->lock);
+}
+
 static void
-cp80_sound_take_controls(cp80_t *dev, int *buttons, int *tears)
+cp80_sound_take_controls(cp80_t *dev, int *buttons, int *dp_buttons,
+                         int *tears, int *dp_tears, int *dp_transfers,
+                         int *dp_signal)
 {
     thread_wait_mutex(dev->lock);
-    *buttons                  = dev->sound.button_pending;
-    *tears                    = dev->sound.tear_pending;
-    dev->sound.button_pending = 0;
-    dev->sound.tear_pending   = 0;
+    *buttons                       = dev->sound.button_pending;
+    *dp_buttons                    = dev->sound.dp_button_pending;
+    *tears                         = dev->sound.tear_pending;
+    *dp_tears                      = dev->sound.dp_tear_pending;
+    *dp_transfers                  = dev->sound.dp_transfer_pending;
+    *dp_signal                     = dev->sound.dp_signal_requested;
+    dev->sound.button_pending      = 0;
+    dev->sound.dp_button_pending   = 0;
+    dev->sound.tear_pending        = 0;
+    dev->sound.dp_tear_pending     = 0;
+    dev->sound.dp_transfer_pending = 0;
     thread_release_mutex(dev->lock);
 }
 
@@ -708,17 +906,40 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
     if (sound->mode == CP80_SOUND_IDLE)
         cp80_sound_pop(dev);
 
-    int button_presses = 0;
-    int tear_events    = 0;
+    int button_presses    = 0;
+    int dp_button_presses = 0;
+    int tear_events       = 0;
+    int dp_tear_events    = 0;
+    int dp_transfers      = 0;
+    int dp_signal         = PRN_DP3000_SIGNAL_NONE;
 
-    cp80_sound_take_controls(dev, &button_presses, &tear_events);
+    cp80_sound_take_controls(dev, &button_presses, &dp_button_presses,
+                             &tear_events, &dp_tear_events, &dp_transfers,
+                             &dp_signal);
 
-    if (tear_events > 0) {
+    if (dp_signal != sound->dp_signal_mode) {
+        sound->dp_signal_mode    = dp_signal;
+        sound->dp_signal_samples = 0;
+        sound->dp_beep_env       = 0.0;
+    }
+
+    if (dp_transfers > 0) {
+        /* A UI pump may coalesce several serial chunks.  Extend one chirp
+           rather than stacking loud copies of the same transfer indicator. */
+        sound->dp_transfer_total = sound->dp_transfer_samples
+                                 = (rate * 240 + 500) / 1000;
+    }
+
+    if ((tear_events > 0) || (dp_tear_events > 0)) {
         /* About 320 ms crosses the 112 mm paper at a brisk hand pull; the last
            140 ms is the now-free receipt flexing and settling.  Keeping the
            timing in samples locks every internal envelope to the UI event. */
-        sound->tear_total = sound->tear_samples
-                          = (rate * 460 + 500) / 1000;
+        const int dp = (dp_tear_events > 0);
+
+        sound->tear_total = sound->tear_samples = dp
+                          ? (rate * 300 + 500) / 1000
+                          : (rate * 460 + 500) / 1000;
+        sound->tear_gain          = dp ? 0.72 : 1.0;
         sound->tear_next          = 0;
         sound->tear_burst_samples = 0;
         sound->tear_burst_total   = 0;
@@ -734,6 +955,9 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
         double button_impulse = 0.0;
         double button_noise   = 0.0;
         double tear_noise     = 0.0;
+        double dp_case_impulse   = 0.0;
+        double dp_strike_impulse = 0.0;
+        double dp_beep            = 0.0;
 
         if ((i == 0) && (button_presses > 0)) {
             button_impulse = (double) button_presses;
@@ -742,6 +966,16 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
             /* Let the same cabinet body answer quietly underneath the local
                button modes, tying the click to the printer enclosure. */
             impulse += 0.50 * button_impulse;
+        }
+
+        if ((i == 0) && (dp_button_presses > 0)) {
+            /* The detachable keyboard and small edge switches are lighter than
+               the DPU's large membrane controls, but still excite the much
+               larger DATAprint case. */
+            button_impulse += 0.62 * (double) dp_button_presses;
+            dp_case_impulse += 0.34 * (double) dp_button_presses;
+            sound->button_noise_total = sound->button_noise_samples
+                                      = (rate + 999) / 1000;
         }
 
         if (sound->button_noise_samples > 0) {
@@ -836,6 +1070,7 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
             }
 
             sound->tear_samples--;
+            tear_noise *= sound->tear_gain;
         }
 
         if (sound->mode == CP80_SOUND_HEAD) {
@@ -960,6 +1195,148 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
                     cp80_sound_pop(dev);
                 }
             }
+        } else if ((sound->mode == DP3000_EVENT_LINE)
+                   || (sound->mode == DP3000_EVENT_FEED)) {
+            const int    line_event = (sound->mode == DP3000_EVENT_LINE);
+            const int    printing = line_event
+                                  && (sound->dp_cycle_index
+                                      < DP3000_PRINT_CYCLES);
+            const double p = sound->dp_cycle_phase;
+            const double edge = fmin(1.0, fmin(p * 16.0,
+                                               (1.0 - p) * 13.0));
+            const double motor_p = p * (DP3000_MOTOR_HZ / DP3000_CYCLE_HZ);
+            double       white;
+
+            /* One DC motor drives shuttle, feed and ribbon through the 18:1
+               reduction train.  The rotor/gear tone is deliberately modest:
+               on an impact printer the solenoid strikes and return stops are
+               what carry, with the motor audible in the gaps. */
+            direct = edge * (390.0 * sin(2.0 * CP80_PI * motor_p)
+                           + 145.0 * sin(4.0 * CP80_PI * motor_p + 0.38)
+                           + 62.0 * sin(6.0 * CP80_PI * motor_p + 0.71));
+
+            white = ((double) (int32_t) cp80_sound_rand(sound))
+                  / 2147483648.0;
+            sound->dp_ribbon_lp += 0.055 * (white - sound->dp_ribbon_lp);
+            grain = (white - sound->dp_ribbon_lp) * 105.0 * edge;
+
+            /* The four solenoids receive 144 timing opportunities while the
+               shuttle crosses 36 dot spaces.  We do not know the guest's glyph
+               bitmap here, so the rendered line's occupied-cell density gates
+               a deterministic subset.  Seven passes form the seven dot rows. */
+            if (printing && (p < DP3000_PRINT_FRACTION)) {
+                const int slot = (int) ((p / DP3000_PRINT_FRACTION)
+                                        * DP3000_STRIKE_SLOTS);
+
+                while (sound->dp_last_slot < slot) {
+                    const double choose = (double) (cp80_sound_rand(sound)
+                                                    & 0xffffu) / 65535.0;
+
+                    sound->dp_last_slot++;
+                    if (choose < sound->dp_density) {
+                        const double strength = 0.78
+                                              + (0.44 * (double)
+                                                 (cp80_sound_rand(sound)
+                                                  & 0xffffu) / 65535.0);
+
+                        dp_strike_impulse += strength;
+                        dp_case_impulse   += 0.085 * strength;
+                    }
+                }
+            }
+
+            /* Return travel advances the paper one dot-line and also turns the
+               ERC ribbon spool.  This short friction bed and the end-stop/gear
+               impulses separate the ten cycles into the familiar clattering
+               cadence of a slow miniature impact printer. */
+            if (p >= DP3000_PRINT_FRACTION) {
+                double rough;
+
+                sound->paper_hp_z += sound->paper_hp_a
+                                   * (white - sound->paper_hp_z);
+                rough = white - sound->paper_hp_z;
+                sound->paper_lp_z += sound->paper_lp_a
+                                   * (rough - sound->paper_lp_z);
+                paper = sound->paper_lp_z * 310.0
+                      * sin(CP80_PI * (p - DP3000_PRINT_FRACTION)
+                            / (1.0 - DP3000_PRINT_FRACTION));
+            }
+
+            sound->dp_cycle_phase += (DP3000_CYCLE_HZ * sound->dp_speed)
+                                   / (double) rate;
+            if (sound->dp_cycle_phase >= 1.0) {
+                sound->dp_cycle_phase -= 1.0;
+                sound->dp_cycles--;
+                sound->dp_cycle_index++;
+                sound->dp_last_slot = -1;
+                dp_case_impulse += 0.62;  /* shuttle home stop */
+                paper_impulse   += 0.11;  /* feed pawl / platen step */
+
+                if (sound->dp_cycles <= 0) {
+                    sound->mode = CP80_SOUND_IDLE;
+                    sound->dp_case1_z1 -= 0.44;
+                    sound->dp_case2_z1 += 0.21;
+                    cp80_sound_pop(dev);
+                } else {
+                    sound->dp_case1_z1 += 0.12;
+                }
+            }
+        }
+
+        /* The manual specifies cadence rather than pitch.  A small piezo-like
+           oscillator supplies its four documented patterns; soft envelope
+           edges avoid digital clicks while retaining the terse 1990s beeper
+           character.  Transfer chirps take priority over the idle/error code. */
+        {
+            int    gate = 0;
+            double beep_hz = 2450.0;
+
+            if (sound->dp_transfer_samples > 0) {
+                const int elapsed = sound->dp_transfer_total
+                                  - sound->dp_transfer_samples;
+                const double t = (double) elapsed / (double) rate;
+
+                gate = (((elapsed * 38) / rate) & 1) == 0;
+                beep_hz = 2550.0 + (620.0 * sin(2.0 * CP80_PI * 29.0 * t));
+                sound->dp_transfer_samples--;
+            } else if (sound->dp_signal_mode != PRN_DP3000_SIGNAL_NONE) {
+                const uint64_t within = sound->dp_signal_samples
+                                      % (uint64_t) rate;
+
+                if (sound->dp_signal_mode == PRN_DP3000_SIGNAL_INTERNAL_ERROR) {
+                    const uint64_t pulse = (uint64_t) rate * 85u / 1000u;
+                    const uint64_t second = (uint64_t) rate * 165u / 1000u;
+
+                    gate = (within < pulse)
+                        || ((within >= second) && (within < second + pulse));
+                    beep_hz = 2380.0;
+                } else if (sound->dp_signal_mode
+                           == PRN_DP3000_SIGNAL_EXTERNAL_ERROR) {
+                    const uint64_t period = (uint64_t) rate * 170u / 1000u;
+                    const uint64_t pulse  = (uint64_t) rate * 62u / 1000u;
+
+                    gate = (sound->dp_signal_samples % period) < pulse;
+                    beep_hz = 2740.0;
+                } else {
+                    gate = within < ((uint64_t) rate * 105u / 1000u);
+                    beep_hz = 2470.0;
+                }
+                sound->dp_signal_samples++;
+            }
+
+            {
+                const double seconds = gate ? 0.0013 : 0.0045;
+                const double a = 1.0 - exp(-1.0 / ((double) rate * seconds));
+
+                sound->dp_beep_env += a * ((gate ? 1.0 : 0.0)
+                                           - sound->dp_beep_env);
+            }
+            sound->dp_beep_phase += beep_hz / (double) rate;
+            if (sound->dp_beep_phase >= 1.0)
+                sound->dp_beep_phase -= 1.0;
+            dp_beep = 1650.0 * sound->dp_beep_env
+                    * (sin(2.0 * CP80_PI * sound->dp_beep_phase)
+                       + (0.12 * sin(6.0 * CP80_PI * sound->dp_beep_phase)));
         }
 
         /* Two resonant case modes, excited only by the synthetic motor steps
@@ -975,6 +1352,18 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
             const double by2 = (sound->button2_c * sound->button2_z1)
                              - (sound->button2_r2 * sound->button2_z2)
                              - (button_impulse * 0.72);
+            const double dy1 = (sound->dp_case1_c * sound->dp_case1_z1)
+                             - (sound->dp_case1_r2 * sound->dp_case1_z2)
+                             + dp_case_impulse;
+            const double dy2 = (sound->dp_case2_c * sound->dp_case2_z1)
+                             - (sound->dp_case2_r2 * sound->dp_case2_z2)
+                             - (dp_case_impulse * 0.58);
+            const double sy1 = (sound->dp_strike1_c * sound->dp_strike1_z1)
+                             - (sound->dp_strike1_r2 * sound->dp_strike1_z2)
+                             + dp_strike_impulse;
+            const double sy2 = (sound->dp_strike2_c * sound->dp_strike2_z1)
+                             - (sound->dp_strike2_r2 * sound->dp_strike2_z2)
+                             - (dp_strike_impulse * 0.74);
             int32_t      out;
 
             sound->body1_z2 = sound->body1_z1;
@@ -985,6 +1374,14 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
             sound->button1_z1 = by1;
             sound->button2_z2 = sound->button2_z1;
             sound->button2_z1 = by2;
+            sound->dp_case1_z2 = sound->dp_case1_z1;
+            sound->dp_case1_z1 = dy1;
+            sound->dp_case2_z2 = sound->dp_case2_z1;
+            sound->dp_case2_z1 = dy2;
+            sound->dp_strike1_z2 = sound->dp_strike1_z1;
+            sound->dp_strike1_z1 = sy1;
+            sound->dp_strike2_z2 = sound->dp_strike2_z1;
+            sound->dp_strike2_z1 = sy2;
 
             /* The paper modes ring after the feed itself stops, which matters
                most on a single FEED press. */
@@ -1017,8 +1414,11 @@ cp80_sound_get_buffer(int32_t *buffer, uint16_t len, void *priv)
                the recording's chunky plastic rather than making a sharp UI
                tick. */
             out = (int32_t) (direct + grain + paper + button_noise + tear_noise
+                             + dp_beep
                              + (y1 * 36.0) + (y2 * 18.0)
-                             + (by1 * 160.0) + (by2 * 170.0));
+                             + (by1 * 160.0) + (by2 * 170.0)
+                             + (dy1 * 58.0) + (dy2 * 32.0)
+                             + (sy1 * 330.0) + (sy2 * 205.0));
             buffer[(i << 1)]     += out;
             buffer[(i << 1) + 1] += out;
         }
@@ -1445,6 +1845,113 @@ cp80_write(UNUSED(serial_t *serial), void *priv, uint8_t val)
     if (!dev->dirty)
         dev->dirty = 1;
 
+    /* The command/report envelope supplies both record boundaries and an
+       integrity check.  The guest sends:
+
+           XON, ESC S, XOFF, ETX, LF, LF, <report>,
+           EOT, ESC C, four hexadecimal checksum digits, SYN or LF
+
+       Its 16-bit checksum is the sum of every byte in <report> plus the EOT
+       that terminates it.  MENU.EXE sends EOT and executes add di,ax before
+       rendering DI as the four trailer digits.  Keep this below the
+       presentation parser: styling bytes are protected even when they do not
+       appear on the paper. */
+    if (val == 0x11) {
+        dev->transfer_active = 1;
+        dev->transfer_serial++;
+        if (dev->transfer_serial == 0)
+            dev->transfer_serial = 1;
+        dev->transfer_result   = 0;
+        dev->transfer_sum      = 0;
+        dev->transfer_expected = 0;
+        dev->transfer_phase    = 1; /* command frame */
+        dev->transfer_lfs      = 0;
+        dev->transfer_trailer  = 0;
+    }
+    if ((val != 0x11) && dev->transfer_active) {
+        switch (dev->transfer_phase) {
+            case 1: /* command frame, through ETX */
+                if (val == 0x03) {
+                    dev->transfer_phase = 2;
+                    dev->transfer_lfs   = 2;
+                }
+                break;
+
+            case 2: /* the command's two line feeds, not report data */
+                if ((val == 0x0a) && (dev->transfer_lfs > 0)) {
+                    if (--dev->transfer_lfs == 0)
+                        dev->transfer_phase = 3;
+                } else {
+                    /* Be liberal with captures that omit the cosmetic LFs:
+                       the first other byte is already report data. */
+                    dev->transfer_phase = 3;
+                    if (val == 0x04) {
+                        dev->transfer_sum = (uint16_t)
+                            (dev->transfer_sum + val);
+                        dev->transfer_phase   = 4;
+                        dev->transfer_trailer = 0;
+                    } else
+                        dev->transfer_sum = (uint16_t) (dev->transfer_sum + val);
+                }
+                break;
+
+            case 3: /* protected report body */
+                if (val == 0x04) {
+                    /* Photo Play includes this terminator in DI before it
+                       formats the checksum trailer. */
+                    dev->transfer_sum = (uint16_t)
+                        (dev->transfer_sum + val);
+                    dev->transfer_phase   = 4;
+                    dev->transfer_trailer = 0;
+                } else
+                    dev->transfer_sum = (uint16_t) (dev->transfer_sum + val);
+                break;
+
+            case 4: { /* ESC C hhhh, then SYN (older) or LF (this image) */
+                static const uint8_t prefix[] = { 0x1b, 'C' };
+                int digit = -1;
+
+                if (dev->transfer_trailer < 2) {
+                    if (val != prefix[dev->transfer_trailer])
+                        dev->transfer_result = -1;
+                } else if (dev->transfer_trailer < 6) {
+                    if ((val >= '0') && (val <= '9'))
+                        digit = val - '0';
+                    else if ((val >= 'A') && (val <= 'F'))
+                        digit = val - 'A' + 10;
+                    else if ((val >= 'a') && (val <= 'f'))
+                        digit = val - 'a' + 10;
+                    if (digit < 0)
+                        dev->transfer_result = -1;
+                    else
+                        dev->transfer_expected = (uint16_t)
+                            ((dev->transfer_expected << 4) | digit);
+                } else if (dev->transfer_trailer == 6) {
+                    /* Both forms are observed Photo Play output.  The first
+                       captured I.G.O. 6 report ended in SYN; the image used by
+                       the emulator sends LF.  Integrity comes from the four
+                       digits, not from choosing one firmware's delimiter. */
+                    if ((val != 0x16) && (val != 0x0a))
+                        dev->transfer_result = -1;
+                    if (dev->transfer_result == 0)
+                        dev->transfer_result =
+                            (dev->transfer_expected == dev->transfer_sum) ? 1 : -1;
+                    dev->transfer_completed = dev->transfer_serial;
+                    dev->transfer_active    = 0;
+                    pclog("CP80: report %llu checksum %04X, calculated %04X: %s\n",
+                          (unsigned long long) dev->transfer_serial,
+                          dev->transfer_expected, dev->transfer_sum,
+                          (dev->transfer_result > 0) ? "accepted" : "rejected");
+                }
+                dev->transfer_trailer++;
+                break;
+            }
+
+            default:
+                break;
+        }
+    }
+
     cp80_byte(dev, val);
 
     /* ETX ends a command frame, and the guest then sits in a receive state
@@ -1487,6 +1994,89 @@ prn_cp80_connected(void)
     return (cp80_inst != NULL) && cp80_inst->connected;
 }
 
+int
+prn_cp80_transfer_active(void)
+{
+    cp80_t *dev = cp80_inst;
+    int     active = 0;
+
+    if (dev == NULL)
+        return 0;
+    thread_wait_mutex(dev->lock);
+    active = dev->transfer_active;
+    thread_release_mutex(dev->lock);
+    return active;
+}
+
+uint64_t
+prn_cp80_transfer_serial(void)
+{
+    cp80_t  *dev = cp80_inst;
+    uint64_t serial = 0;
+
+    if (dev == NULL)
+        return 0;
+    thread_wait_mutex(dev->lock);
+    serial = dev->transfer_serial;
+    thread_release_mutex(dev->lock);
+    return serial;
+}
+
+uint64_t
+prn_cp80_transfer_completed(void)
+{
+    cp80_t  *dev = cp80_inst;
+    uint64_t serial = 0;
+
+    if (dev == NULL)
+        return 0;
+    thread_wait_mutex(dev->lock);
+    serial = dev->transfer_completed;
+    thread_release_mutex(dev->lock);
+    return serial;
+}
+
+int
+prn_cp80_transfer_result(uint64_t *serial, uint16_t *expected,
+                         uint16_t *calculated)
+{
+    cp80_t *dev = cp80_inst;
+    int     result = 0;
+
+    if (serial != NULL)
+        *serial = 0;
+    if (expected != NULL)
+        *expected = 0;
+    if (calculated != NULL)
+        *calculated = 0;
+    if (dev == NULL)
+        return 0;
+
+    thread_wait_mutex(dev->lock);
+    result = dev->transfer_result;
+    if (serial != NULL)
+        *serial = dev->transfer_completed;
+    if (expected != NULL)
+        *expected = dev->transfer_expected;
+    if (calculated != NULL)
+        *calculated = dev->transfer_sum;
+    thread_release_mutex(dev->lock);
+    return result;
+}
+
+void
+prn_cp80_abort_transfer(void)
+{
+    cp80_t *dev = cp80_inst;
+
+    if (dev == NULL)
+        return;
+    thread_wait_mutex(dev->lock);
+    dev->transfer_active = 0;
+    dev->transfer_phase  = 0;
+    thread_release_mutex(dev->lock);
+}
+
 void
 prn_cp80_set_connected(int on)
 {
@@ -1496,6 +2086,8 @@ prn_cp80_set_connected(int on)
         return;
 
     dev->connected = !!on;
+    if (!dev->connected)
+        dev->transfer_active = 0;
     cp80_wire(dev, dev->connected);
     pclog("CP80: Dataprint %s\n", dev->connected ? "plugged in" : "unplugged");
 }
@@ -1730,15 +2322,16 @@ cp80_enq_tick(void *priv)
                       dev->connected ? "online" : "offline");
 
             /* Busy enough for long enough, and not already on: the operator has
-               gone looking for the printer, so stop making them find a switch. */
+               reached Photo Play's connection prompt.  Reveal the printer but
+               leave the cable out so the documented plug-in action remains a
+               visible, understandable part of the workflow. */
             if (dev->connected || (cp80_polls < CP80_POLL_BUSY))
                 cp80_busy_secs = 0;
             else if (++cp80_busy_secs >= CP80_POLL_SECS) {
                 cp80_busy_secs = 0;
                 pclog("CP80: COM%d polled %d times a second; the operator is "
-                      "looking for the printer, coming online\n",
+                      "looking for the printer, showing its controls\n",
                       dev->ports[0].port + 1, cp80_polls);
-                prn_cp80_set_connected(1);
                 cp80_attention = 1;
             }
 

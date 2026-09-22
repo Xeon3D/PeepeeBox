@@ -37,11 +37,25 @@ extern int prn_cp80_present(void);
    sees no cable rather than a device that has merely gone quiet, and the
    software goes back to offering "Connect the interfaces of the Dataprint". */
 extern int  prn_cp80_connected(void);
+/* Transfer state is separate from the mechanical/UI paper queue.  It lets the
+   DATAprint presentation distinguish pulling a cable during the serial record
+   (an error) from pulling it after the record was received while printing is
+   still finishing (explicitly permitted by the V4 manual). */
+extern int      prn_cp80_transfer_active(void);
+extern uint64_t prn_cp80_transfer_serial(void);
+extern uint64_t prn_cp80_transfer_completed(void);
+/* Result of the most recently finished report trailer.  Returns 1 for a
+   checksum match, -1 for a malformed/mismatched trailer, and 0 before any
+   report has finished.  The values are the four-hex-digit checksum carried by
+   ESC C and the 16-bit sum calculated over the report body through EOT. */
+extern int      prn_cp80_transfer_result(uint64_t *serial, uint16_t *expected,
+                                         uint16_t *calculated);
+extern void     prn_cp80_abort_transfer(void);
 
-/* Has the printer brought itself online since this was last asked?  It does that
-   when the guest programs the port, which MENU.EXE only does on the way into the
-   Dataprint -- so it means the operator has gone looking for the printer, and
-   the window should be on screen.  Reading it clears it. */
+/* Has the guest started actively looking for the printer since this was last
+   asked?  MENU.EXE does that on the way into Dataprint, so the window should be
+   shown while the emulated cable remains unplugged for the operator to insert.
+   Reading this notification clears it. */
 extern int  prn_cp80_attention(void);
 extern void prn_cp80_set_connected(int on);
 
@@ -78,6 +92,24 @@ extern void prn_cp80_sound_feed(unsigned speed);
 extern void prn_cp80_sound_home(unsigned columns, unsigned speed);
 extern void prn_cp80_sound_button(void);
 extern void prn_cp80_sound_tear(void);
+
+/* The DATAprint 3000 contains an Epson M-160 shuttle-impact mechanism, not the
+   DPU-414's scanning thermal head.  Its mechanics and documented piezo signals
+   therefore have their own event paths while sharing the same mixer. */
+enum {
+    PRN_DP3000_SIGNAL_NONE = 0,
+    PRN_DP3000_SIGNAL_COMPLETE,
+    PRN_DP3000_SIGNAL_EXTERNAL_ERROR,
+    PRN_DP3000_SIGNAL_INTERNAL_ERROR
+};
+
+extern void prn_dp3000_sound_line(unsigned columns, unsigned ink,
+                                   unsigned speed);
+extern void prn_dp3000_sound_feed(unsigned speed);
+extern void prn_dp3000_sound_button(void);
+extern void prn_dp3000_sound_tear(void);
+extern void prn_dp3000_sound_transfer(void);
+extern void prn_dp3000_sound_signal(int signal);
 
 /* There was a prn_cp80_raw_path() here, for a cp80-raw.bin that every byte was
    written to.  It was the ground truth while the protocol was unknown and it

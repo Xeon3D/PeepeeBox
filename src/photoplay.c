@@ -1058,6 +1058,43 @@ photoplay_set_touchscreen(const char *internal_name)
     config_set_string(PHOTOPLAY_SECTION, "touchscreen", (char *) internal_name);
 }
 
+/* The receipt-printer protocol is common to both mechanisms, so changing this
+   setting is a presentation/mechanics change and does not restart the guest.
+   Unknown hand-edited values fall back to the established DPU-414. */
+const char *
+photoplay_printer(void)
+{
+    const char *s = config_get_string(PHOTOPLAY_SECTION, "printer",
+                                      PHOTOPLAY_PRINTER_DPU414);
+
+    if ((s != NULL) && !strcmp(s, PHOTOPLAY_PRINTER_DP3000))
+        return PHOTOPLAY_PRINTER_DP3000;
+    return PHOTOPLAY_PRINTER_DPU414;
+}
+
+void
+photoplay_set_printer(const char *internal_name)
+{
+    const char *value = ((internal_name != NULL)
+                         && !strcmp(internal_name, PHOTOPLAY_PRINTER_DP3000))
+                      ? PHOTOPLAY_PRINTER_DP3000
+                      : PHOTOPLAY_PRINTER_DPU414;
+
+    config_set_string(PHOTOPLAY_SECTION, "printer", (char *) value);
+}
+
+int
+photoplay_dataprint_english(void)
+{
+    return !!config_get_int(PHOTOPLAY_SECTION, "dataprint_english", 0);
+}
+
+void
+photoplay_set_dataprint_english(int enabled)
+{
+    config_set_int(PHOTOPLAY_SECTION, "dataprint_english", !!enabled);
+}
+
 /* The optional 3.5" floppy drive.
 
    Like the CD-ROM, the cabinets did not have one and the software never asks

@@ -46,8 +46,9 @@ something; come here to find out why something was tried.
 | `25-igo2-block-function.md` | **E, read out of `FINDIT.EXE` rather than guessed at.** Five call sites, HASP service 61 over 4 KB, and the rule that a buffer of eight bytes or less is left alone -- after 24 refuted the assumed block function by measurement |
 | `26-cipher-broken.md` | **The picture cipher, broken.** The two dwords the dongle contributes to a 4 KB buffer are recovered by search, and 300/300 entries then decrypt with no hardware at all |
 | `27-io-card.md` | **The funworld I/O card: an 8255 at 0x210.** Where the coin acceptor and the two door buttons live, found by answering the card-detection sweep; the C120's six accept lines and its 100 ms pulse; A0 is the setup button |
-| `28-printer.md` | **The DATAPRINT.** The operator's book-keeping printer: how it is wired, and its protocol |
-| `29-dpu414-sound.md` | **The DPU-414's mechanical sound, synthesized.** Cadence and spectrum from four recordings, mechanisms from Seiko's own service documentation |
+| `28-printer.md` | **The Photo Play DATAPRINT protocol and first printer UI.** COM2, framing, report capture, parser, paper and the DPU-414 model |
+| `29-dpu414-sound.md` | **Sample-free DPU-414 mechanical sound.** Motor, paper, button and tear synthesis derived from specifications and recordings |
+| `30-dataprint3000.md` | **The official DATAprint 3000 alternate.** Epson M-160 impact mechanics, 24-column plain paper, eight-lamp face and first working simulator |
 | `30-oracle-wire-corrections.md` | **The keyed round, corrected against the binary and then against hardware.** The passthrough rig, the capture, and four retractions on the way |
 | `31-the-part-in-software.md` | **The picture cipher's keyed round, answered in software.** Every release's key fitted -- one of them with no dongle for its password pair in existence |
 | `32-the-part-is-never-asked.md` | **The session layer, modelled.** The measured identity signature, six address bits not eight, and 12,856 of 12,856 reads in a real boot |
@@ -64,6 +65,8 @@ number was already cited elsewhere by the time they met. Left as they are:
 
 - `24-copycontrol.md` and `24-known-plaintext-corpus.md`, for different releases
   on different branches;
+- `30-dataprint3000.md` and `30-oracle-wire-corrections.md`, for the printer and
+  dongle investigations;
 - `34-funlink.md` and `34-funnet-licence.md`, and `35-fn-tables.md` and
   `35-funnet.md` — the fun.link and fun.net strands landing together.
 

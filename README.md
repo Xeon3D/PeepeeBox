@@ -185,7 +185,7 @@ dongle would close it.
 What you *can* change
 ---------------------
 
-Six things, all under the **Tools** menu:
+Seven things, all under the **Tools** menu:
 
 | Item | What it does |
 |---|---|
@@ -193,6 +193,7 @@ Six things, all under the **Tools** menu:
 | **Touchscreen…** | Which part is fitted — a 3M MicroTouch or an Elo SmartSet — and its port, IRQ and speed. The cabinets shipped a MicroTouch on COM3, IRQ 4, 9600 baud, and that is the default. Move it and touch stops working with nothing on screen saying so. |
 | **Modem…** | Which modem is fitted to COM4, at 0x2E8 on IRQ 10 — an ELSA MicroLink 56k or a Diamond SupraExpress 56e PRO, the two parts the fun.net cabinets are found with — and what its telephone line is attached to. None by default; the line is dead unless you point it at a TCP host. |
 | **Network…** | The cabinet's RTL8139, and what it is plugged into. The card is off by default — no real cabinet had one — and choosing it as NIC 1 here fits it; an image given the Ethernet option (`tools/ethernet-patch`) reaches fun.net through it instead of the modem. *Local Switch* talks to a fun.net stand-in on this PC; *Remote Switch* to one on the internet (`host:port`, optional shared secret). See `docs/research/35-ethernet.md`. |
+| **Printer type** | Selects the Seiko DPU-414 or NSM DATAprint 3000 and stores the choice in the cabinet INI. |
 | **CD-ROM drive** | Attaches a generic 52× ATAPI CD-ROM as secondary master. Off by default. |
 | **Floppy drive** | Attaches a 3.5" 1.44 MB drive as A:. Off by default. |
 
@@ -203,6 +204,34 @@ One more, in `86box.cfg` only — `[Photo Play] machlic`: the machine licence th
 dongle presents, which fun.net addresses the cabinet by. Every PeepeeBox used to
 be the same cabinet (`00584F425050`); `machlic = random` or `pool:N` draws one of
 2000 licences the fun.net stand-in already knows, and a 12-digit value fixes it.
+
+Choose **Tools → Printer type** to select the printer; the printer window itself
+contains only controls belonging to the selected hardware. **Seiko DPU-414**
+remains the default; **NSM DATAprint 3000** selects the 24-column Epson M-160
+impact model. **DATAprint 3000 English translation** switches its top legend,
+keyboard legend, card label and simulator-generated firmware messages from the
+original German to an explicitly identified English translation. The choices
+are stored in `86box.cfg` as:
+
+```ini
+[Photo Play]
+printer = dataprint3000
+dataprint_english = 1
+```
+
+Use `printer = dpu414` for the Seiko and `dataprint_english = 0` for the original
+German DATAprint labels and firmware. The DATAprint's measured top view is drawn
+at 3 pixels/mm and includes the clickable paper-feed and RESET switches,
+detachable three-button keyboard, removable SRAM card, 57 mm paper roll,
+cable/adapter states, and all eight operational LEDs.  Its procedural audio
+models the M-160's four-solenoid shuttle, shared motor/ribbon/feed gearing,
+paper handling and the DATAprint's documented status-beeper patterns.  The
+keyboard follows the printed format and confirmation prompts, retains device
+records separately for newest-first reprinting, implements the V4 parameter
+walk with `+`/`-` editing, and supports recovery of deleted card data until a
+complete, checksum-valid new record is committed. Card write protection, powered-removal
+interlock, paper-out restart, operator timeout, and deferred RESET/cable-error
+notices follow the manual as well.
 
 Everything else — machine, CPU, RAM, video card, sound card, hard disk — is
 fixed by the Photo Play profile in

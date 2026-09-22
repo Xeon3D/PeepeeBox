@@ -47,6 +47,8 @@ extern "C" {
 #define PHOTOPLAY_CDROM_CHAN  2                  /* secondary master           */
 #define PHOTOPLAY_FDD_TYPE    "35_2hd"           /* 3.5" 1.44M, the IBM drive  */
 #define PHOTOPLAY_SECTION     "Photo Play"       /* PeepeeBox's own ini section */
+#define PHOTOPLAY_PRINTER_DPU414 "dpu414"
+#define PHOTOPLAY_PRINTER_DP3000 "dataprint3000"
 
 /* Overwrite the loaded configuration with the fixed Photo Play machine profile.
    Called at the end of config_load(); see the file comment in photoplay.c for
@@ -138,6 +140,16 @@ extern void photoplay_image_label(const char *img_path, char *out, size_t sz);
    has one.  It is what tells two images of the same release and territory
    apart, so the manager lists it. */
 extern int  photoplay_image_nsb(const char *img_path, char *out, size_t sz);
+
+/* Receipt-printer mechanism behind the common DATAPRINT serial controller.
+   Stored as a stable internal name in [Photo Play], not as a UI index. */
+extern const char *photoplay_printer(void);
+extern void        photoplay_set_printer(const char *internal_name);
+
+/* Whether the DATAprint 3000's case legends and firmware use the English
+   language set.  German remains the authentic default. */
+extern int  photoplay_dataprint_english(void);
+extern void photoplay_set_dataprint_english(int enabled);
 
 /* Work out which release and territory a disk image is, from its own
    \FOTO\SETTINGS\MAIN.SET.  Returns 1 and fills `out` with something like

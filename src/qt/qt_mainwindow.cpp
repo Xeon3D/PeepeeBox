@@ -78,6 +78,7 @@ extern bool fast_forward;
 #include <QGuiApplication>
 #include <QWindow>
 #include <QTimer>
+#include <QDateTime>
 #include <QThread>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -87,6 +88,7 @@ extern bool fast_forward;
 #include <QMessageBox>
 #include <QFocusEvent>
 #include <QApplication>
+#include <QByteArray>
 #include <QPushButton>
 #include <QDesktopServices>
 #include <QUrl>
@@ -115,7 +117,6 @@ extern bool fast_forward;
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QFile>
-#include <QFontInfo>
 #include <QScrollBar>
 #include <QSlider>
 #include <QStyle>
@@ -123,6 +124,7 @@ extern bool fast_forward;
 #include <QPainter>
 #include <QPainterPath>
 #include <QLinearGradient>
+#include <QRadialGradient>
 #include <QTransform>
 #include <QGridLayout>
 #if QT_CONFIG(vulkan)
@@ -235,6 +237,8 @@ processEventsOnlyWhenPausedOrModal()
    of the cabinet's controls. */
 static void cp80_show(QWidget *parent);
 static void cp80_pump();
+static void cp80_select_model(int index, bool persist);
+static void dp3000_select_english(bool enabled, bool persist);
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -256,6 +260,40 @@ MainWindow::MainWindow(QWidget *parent)
     ui->actionMute_Unmute->setText(sound_muted ? tr("&Unmute") : tr("&Mute"));
     ui->stackedWidget->setMouseTracking(true);
 
+    /* The printer mechanism is cabinet configuration, not a control on either
+       physical printer.  Keep the choice in Tools and persist its stable name
+       in [Photo Play] rather than exposing a model picker in the paper window. */
+    {
+        auto *printer_type_group = new QActionGroup(this);
+
+        printer_type_group->addAction(ui->actionPrinter_DPU_414);
+        printer_type_group->addAction(ui->actionPrinter_DATAprint_3000);
+        printer_type_group->setExclusive(true);
+        ui->actionPrinter_DATAprint_3000->setChecked(
+            !strcmp(photoplay_printer(), PHOTOPLAY_PRINTER_DP3000));
+        ui->actionPrinter_DPU_414->setChecked(
+            !ui->actionPrinter_DATAprint_3000->isChecked());
+        ui->actionPrinter_DATAprint_English->setChecked(
+            photoplay_dataprint_english() != 0);
+        ui->actionPrinter_DATAprint_English->setEnabled(
+            ui->actionPrinter_DATAprint_3000->isChecked());
+        dp3000_select_english(
+            ui->actionPrinter_DATAprint_English->isChecked(), false);
+
+        connect(printer_type_group, &QActionGroup::triggered, this,
+                [this](QAction *action) {
+            const bool dataprint =
+                action == ui->actionPrinter_DATAprint_3000;
+
+            cp80_select_model(dataprint ? 1 : 0, true);
+            ui->actionPrinter_DATAprint_English->setEnabled(dataprint);
+        });
+        connect(ui->actionPrinter_DATAprint_English, &QAction::toggled, this,
+                [](bool enabled) {
+            dp3000_select_english(enabled, true);
+        });
+    }
+
     /* PeepeeBox: watch for the guest starting to print.  The cabinet's printer
        is not a thing anyone thinks to go looking for, and a receipt that
        arrived while nobody had the window open is a run wasted -- so the paper
@@ -267,14 +305,14 @@ MainWindow::MainWindow(QWidget *parent)
         connect(paper_watch, &QTimer::timeout, this, [this]() {
             static bool shown = false;
 
-            /* The printer brings itself online when the operator opens the
-               Dataprint; put the paper on screen when it does, and again on the
-               first byte, because a receipt that printed while nobody had the
-               window open is a run wasted. */
+            /* Busy guest polling asks for the still-unplugged printer window;
+               also reveal it on the first byte, because a receipt that printed
+               while nobody had the window open is a run wasted. */
             const bool wants = (prn_cp80_attention() != 0);
+            const bool capture = getenv("PEEPEEBOX_PRN_SCREENSHOT") != nullptr;
 
             if (wants || !shown) {
-                if (!wants && !prn_cp80_dirty())
+                if (!wants && !prn_cp80_dirty() && !capture)
                     return;
                 shown = true;
                 cp80_show(this);
@@ -1885,8 +1923,316 @@ static QTimer  *cp80_feed   = nullptr;
 static size_t   cp80_paper_at = 0;
 static QWidget *cp80_controls = nullptr;
 static QLabel  *cp80_status   = nullptr;
+static QVBoxLayout *cp80_layout = nullptr;
 static QRect    cp80_available_hint;
-static qreal    cp80_dpr_hint = 1.0;
+
+/* The Photo Play protocol identifies a DATAPRINT controller, not the print
+   mechanism behind it.  Keep the proven serial emulation common and let the
+   operator choose which documented printer is sitting beside the cabinet. */
+enum class Cp80PrinterModel {
+    Dpu414 = 0,
+    Dataprint3000
+};
+
+static Cp80PrinterModel cp80_model = Cp80PrinterModel::Dpu414;
+static bool              cp80_model_initialised = false;
+static QPushButton      *cp80_link_btn = nullptr;
+static QPushButton      *cp80_feed_btn = nullptr;
+static QPushButton      *cp80_paper_btn = nullptr;
+static QPushButton      *dp3000_wp_btn = nullptr;
+
+/* The 3000 itself deliberately has almost no front-panel controls.  Its two
+   local switches are on the case edge and configuration is done with the
+   detachable three-key keyboard shown in the manual.  These transparent
+   buttons sit on the painted hardware, so the simulator is operated in the
+   same places as the real unit rather than through invented front buttons. */
+static QPushButton *dp3000_case_feed = nullptr;
+static QPushButton *dp3000_case_reset = nullptr;
+static QPushButton *dp3000_key_yes = nullptr;
+static QPushButton *dp3000_key_init = nullptr;
+static QPushButton *dp3000_key_no = nullptr;
+static QPushButton *dp3000_card = nullptr;
+
+enum class Dp3000KeyboardState {
+    Idle = 0,
+    PrintMaximal,
+    PrintMedium,
+    PrintShort,
+    PrintBag,
+    PrintCustom,
+    DeleteConfirm,
+    DeleteAgain,
+    RecoverConfirm,
+    InitialiseConfirm,
+    InitialiseAgain,
+    SettingsShowCurrent,
+    SettingsOperatingBlock,
+    SettingsEvaluationBlock,
+    SettingsParameter,
+    SettingsEdit
+};
+
+enum class Dp3000PrintFormat {
+    Maximum = 0,
+    Medium,
+    Short,
+    CashBag,
+    Custom
+};
+
+enum class Dp3000Setting {
+    DateTime = 0,
+    DataprintNumber,
+    CardNumber,
+    StorageMode,
+    FirstPrintLength,
+    FirstCustom,
+    SecondPrintLength,
+    SecondCustom,
+    CashReceipt,
+    WithoutCard,
+    PrintNumbers,
+    EvaluationEnabled,
+    OverwriteMachineSettings,
+    PcBaud,
+    KeyCode,
+    EvaluationType,
+    DeleteMachineData,
+    Statistics,
+    Copy,
+    List,
+    Control,
+    DeleteAdpCode,
+    ClockSetter,
+    Vat,
+    Count
+};
+
+struct Dp3000Settings {
+    /* The real unit's clock keeps running while the emulator is closed.  Store
+       its offset from the host clock instead of freezing an absolute display
+       value at the instant the operator leaves the settings walk. */
+    qint64 clock_offset_secs = 0;
+    int dataprint_number = 0;
+    int card_number = 0;
+    int storage_mode = true;
+    int first_print_length = 0;
+    int first_custom = false;
+    int second_print_length = 5;
+    int second_custom = false;
+    int cash_receipt = true;
+    int without_card = false;
+    int print_numbers = false;
+    int evaluation_enabled = true;
+    int overwrite_machine_settings = false;
+    int pc_baud = 2;
+    QString key_code = QStringLiteral("01010101");
+    int evaluation_type = 5;
+    int delete_machine_data = true;
+    int statistics = true;
+    int copy = true;
+    int list = true;
+    int control = false;
+    int delete_adp_code = false;
+    int clock_setter = false;
+    int vat_half_percent = 32;
+};
+
+static Dp3000KeyboardState dp3000_keyboard_state = Dp3000KeyboardState::Idle;
+static QStringList dp3000_records;
+static QStringList dp3000_deleted_records;
+static QStringList dp3000_print_job_records;
+static int dp3000_print_job_record = -1;
+static Dp3000PrintFormat dp3000_print_format = Dp3000PrintFormat::Maximum;
+static uint64_t dp3000_transfer_serial_seen = 0;
+static uint64_t dp3000_transfer_completed_seen = 0;
+static uint64_t dp3000_discard_transfer_serial = 0;
+static uint64_t dp3000_no_card_notified_serial = 0;
+static uint64_t dp3000_wp_notified_serial = 0;
+static uint32_t dp3000_dataset_number = 0;
+static uint64_t dp3000_pending_serial = 0;
+static QString  dp3000_pending_record;
+static bool dp3000_keyboard_connected = true;
+static bool dp3000_keyboard_job = false;
+static bool dp3000_keyboard_paused = false;
+static bool dp3000_card_inserted = true;
+static bool dp3000_card_write_protected = false;
+static bool dp3000_memory_fault = false;
+static bool dp3000_memory_full = false;
+static bool dp3000_transfer_error = false;
+static bool dp3000_complete_signal = false;
+static unsigned dp3000_job_generation = 0;
+static bool dp3000_paper_loaded = true;
+static int  dp3000_paper_lines = 12000;
+static bool dp3000_paper_restart_required = false;
+static bool dp3000_store_initialised = false;
+static bool dp3000_english = false;
+static bool dp3000_abort_pending = false;
+static bool dp3000_plug_error_pending = false;
+static bool dp3000_pause_requested = false;
+static bool dp3000_print_press_handled = false;
+static int dp3000_setting_index = 0;
+static int dp3000_edit_subindex = 0;
+static Dp3000Settings dp3000_settings;
+static QTimer *dp3000_input_timeout = nullptr;
+static bool dp3000_input_timeout_requested = false;
+
+static QDateTime
+dp3000_clock_now()
+{
+    return QDateTime::currentDateTime().addSecs(
+        dp3000_settings.clock_offset_secs);
+}
+
+static void
+dp3000_clock_set(const QDateTime &value)
+{
+    dp3000_settings.clock_offset_secs =
+        QDateTime::currentDateTime().secsTo(value);
+}
+
+/* Keep every translatable physical legend and firmware string in one table so
+   the English option cannot leave a German warning hidden in a less common
+   confirmation path.  Firmware dialogue stays within the printer's
+   24-character lines. */
+enum class Dp3000Text {
+    KeyYes = 0,
+    KeyPrint,
+    KeyNo,
+    KeyDelete,
+    StatusPowerOn,
+    StatusBatteryEmpty,
+    StatusToMachine,
+    StatusPcMachineError,
+    StatusPaperEnd,
+    StatusToPc,
+    StatusMemoryError,
+    StatusCharging,
+    CardTop,
+    YesNo,
+    NoCard,
+    NoData,
+    PrintMaximum,
+    PrintMedium,
+    PrintShort,
+    PrintBag,
+    PrintCustom,
+    PressDeleteAgain,
+    InitialiseConfirm,
+    InitialiseWarning,
+    Initialised,
+    DataDeleted,
+    NoMemoryCard,
+    BufferAvailable,
+    MemoryAvailable,
+    DataRestored,
+    Cancelled,
+    RestoreDeleted,
+    DataStoredDelete,
+    Count
+};
+
+static QString
+dp3000_text(Dp3000Text id)
+{
+    static const char *const german[] = {
+        "ja",
+        "drucken",
+        "nein",
+        "löschen",
+        "GERÄT EIN",
+        "BATTERIE LEER",
+        "ZUM AUTOMAT",
+        "FEHLER PC/AUTOMAT",
+        "PAPIER ENDE",
+        "ZUM PC",
+        "SPEICHER FEHLER",
+        "LADEN",
+        "OBEN/TOP   256 kB",
+        "...JA/NEIN",
+        "ES IST KEINE SPEICHER-\nKARTE EINGESTECKT!",
+        "KEINE DATEN GESPEICHERT",
+        "MAXIMALER AUSDRUCK?",
+        "MITTELLANGER AUSDRUCK?",
+        "KURZER AUSDRUCK?",
+        "GELDSACKBELEG?",
+        "SELBSTDEF. AUSDRUCK?",
+        "NOCHMALS LOESCHEN-TASTE",
+        "INITIALISIEREN?\n...JA/NEIN",
+        "DIE EINSTELLUNGEN WERDEN\n"
+        "AUF WERKSEINSTELLUNGEN\n"
+        "ZURUECKGESETZT UND DIE\n"
+        "DATEN WERDEN GELOESCHT!\n"
+        "WIRKLICH INITIALISIEREN?\n"
+        "...JA/NEIN",
+        "DATAPRINT WURDE NEU\n"
+        "INITIALISIERT!\n"
+        "DIE EINSTELLUNGEN WURDEN\n"
+        "AUF WERKSEINSTELLUNG\n"
+        "ZURUECKGESETZT!",
+        "DIE DATEN SIND GELOESCHT",
+        "KEINE SPEICHERKARTE",
+        "  8KB PUFFER VORHANDEN",
+        "256KB SPEICHER VORHANDEN",
+        "DIE DATEN SIND WIEDER-\nHERGESTELLT",
+        "VORGANG ABGEBROCHEN",
+        "GELOESCHTE DATEN WIEDER-\nHERSTELLEN?\n...JA/NEIN",
+        "DATEN SIND GESPEICHERT!\n"
+        "WIRKLICH LOESCHEN?\n"
+        "...JA/NEIN"
+    };
+    static const char *const english[] = {
+        "yes",
+        "print",
+        "no",
+        "delete",
+        "POWER ON",
+        "BATTERY EMPTY",
+        "TO MACHINE",
+        "PC/MACHINE ERROR",
+        "OUT OF PAPER",
+        "TO PC",
+        "MEMORY ERROR",
+        "CHARGING",
+        "TOP   256 kB",
+        "...YES/NO",
+        "NO MEMORY CARD IS\nINSERTED!",
+        "NO DATA STORED",
+        "MAXIMUM PRINTOUT?",
+        "MEDIUM-LENGTH PRINTOUT?",
+        "SHORT PRINTOUT?",
+        "CASH-BAG RECEIPT?",
+        "CUSTOM PRINTOUT?",
+        "PRESS DELETE AGAIN",
+        "INITIALIZE?\n...YES/NO",
+        "SETTINGS WILL BE RESET\n"
+        "TO FACTORY DEFAULTS AND\n"
+        "DATA WILL BE DELETED!\n"
+        "REALLY INITIALIZE?\n"
+        "...YES/NO",
+        "DATAPRINT WAS\n"
+        "INITIALIZED!\n"
+        "SETTINGS WERE RESET TO\n"
+        "FACTORY DEFAULTS!",
+        "DATA HAS BEEN DELETED",
+        "NO MEMORY CARD",
+        "  8KB BUFFER AVAILABLE",
+        "256KB MEMORY AVAILABLE",
+        "DATA HAS BEEN RESTORED",
+        "OPERATION CANCELLED",
+        "RESTORE DELETED DATA?\n...YES/NO",
+        "DATA IS STORED!\n"
+        "REALLY DELETE?\n"
+        "...YES/NO"
+    };
+    static_assert(sizeof(german) / sizeof(german[0])
+                      == static_cast<size_t>(Dp3000Text::Count));
+    static_assert(sizeof(english) / sizeof(english[0])
+                      == static_cast<size_t>(Dp3000Text::Count));
+
+    const size_t index = static_cast<size_t>(id);
+    return QString::fromUtf8((dp3000_english ? english : german)[index]);
+}
 
 /* A torn receipt remains a visible object long enough to leave the serrated
    bar instead of vanishing on the button click.  Its text and historical ink
@@ -2003,6 +2349,45 @@ static unsigned cp80_edge_generation  = 0;
 #define CP80_PAPER_L  CP80_SCALE(CP80_SLOT_L)
 #define CP80_SLOT_YS  CP80_SCALE(CP80_SLOT_Y)
 
+/* DATAprint 3000 presentation geometry.  Three logical UI pixels represent one
+   millimetre.  Consequently the documented 113 x 230 mm case is 339 x 690
+   logical pixels and its 57 mm roll is 171 pixels wide.  Qt applies the current
+   Windows display scale to those dimensions, just as it does to the dialog's
+   native controls. */
+#define DP3000_PX_PER_MM       3
+#define DP3000_HEAD_W        760
+#define DP3000_HEAD_H        720
+#define DP3000_BODY_X        395
+#define DP3000_BODY_Y          8
+#define DP3000_BODY_W        (113 * DP3000_PX_PER_MM)
+#define DP3000_BODY_H        (230 * DP3000_PX_PER_MM)
+#define DP3000_SLOT_Y        (DP3000_BODY_Y + 535)
+#define DP3000_PAPER_W       (57 * DP3000_PX_PER_MM)
+#define DP3000_PAPER_L       (DP3000_BODY_X + ((DP3000_BODY_W - DP3000_PAPER_W) / 2))
+#define DP3000_TEXT_LINE_H    10
+#define DP3000_TEXT_CELL_W     6.6
+#define DP3000_TEXT_FONT_PX     9
+#define DP3000_COLUMNS        24
+#define DP3000_LINE_MS      1429 /* Epson M-160: 0.7 line/second */
+#define DP3000_FEED_MS       429 /* three 7 Hz blank dot-line advances */
+#define DP3000_BATT_LINES  12000 /* about one 40 m roll at 3.3 mm/line */
+#define DP3000_CHARGE_MINS   840 /* DATAprint 3000 manual: 14 hours */
+#define DP3000_STORE_MAX  (256 * 1024)
+
+static int
+cp80_machine_height()
+{
+    return (cp80_model == Cp80PrinterModel::Dataprint3000)
+         ? DP3000_HEAD_H : CP80_HEAD_H;
+}
+
+static int
+cp80_machine_width()
+{
+    return (cp80_model == Cp80PrinterModel::Dataprint3000)
+         ? DP3000_HEAD_W : CP80_HEAD_W;
+}
+
 /* The manual gives enough dimensions to keep the print geometry independent of
    whichever fixed-pitch UI font happens to be installed.  The 112 mm roll is
    400 printer dots wide at the specified 0.28 mm pitch.  The head covers the
@@ -2096,6 +2481,7 @@ static constexpr int CP80_TEXT_MARGIN_X = (int) ((((double) CP80_PAPER_W
 static double       cp80_batt     = CP80_BATT_FULL;
 static double       cp80_drain    = 1.0;     /* multiplier, for testing */
 static double       cp80_charge   = CP80_CHARGE_MINS;
+static bool         cp80_charge_overridden = false;
 static bool         cp80_power    = true;    /* the switch on the left side */
 static bool         cp80_ac       = false;   /* the AC adapter is plugged in */
 static bool         cp80_charging = false;   /* and is actually putting charge in */
@@ -2120,6 +2506,11 @@ static QVector<double> cp80_line_batt;
 static bool
 cp80_can_print(void)
 {
+    /* Unlike the portable DPU-414, a DATAprint 3000 with empty batteries can
+       still print while the game or mains adapter is powering it. */
+    if (cp80_model == Cp80PrinterModel::Dataprint3000)
+        return cp80_power && ((prn_cp80_connected() != 0) || cp80_ac
+                              || (cp80_batt >= CP80_BATT_RESUME));
     return cp80_power && (cp80_batt >= CP80_BATT_RESUME);
 }
 
@@ -2135,6 +2526,9 @@ cp80_can_print(void)
 static double
 cp80_drive_level(void)
 {
+    if ((cp80_model == Cp80PrinterModel::Dataprint3000)
+        && ((prn_cp80_connected() != 0) || cp80_ac))
+        return CP80_BATT_FULL;
     return cp80_ac ? CP80_BATT_FULL : cp80_batt;
 }
 
@@ -2165,14 +2559,22 @@ cp80_mix(const QColor &a, const QColor &b, double t)
    Absent or unreadable means a new pack, full.  Text rather than a struct
    because it is one number and being able to read it with an editor is worth
    more than four saved bytes. */
-#define CP80_NVR_FILE "dpu414.nvr"
+#define CP80_NVR_DPU414 "dpu414.nvr"
+#define CP80_NVR_DP3000 "dataprint3000.nvr"
 
 static bool cp80_batt_dirty = false;
+
+static const char *
+cp80_batt_file(void)
+{
+    return (cp80_model == Cp80PrinterModel::Dataprint3000)
+         ? CP80_NVR_DP3000 : CP80_NVR_DPU414;
+}
 
 static void
 cp80_batt_load(void)
 {
-    FILE  *f = plat_fopen(nvr_path((char *) CP80_NVR_FILE), "rt");
+    FILE  *f = plat_fopen(nvr_path((char *) cp80_batt_file()), "rt");
     double v = 0.0;
 
     if (f == nullptr)
@@ -2186,7 +2588,7 @@ cp80_batt_load(void)
 static void
 cp80_batt_store(void)
 {
-    FILE *f = plat_fopen(nvr_path((char *) CP80_NVR_FILE), "wt");
+    FILE *f = plat_fopen(nvr_path((char *) cp80_batt_file()), "wt");
 
     if (f == nullptr)
         return;
@@ -2194,6 +2596,320 @@ cp80_batt_store(void)
     fprintf(f, "%.4f\n", cp80_batt);
     fclose(f);
     cp80_batt_dirty = false;
+}
+
+#define DP3000_NVR_CARD "dataprint3000.sram"
+#define DP3000_NVR_UNDO "dataprint3000.undo"
+#define DP3000_NVR_SETTINGS "dataprint3000.settings"
+
+/* The manual makes the ownership boundary explicit: date/time, DATAprint
+   number, PC baud rate and cardless-operation permission belong to the
+   DATAprint; the remaining configuration travels with the removable SRAM
+   card.  Version 1 of the simulator kept all of it in one global text file.
+   DP3D2/DP3K2 split it without abandoning those installations. */
+static void
+dp3000_device_settings_save()
+{
+    FILE *f = plat_fopen(nvr_path((char *) DP3000_NVR_SETTINGS), "wt");
+
+    if (f == nullptr)
+        return;
+    fprintf(f, "DP3D2 %lld %d %d %d\n",
+            (long long) dp3000_settings.clock_offset_secs,
+            dp3000_settings.dataprint_number, dp3000_settings.pc_baud,
+            dp3000_settings.without_card);
+    fclose(f);
+}
+
+static void
+dp3000_device_settings_load()
+{
+    FILE *f = plat_fopen(nvr_path((char *) DP3000_NVR_SETTINGS), "rt");
+    char tag[16] = "";
+
+    if (f == nullptr)
+        return;
+    if ((fscanf(f, "%15s", tag) == 1) && !strcmp(tag, "DP3D2")) {
+        long long offset = 0;
+        int number = 0;
+        int baud = 2;
+        int without_card = false;
+
+        if (fscanf(f, "%lld %d %d %d", &offset, &number, &baud,
+                   &without_card) == 4) {
+            dp3000_settings.clock_offset_secs = (qint64) offset;
+            dp3000_settings.dataprint_number = qBound(0, number, 9999);
+            dp3000_settings.pc_baud = qBound(0, baud, 4);
+            dp3000_settings.without_card = !!without_card;
+        }
+        fclose(f);
+        return;
+    }
+
+    /* Version 1: rewind and import its one-file settings.  Card settings are
+       written into the DP3K2 card image on the next committed settings walk. */
+    rewind(f);
+    long long epoch = 0;
+    char key[16] = "01010101";
+    Dp3000Settings s;
+
+    const int got = fscanf(f,
+        "%lld %d %d %d %d %d %d %d %d %d %d %d %d %d %15s %d %d %d %d %d %d %d %d %d",
+        &epoch, &s.dataprint_number, &s.card_number, &s.storage_mode,
+        &s.first_print_length, &s.first_custom, &s.second_print_length,
+        &s.second_custom, &s.cash_receipt, &s.without_card, &s.print_numbers,
+        &s.evaluation_enabled, &s.overwrite_machine_settings, &s.pc_baud, key,
+        &s.evaluation_type, &s.delete_machine_data, &s.statistics, &s.copy,
+        &s.list, &s.control, &s.delete_adp_code, &s.clock_setter,
+        &s.vat_half_percent);
+    fclose(f);
+    if (got != 24)
+        return;
+    s.clock_offset_secs = QDateTime::currentDateTime().secsTo(
+        QDateTime::fromSecsSinceEpoch(epoch));
+    s.key_code = QString::fromLatin1(key).left(8);
+    if (s.key_code.size() != 8)
+        s.key_code = QStringLiteral("01010101");
+    s.dataprint_number = qBound(0, s.dataprint_number, 9999);
+    s.card_number = qBound(0, s.card_number, 9999);
+    s.first_print_length = qBound(0, s.first_print_length, 5);
+    s.second_print_length = qBound(0, s.second_print_length, 5);
+    s.pc_baud = qBound(0, s.pc_baud, 4);
+    s.evaluation_type = qBound(0, s.evaluation_type, 5);
+    s.vat_half_percent = qBound(28, s.vat_half_percent, 40);
+    s.storage_mode = !!s.storage_mode;
+    s.first_custom = !!s.first_custom;
+    s.second_custom = !!s.second_custom;
+    s.cash_receipt = !!s.cash_receipt;
+    s.without_card = !!s.without_card;
+    s.print_numbers = !!s.print_numbers;
+    s.evaluation_enabled = !!s.evaluation_enabled;
+    s.overwrite_machine_settings = !!s.overwrite_machine_settings;
+    s.delete_machine_data = !!s.delete_machine_data;
+    s.statistics = !!s.statistics;
+    s.copy = !!s.copy;
+    s.list = !!s.list;
+    s.control = !!s.control;
+    s.delete_adp_code = !!s.delete_adp_code;
+    s.clock_setter = !!s.clock_setter;
+    dp3000_settings = s;
+}
+
+static QByteArray dp3000_records_encode(const QStringList &records,
+                                        bool card_image);
+
+static int
+dp3000_records_bytes(const QStringList &records)
+{
+    return dp3000_records_encode(records, true).size();
+}
+
+static QByteArray
+dp3000_records_encode(const QStringList &records, bool card_image)
+{
+    QByteArray data;
+
+    if (card_image) {
+        char metadata[384];
+        const int n = snprintf(metadata, sizeof(metadata),
+            "DP3K2\n%d %d %d %d %d %d %d %d %d %d %s %d %d %d %d %d %d %d %d %d %u\n",
+            dp3000_settings.card_number, dp3000_settings.storage_mode,
+            dp3000_settings.first_print_length, dp3000_settings.first_custom,
+            dp3000_settings.second_print_length, dp3000_settings.second_custom,
+            dp3000_settings.cash_receipt, dp3000_settings.print_numbers,
+            dp3000_settings.evaluation_enabled,
+            dp3000_settings.overwrite_machine_settings,
+            dp3000_settings.key_code.toLatin1().constData(),
+            dp3000_settings.evaluation_type,
+            dp3000_settings.delete_machine_data, dp3000_settings.statistics,
+            dp3000_settings.copy, dp3000_settings.list,
+            dp3000_settings.control, dp3000_settings.delete_adp_code,
+            dp3000_settings.clock_setter, dp3000_settings.vat_half_percent,
+            dp3000_dataset_number);
+
+        if (n > 0)
+            data.append(metadata, qMin<int>(n, int(sizeof(metadata) - 1)));
+        data += char(0x1f); /* settings/records boundary; reports are printable */
+    } else {
+        data = QByteArray("DP3K1\n", 6);
+    }
+
+    for (const QString &record : records) {
+        data += record.toUtf8();
+        data += char(0x1e); /* never emitted by the printable paper parser */
+    }
+    return data;
+}
+
+static bool
+dp3000_card_settings_decode(const QByteArray &line)
+{
+    int card_number = 0;
+    int storage_mode = true;
+    int first_length = 0;
+    int first_custom = false;
+    int second_length = 5;
+    int second_custom = false;
+    int cash_receipt = true;
+    int print_numbers = false;
+    int evaluation_enabled = true;
+    int overwrite = false;
+    char key[16] = "01010101";
+    int evaluation_type = 5;
+    int delete_machine_data = true;
+    int statistics = true;
+    int copy = true;
+    int list = true;
+    int control = false;
+    int delete_adp = false;
+    int clock_setter = false;
+    int vat = 32;
+    unsigned dataset = 0;
+
+    const int got = sscanf(line.constData(),
+        "%d %d %d %d %d %d %d %d %d %d %15s %d %d %d %d %d %d %d %d %d %u",
+        &card_number, &storage_mode, &first_length, &first_custom,
+        &second_length, &second_custom, &cash_receipt, &print_numbers,
+        &evaluation_enabled, &overwrite, key, &evaluation_type,
+        &delete_machine_data, &statistics, &copy, &list, &control,
+        &delete_adp, &clock_setter, &vat, &dataset);
+
+    if (got != 21)
+        return false;
+
+    dp3000_settings.card_number = qBound(0, card_number, 9999);
+    dp3000_settings.storage_mode = !!storage_mode;
+    dp3000_settings.first_print_length = qBound(0, first_length, 5);
+    dp3000_settings.first_custom = !!first_custom;
+    dp3000_settings.second_print_length = qBound(0, second_length, 5);
+    dp3000_settings.second_custom = !!second_custom;
+    dp3000_settings.cash_receipt = !!cash_receipt;
+    dp3000_settings.print_numbers = !!print_numbers;
+    dp3000_settings.evaluation_enabled = !!evaluation_enabled;
+    dp3000_settings.overwrite_machine_settings = !!overwrite;
+    dp3000_settings.key_code = QString::fromLatin1(key).left(8);
+    if (dp3000_settings.key_code.size() != 8)
+        dp3000_settings.key_code = QStringLiteral("01010101");
+    dp3000_settings.evaluation_type = qBound(0, evaluation_type, 5);
+    dp3000_settings.delete_machine_data = !!delete_machine_data;
+    dp3000_settings.statistics = !!statistics;
+    dp3000_settings.copy = !!copy;
+    dp3000_settings.list = !!list;
+    dp3000_settings.control = !!control;
+    dp3000_settings.delete_adp_code = !!delete_adp;
+    dp3000_settings.clock_setter = !!clock_setter;
+    dp3000_settings.vat_half_percent = qBound(28, vat, 40);
+    dp3000_dataset_number = dataset;
+    return true;
+}
+
+static bool
+dp3000_store_read(const char *path, QStringList *records, bool card_image)
+{
+    FILE *f = plat_fopen(nvr_path((char *) path), "rb");
+
+    records->clear();
+    if (f == nullptr)
+        return true;
+
+    QByteArray data;
+    char buffer[4096];
+    size_t n;
+
+    while ((n = fread(buffer, 1, sizeof(buffer), f)) != 0) {
+        const int room = DP3000_STORE_MAX - data.size();
+
+        if (room <= 0) {
+            fclose(f);
+            return false;
+        }
+        data.append(buffer, qMin<int>(int(n), room));
+        if (int(n) > room) {
+            fclose(f);
+            return false;
+        }
+    }
+    fclose(f);
+    if (card_image && data.startsWith("DP3K2\n")) {
+        data.remove(0, 6);
+        const int boundary = data.indexOf(char(0x1f));
+
+        if ((boundary < 0)
+            || !dp3000_card_settings_decode(data.left(boundary)))
+            return false;
+        data.remove(0, boundary + 1);
+        const QList<QByteArray> chunks = data.split(char(0x1e));
+
+        for (const QByteArray &chunk : chunks)
+            if (!chunk.isEmpty())
+                records->append(QString::fromUtf8(chunk));
+    } else if (data.startsWith("DP3K1\n")) {
+        data.remove(0, 6);
+        const QList<QByteArray> chunks = data.split(char(0x1e));
+
+        for (const QByteArray &chunk : chunks)
+            if (!chunk.isEmpty())
+                records->append(QString::fromUtf8(chunk));
+    } else if (!data.isEmpty()) {
+        /* Version 1 wrote one undivided text stream.  Preserve it as one record
+           so existing simulated cards remain readable after the upgrade. */
+        records->append(QString::fromUtf8(data));
+    }
+    return true;
+}
+
+static bool
+dp3000_store_write(const char *path, const QStringList &records,
+                   bool card_image)
+{
+    FILE *f = plat_fopen(nvr_path((char *) path), "wb");
+
+    if (f == nullptr)
+        return false;
+
+    const QByteArray encoded = dp3000_records_encode(records, card_image);
+    if (encoded.size() > DP3000_STORE_MAX) {
+        fclose(f);
+        return false;
+    }
+    const QByteArray data = encoded;
+    const bool ok = data.isEmpty()
+                 || (fwrite(data.constData(), 1, size_t(data.size()), f)
+                     == size_t(data.size()));
+    fclose(f);
+    return ok;
+}
+
+static void
+dp3000_store_load()
+{
+    if (!dp3000_store_read(DP3000_NVR_CARD, &dp3000_records, true)
+        || !dp3000_store_read(DP3000_NVR_UNDO, &dp3000_deleted_records,
+                              false))
+        dp3000_memory_fault = true;
+    dp3000_memory_full = dp3000_records_bytes(dp3000_records)
+                       >= DP3000_STORE_MAX;
+    dp3000_store_initialised = true;
+}
+
+static void
+dp3000_store_save()
+{
+    if (!dp3000_card_inserted)
+        return;
+
+    if (!dp3000_store_write(DP3000_NVR_CARD, dp3000_records, true))
+        dp3000_memory_fault = true;
+}
+
+static void
+dp3000_recovery_save()
+{
+    if (!dp3000_card_inserted)
+        return;
+
+    if (!dp3000_store_write(DP3000_NVR_UNDO, dp3000_deleted_records, false))
+        dp3000_memory_fault = true;
 }
 
 /* What one line costs the pack: the dots on it, plus the motor that moved the
@@ -2205,9 +2921,10 @@ cp80_print_columns(const QString &line)
 
     while ((columns > 0) && line.at(columns - 1).isSpace())
         columns--;
-    /* The Dataprint formats 24 columns.  Forty is the DPU-414's normal-mode
-       physical limit and also bounds malformed/unwrapped input. */
-    return qMin(columns, 40);
+    /* The controller formats 24 columns.  The DPU can physically take forty;
+       the Epson M-160 in the DATAprint 3000 is itself a 24-column mechanism. */
+    return qMin(columns, (cp80_model == Cp80PrinterModel::Dataprint3000)
+                              ? DP3000_COLUMNS : 40);
 }
 
 static int
@@ -2227,6 +2944,22 @@ cp80_print_ink(const QString &line)
 static int
 cp80_batt_spend(const QString &line, bool pace_queue = true)
 {
+    if (cp80_model == Cp80PrinterModel::Dataprint3000) {
+        /* At 0.7 line/s the M-160 shuttle determines the pace, not the amount of
+           ink in a record.  A connected game or the adapter supplies power and
+           therefore does not spend the battery set. */
+        if ((cp80_batt > 0.0) && !cp80_ac && (prn_cp80_connected() == 0)) {
+            cp80_batt -= (CP80_BATT_FULL / DP3000_BATT_LINES) * cp80_drain;
+            if (cp80_batt < 0.0)
+                cp80_batt = 0.0;
+            cp80_batt_dirty = true;
+        }
+        if (pace_queue && (cp80_feed != nullptr)
+            && (cp80_feed->interval() != DP3000_LINE_MS))
+            cp80_feed->setInterval(DP3000_LINE_MS);
+        return 1000;
+    }
+
     double cells = CP80_FEED_COST;
     const int columns = cp80_print_columns(line);
     const int base_ms = int(CP80_PAPER_MS
@@ -2363,31 +3096,24 @@ cp80_available_geometry()
         screen = QGuiApplication::primaryScreen();
 
     return (screen != nullptr) ? screen->availableGeometry()
-                               : QRect(0, 0, CP80_HEAD_W + 80, CP80_HEAD_H + 240);
+                               : QRect(0, 0, cp80_machine_width() + 80,
+                                       cp80_machine_height() + 240);
 }
 
-/* The rest of the Qt UI follows the desktop scale.  The physical printer does
-   not: its 460 x 392 raster is deliberately the same number of monitor pixels
-   at 100%, 125% and 150%.  QPixmap's device-pixel ratio lets this one canvas
-   opt out without disabling high-DPI support for the emulator. */
-static qreal
-cp80_device_pixel_ratio()
+/* Widget geometry is expressed in logical pixels and is therefore scaled by
+   Qt on a per-monitor-DPI-aware Windows build.  Give the painted canvases a
+   matching high-resolution backing store as well, so vector details and print
+   stay sharp instead of stretching a 100% bitmap on a scaled display. */
+static QPixmap
+cp80_canvas(int logical_width, int logical_height)
 {
-    QScreen *screen = nullptr;
+    const qreal scale = (cp80_win != nullptr)
+                      ? qMax<qreal>(1.0, cp80_win->devicePixelRatioF()) : 1.0;
+    QPixmap pixmap(int(std::ceil(logical_width * scale)),
+                   int(std::ceil(logical_height * scale)));
 
-    if ((cp80_win != nullptr) && cp80_win->isVisible())
-        screen = QGuiApplication::screenAt(cp80_win->frameGeometry().center());
-    if (screen != nullptr)
-        return qMax<qreal>(1.0, screen->devicePixelRatio());
-    return qMax<qreal>(1.0, cp80_dpr_hint);
-}
-
-static int
-cp80_physical_to_logical(int pixels)
-{
-    if (pixels <= 0)
-        return 0;
-    return qMax(1, qRound((qreal) pixels / cp80_device_pixel_ratio()));
+    pixmap.setDevicePixelRatio(scale);
+    return pixmap;
 }
 
 class Cp80BatterySlider final : public QSlider {
@@ -2544,7 +3270,6 @@ cp80_non_canvas_height()
 static int
 cp80_max_canvas_height()
 {
-    const qreal dpr = cp80_device_pixel_ratio();
     const QRect available = cp80_available_geometry().adjusted(
         CP80_SCREEN_MARGIN, CP80_SCREEN_MARGIN,
         -CP80_SCREEN_MARGIN, -CP80_SCREEN_MARGIN);
@@ -2552,24 +3277,35 @@ cp80_max_canvas_height()
     int available_logical;
 
     if ((cp80_win != nullptr) && cp80_win->isVisible()) {
-        /* The lower edge is the anchor.  Use the actual decorated frame and
-           the actual layout overhead in Qt's logical coordinates.  In
-           particular, never assume the whole work-area height is available:
-           once Windows clamps a title bar at the top, that assumption makes a
-           later resize grow down through the taskbar. */
-        const int minimum_bottom = available.top() + outside
-                                 + cp80_physical_to_logical(CP80_HEAD_H) - 1;
-        const int anchor_bottom = qBound(minimum_bottom,
-                                         cp80_win->frameGeometry().bottom(),
-                                         available.bottom());
+        /* The physical paper direction decides which decorated-frame edge is
+           stationary.  The DPU's top-exit roll grows upward from its lower
+           edge; the DATAprint's operator-facing paper grows downward from its
+           upper edge.  Use the actual layout overhead in Qt logical pixels so
+           neither direction can cross the desktop work area. */
+        const QRect frame = cp80_win->frameGeometry();
 
-        available_logical = anchor_bottom - available.top() + 1 - outside;
+        if (cp80_model == Cp80PrinterModel::Dataprint3000) {
+            const int latest_top = qMax(
+                available.top(), available.bottom() - outside
+                               - cp80_machine_height() + 1);
+            const int anchor_top = qBound(available.top(), frame.top(),
+                                           latest_top);
+
+            available_logical = available.bottom() - anchor_top + 1 - outside;
+        } else {
+            const int earliest_bottom = qMin(
+                available.bottom(), available.top() + outside
+                                  + cp80_machine_height() - 1);
+            const int anchor_bottom = qBound(earliest_bottom, frame.bottom(),
+                                              available.bottom());
+
+            available_logical = anchor_bottom - available.top() + 1 - outside;
+        }
     } else {
         available_logical = available.height() - outside;
     }
 
-    return qMax(CP80_HEAD_H,
-                int(std::floor(qMax(0, available_logical) * dpr)));
+    return qMax(cp80_machine_height(), available_logical);
 }
 
 /* The roll's capacity is a property of the screen it is actually on.  On a
@@ -2770,9 +3506,9 @@ cp80_draw_pressed_button(QPainter &g, bool down, int image_x, int image_w,
     g.restore();
 }
 
-/* The printer is the stationary object.  As the roll grows, resize the dialog
-   upward around its old lower edge so the machine does not walk toward the
-   taskbar one line at a time. */
+/* The printer is the stationary object.  Resize around the edge opposite the
+   paper outlet: upward around the DPU's lower edge and downward around the
+   DATAprint's upper edge. */
 static void
 cp80_resize_to_content()
 {
@@ -2787,8 +3523,7 @@ cp80_resize_to_content()
     cp80_win->layout()->activate();
     QSize wanted = cp80_win->sizeHint();
     const int outside_canvas = qMax(0, wanted.height() - cp80_view->height());
-    const int maximum_client = cp80_physical_to_logical(
-                                   cp80_max_canvas_height()) + outside_canvas;
+    const int maximum_client = cp80_max_canvas_height() + outside_canvas;
 
     wanted.setHeight(qMin(wanted.height(), maximum_client));
     cp80_win->resize(wanted);
@@ -2799,18 +3534,49 @@ cp80_resize_to_content()
             -CP80_SCREEN_MARGIN, -CP80_SCREEN_MARGIN);
         const int minimum_frame = cp80_window_frame_height()
                                 + cp80_non_canvas_height()
-                                + cp80_physical_to_logical(CP80_HEAD_H);
-        const int anchor_bottom = qBound(available.top() + minimum_frame - 1,
-                                         old_frame.bottom(),
-                                         available.bottom());
-        const int dy = anchor_bottom - cp80_win->frameGeometry().bottom();
+                                + cp80_machine_height();
+        int dy;
+
+        if (cp80_model == Cp80PrinterModel::Dataprint3000) {
+            const int latest_top = qMax(available.top(),
+                available.bottom() - minimum_frame + 1);
+            const int anchor_top = qBound(available.top(), old_frame.top(),
+                                           latest_top);
+
+            dy = anchor_top - cp80_win->frameGeometry().top();
+        } else {
+            const int earliest_bottom = qMin(
+                available.bottom(), available.top() + minimum_frame - 1);
+            const int anchor_bottom = qBound(earliest_bottom,
+                                             old_frame.bottom(),
+                                             available.bottom());
+
+            dy = anchor_bottom - cp80_win->frameGeometry().bottom();
+        }
 
         /* Clamp the anchor itself to the work area.  This also repairs an
-           already-overgrown dialog on the first repaint without moving its
-           lower edge farther down. */
+           already-overgrown dialog on the first repaint without pushing its
+           stationary edge farther outside the work area. */
         if (dy != 0)
             cp80_win->move(cp80_win->pos() + QPoint(0, dy));
     }
+}
+
+static void
+cp80_anchor_vertical_edge()
+{
+    if (cp80_win == nullptr)
+        return;
+
+    const QRect available = cp80_available_geometry().adjusted(
+        CP80_SCREEN_MARGIN, CP80_SCREEN_MARGIN,
+        -CP80_SCREEN_MARGIN, -CP80_SCREEN_MARGIN);
+    const QRect frame = cp80_win->frameGeometry();
+    const int y = (cp80_model == Cp80PrinterModel::Dataprint3000)
+                ? available.top()
+                : qMax(available.top(), available.bottom() - frame.height() + 1);
+
+    cp80_win->move(cp80_win->pos() + QPoint(0, y - frame.top()));
 }
 
 static void
@@ -2832,7 +3598,6 @@ cp80_place_initial(QWidget *parent)
         return;
 
     cp80_available_hint = screen->availableGeometry();
-    cp80_dpr_hint = qMax<qreal>(1.0, screen->devicePixelRatio());
     cp80_render();                 /* native frame metrics are now available */
 
     const QRect available = cp80_available_hint.adjusted(
@@ -2847,7 +3612,9 @@ cp80_place_initial(QWidget *parent)
                                    : available.left();
     x = qBound(available.left(), x,
                qMax(available.left(), available.right() - frame.width() + 1));
-    const int y = qMax(available.top(), available.bottom() - frame.height() + 1);
+    const int y = (cp80_model == Cp80PrinterModel::Dataprint3000)
+                ? available.top()
+                : qMax(available.top(), available.bottom() - frame.height() + 1);
 
     /* move() and frameGeometry() use slightly different origins on decorated
        top-level windows.  Moving by the measured delta keeps the outer frame,
@@ -2855,9 +3622,9 @@ cp80_place_initial(QWidget *parent)
     cp80_win->move(cp80_win->pos()
                    + QPoint(x - frame.left(), y - frame.top()));
 
-    /* The compact dialog has now acquired its real bottom anchor.  Repaint
-       once more so a long roll may use exactly the room between that anchor
-       and the work-area top, but no more. */
+    /* The compact dialog now has the edge appropriate to its paper path.
+       Repaint once more so a long roll may use exactly the room on the output
+       side of that anchor, but no more. */
     cp80_render();
 }
 
@@ -2896,10 +3663,749 @@ cp80_draw_print_line(QPainter &painter, qreal left, qreal baseline,
 }
 
 static void
+cp80_update_model_controls()
+{
+    const bool dp3000 = (cp80_model == Cp80PrinterModel::Dataprint3000);
+
+    if (cp80_layout != nullptr) {
+        /* Insertion order is canvas, gap, status, controls.  Reverse it only
+           for the top-anchored DATAprint so the controls stay fixed above the
+           machine while its paper and dialog extend downward. */
+        cp80_layout->setDirection(dp3000 ? QBoxLayout::BottomToTop
+                                         : QBoxLayout::TopToBottom);
+        cp80_layout->setAlignment(
+            cp80_view, Qt::AlignHCenter
+                      | (dp3000 ? Qt::AlignTop : Qt::AlignBottom));
+    }
+
+    /* The DPU controls are transparent hit targets over its photographed
+       switches.  The DATAprint has its cable and paper-feed controls outside
+       the top panel, so it uses the labelled controls above the illustration. */
+    if (cp80_btn_on != nullptr)
+        cp80_btn_on->setVisible(!dp3000);
+    if (cp80_btn_fd != nullptr)
+        cp80_btn_fd->setVisible(!dp3000);
+    if (cp80_link_btn != nullptr)
+        cp80_link_btn->setVisible(dp3000);
+    if (cp80_feed_btn != nullptr)
+        cp80_feed_btn->setVisible(dp3000);
+    if (cp80_paper_btn != nullptr)
+        cp80_paper_btn->setVisible(dp3000);
+    if (dp3000_wp_btn != nullptr)
+        dp3000_wp_btn->setVisible(dp3000);
+    if (cp80_pwr_btn != nullptr)
+        cp80_pwr_btn->setVisible(!dp3000);
+    if (dp3000_case_feed != nullptr)
+        dp3000_case_feed->setVisible(dp3000);
+    if (dp3000_case_reset != nullptr)
+        dp3000_case_reset->setVisible(dp3000);
+    if (dp3000_key_yes != nullptr)
+        dp3000_key_yes->setVisible(dp3000);
+    if (dp3000_key_init != nullptr)
+        dp3000_key_init->setVisible(dp3000);
+    if (dp3000_key_no != nullptr)
+        dp3000_key_no->setVisible(dp3000);
+    if (dp3000_card != nullptr)
+        dp3000_card->setVisible(dp3000);
+}
+
+static QFont
+cp80_dp3000_print_font()
+{
+    QFont font(QStringLiteral("Courier New"));
+
+    font.setStyleHint(QFont::TypeWriter, QFont::PreferMatch);
+    font.setStyleStrategy(QFont::NoAntialias);
+    font.setHintingPreference(QFont::PreferFullHinting);
+    font.setFixedPitch(true);
+    font.setKerning(false);
+    font.setPixelSize(DP3000_TEXT_FONT_PX);
+    return font;
+}
+
+static void
+cp80_render_dp3000()
+{
+    if (cp80_view == nullptr)
+        return;
+
+    cp80_update_model_controls();
+
+    /* The general alarm table assigns double beeps to internal failures, but
+       the memory-LED description is more specific: a card/storage failure
+       blinks the LED and uses rapid beeps.  A merely full card is steady and
+       silent; the current device record is still forced to paper. */
+    const bool alert_powered = cp80_power
+                            && ((prn_cp80_connected() != 0) || cp80_ac
+                                || (cp80_batt > 0.0));
+    prn_dp3000_sound_signal(
+        !alert_powered ? PRN_DP3000_SIGNAL_NONE
+      : ((dp3000_card_inserted && dp3000_memory_fault)
+         || dp3000_transfer_error || !dp3000_paper_loaded)
+            ? PRN_DP3000_SIGNAL_EXTERNAL_ERROR
+      : dp3000_complete_signal ? PRN_DP3000_SIGNAL_COMPLETE
+                               : PRN_DP3000_SIGNAL_NONE);
+
+    const QFont mono = cp80_dp3000_print_font();
+    const QFontMetrics fm(mono);
+    const QStringList all = cp80_lines_on(cp80_printed);
+    const int slot_y = DP3000_SLOT_Y;
+    const int max_canvas = cp80_max_canvas_height();
+    const int paper_room = max_canvas - (slot_y + 7)
+                         - CP80_PAPER_PAD_Y - CP80_PAPER_EDGE_ROOM;
+    const int visible_lines = qBound(1, paper_room / DP3000_TEXT_LINE_H, 200);
+    const int over = qMax(0, all.size() - visible_lines);
+
+    if (cp80_scroll != nullptr) {
+        const bool at_end = (cp80_scroll->value() >= cp80_scroll->maximum());
+
+        cp80_scroll->blockSignals(true);
+        cp80_scroll->setRange(0, over);
+        cp80_scroll->setPageStep(visible_lines);
+        cp80_scroll->setSingleStep(1);
+        if (at_end)
+            cp80_scroll->setValue(over);
+        cp80_scroll->blockSignals(false);
+        cp80_scroll->setVisible((over > 0) && cp80_paper_hover);
+    }
+
+    const int first = (cp80_scroll != nullptr)
+                    ? qBound(0, cp80_scroll->value(), over) : over;
+    const bool paper_moving = (cp80_paper_frame < CP80_PAPER_FRAMES)
+                           && (first == over);
+    const bool tail_motion = paper_moving && (over > 0);
+    const int line_first = tail_motion ? first - 1 : first;
+    const QStringList lines = all.mid(line_first,
+        visible_lines + (tail_motion ? 1 : 0));
+    const int paper_rows = qMin(lines.size(), visible_lines);
+    const int paper_h = lines.isEmpty() ? CP80_EMPTY_LIP_H
+                                       : (paper_rows * DP3000_TEXT_LINE_H)
+                                         + CP80_PAPER_PAD_Y;
+    const QStringList torn_all = cp80_tearing
+                               ? cp80_lines_on(cp80_torn_text) : QStringList();
+    const QStringList torn_lines = torn_all.mid(cp80_torn_first, visible_lines);
+    const int torn_h = torn_lines.isEmpty() ? 0
+                                           : (torn_lines.size()
+                                              * DP3000_TEXT_LINE_H)
+                                             + CP80_PAPER_PAD_Y;
+    const int tear_room = (torn_h > 0) ? 48 : 0;
+    const int natural_h = qMax(
+        DP3000_HEAD_H, slot_y + 7 + qMax(paper_h, torn_h + tear_room)
+                         + CP80_PAPER_EDGE_ROOM);
+    /* Once the receipt reaches the work-area edge, hold the canvas at its
+       exact limit and scroll older lines.  Before then every printed line
+       lengthens the canvas toward the bottom, never toward the title bar. */
+    const int H = (over > 0) ? max_canvas : qMin(max_canvas, natural_h);
+
+    QPixmap out = cp80_canvas(DP3000_HEAD_W, H);
+    out.fill(Qt::transparent);
+    QPainter g(&out);
+    g.setRenderHint(QPainter::Antialiasing, true);
+
+    const int bx = DP3000_BODY_X;
+    const int by = DP3000_BODY_Y;
+    const int bw = DP3000_BODY_W;
+    const int bh = DP3000_BODY_H;
+    const int keyboard_x = 22;
+    const int keyboard_y = 330;
+    const int keyboard_w = 326;
+    const int keyboard_h = 166;
+
+    /* Accessory and machine cables sit below the hardware.  Their route and
+       connector size come from the supplied top-down photographs. */
+    auto draw_cable = [&g](const QPainterPath &path, const QColor &colour) {
+        g.setPen(QPen(QColor(7, 8, 9, 92), 10.0, Qt::SolidLine, Qt::RoundCap,
+                      Qt::RoundJoin));
+        g.drawPath(path.translated(2, 3));
+        g.setPen(QPen(colour, 7.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        g.drawPath(path);
+        g.setPen(QPen(QColor(255, 255, 255, 30), 1.0, Qt::SolidLine,
+                      Qt::RoundCap));
+        g.drawPath(path.translated(-1, -1));
+    };
+
+    QPainterPath keyboard_cable;
+    keyboard_cable.moveTo(keyboard_x + keyboard_w - 8, keyboard_y + 37);
+    keyboard_cable.cubicTo(383, 350, 338, 620, 430, 692);
+    keyboard_cable.cubicTo(465, 718, 511, 713,
+                           dp3000_keyboard_connected ? bx + 92 : bx - 20,
+                           dp3000_keyboard_connected ? by + bh + 5 : by + bh + 18);
+    draw_cable(keyboard_cable, QColor(36, 37, 39));
+
+    if (cp80_ac) {
+        QPainterPath adapter_cable;
+        adapter_cable.moveTo(bx + bw - 2, by + 579);
+        adapter_cable.cubicTo(718, 588, 697, 676, 758, 689);
+        draw_cable(adapter_cable, QColor(37, 38, 41));
+    }
+    if (prn_cp80_connected() != 0) {
+        QPainterPath vdai_cable;
+        vdai_cable.moveTo(bx + bw - 77, by + bh - 2);
+        vdai_cable.cubicTo(642, 704, 708, 675, 758, 713);
+        draw_cable(vdai_cable, QColor(45, 45, 47));
+    }
+
+    /* The detachable keyboard is a physical part of the DATAprint workflow.
+       Its three red caps are multifunction keys: yes/print/plus,
+       initialise, and no/delete/minus. */
+    g.setPen(Qt::NoPen);
+    g.setBrush(QColor(5, 6, 7, 80));
+    g.drawRoundedRect(QRectF(keyboard_x + 6, keyboard_y + 8,
+                             keyboard_w, keyboard_h), 12, 12);
+    QLinearGradient keyboard_case(0, keyboard_y, 0, keyboard_y + keyboard_h);
+    keyboard_case.setColorAt(0.0, QColor(58, 59, 61));
+    keyboard_case.setColorAt(0.18, QColor(39, 40, 42));
+    keyboard_case.setColorAt(1.0, QColor(18, 19, 21));
+    g.setBrush(keyboard_case);
+    g.setPen(QPen(QColor(9, 10, 11), 2.0));
+    g.drawRoundedRect(QRectF(keyboard_x, keyboard_y, keyboard_w, keyboard_h),
+                      10, 10);
+    g.setBrush(QColor(19, 20, 22));
+    g.setPen(QPen(QColor(107, 108, 110), 1.0));
+    g.drawRect(QRectF(keyboard_x + 48, keyboard_y + 17,
+                      keyboard_w - 66, 66));
+
+    QFont key_label = cp80_win != nullptr ? cp80_win->font() : QFont();
+    key_label.setBold(true);
+    key_label.setPixelSize(11);
+    g.setFont(key_label);
+    g.setPen(QColor(238, 237, 226));
+    g.drawText(QRect(keyboard_x + 58, keyboard_y + 22, 54, 17),
+               Qt::AlignCenter, QStringLiteral("+"));
+    g.drawText(QRect(keyboard_x + 58, keyboard_y + 38, 54, 15),
+               Qt::AlignCenter, dp3000_text(Dp3000Text::KeyYes));
+    g.drawText(QRect(keyboard_x + 48, keyboard_y + 56, 74, 20),
+               Qt::AlignCenter, dp3000_text(Dp3000Text::KeyPrint));
+    g.drawText(QRect(keyboard_x + 133, keyboard_y + 54, 58, 22),
+               Qt::AlignCenter, QStringLiteral("init."));
+    g.drawText(QRect(keyboard_x + 218, keyboard_y + 22, 54, 17),
+               Qt::AlignCenter, QStringLiteral("−"));
+    g.drawText(QRect(keyboard_x + 218, keyboard_y + 38, 54, 15),
+               Qt::AlignCenter, dp3000_text(Dp3000Text::KeyNo));
+    g.drawText(QRect(keyboard_x + 207, keyboard_y + 56, 76, 20),
+               Qt::AlignCenter, dp3000_text(Dp3000Text::KeyDelete));
+
+    const int key_centres[] = { keyboard_x + 85, keyboard_x + 163,
+                                keyboard_x + 244 };
+    const bool key_down[] = {
+        dp3000_key_yes != nullptr && dp3000_key_yes->isDown(),
+        dp3000_key_init != nullptr && dp3000_key_init->isDown(),
+        dp3000_key_no != nullptr && dp3000_key_no->isDown()
+    };
+    for (int i = 0; i < 3; i++) {
+        const int press = key_down[i] ? 3 : 0;
+        const QRectF recess(key_centres[i] - 20, keyboard_y + 100,
+                            40, 40);
+        g.setPen(QPen(QColor(5, 5, 6), 2.0));
+        g.setBrush(QColor(9, 10, 11));
+        g.drawEllipse(recess);
+        QRadialGradient cap(key_centres[i] - 6,
+                            keyboard_y + 112 + press, 25);
+        cap.setColorAt(0.0, QColor(255, 100, 71));
+        cap.setColorAt(0.56, QColor(218, 47, 28));
+        cap.setColorAt(1.0, QColor(111, 16, 12));
+        g.setBrush(cap);
+        g.setPen(QPen(QColor(86, 12, 9), 1.0));
+        g.drawEllipse(QRectF(key_centres[i] - 15,
+                             keyboard_y + 105 + press, 30, 30));
+        g.setPen(QPen(QColor(255, 208, 181, 95), 1.0));
+        g.drawArc(QRectF(key_centres[i] - 11,
+                         keyboard_y + 108 + press, 22, 17),
+                  25 * 16, 120 * 16);
+    }
+    g.setBrush(QColor(155, 156, 158));
+    g.setPen(QPen(QColor(18, 18, 19), 1.0));
+    g.drawEllipse(QRectF(keyboard_x + 12, keyboard_y + 10, 7, 7));
+    g.drawEllipse(QRectF(keyboard_x + keyboard_w - 19,
+                         keyboard_y + keyboard_h - 18, 7, 7));
+
+    /* Case shadow and exact 113 x 230 mm footprint. */
+    g.setPen(Qt::NoPen);
+    g.setBrush(QColor(5, 11, 16, 82));
+    g.drawRoundedRect(QRectF(bx + 8, by + 10, bw, bh), 30, 30);
+
+    /* Rear paper-roll cover.  Its axis runs across the case, so the broad
+       lighting bands must run across it too: a left-to-right gradient made the
+       old drawing read as a flat, softly rounded box.  The custom outline also
+       keeps the photographed straight crown and near-vertical side walls. */
+    QPainterPath roll;
+    roll.moveTo(bx + 31, by);
+    roll.lineTo(bx + bw - 31, by);
+    roll.cubicTo(bx + bw - 12, by, bx + bw, by + 15,
+                 bx + bw, by + 34);
+    roll.lineTo(bx + bw, by + 215);
+    roll.cubicTo(bx + bw, by + 232, bx + bw - 13, by + 244,
+                 bx + bw - 30, by + 244);
+    roll.lineTo(bx + 30, by + 244);
+    roll.cubicTo(bx + 13, by + 244, bx, by + 232, bx, by + 215);
+    roll.lineTo(bx, by + 34);
+    roll.cubicTo(bx, by + 15, bx + 12, by, bx + 31, by);
+    roll.closeSubpath();
+
+    QLinearGradient roll_curve(0, by, 0, by + 244);
+    roll_curve.setColorAt(0.00, QColor(57, 190, 198));
+    roll_curve.setColorAt(0.025, QColor(76, 207, 212));
+    roll_curve.setColorAt(0.10, QColor(25, 137, 150));
+    roll_curve.setColorAt(0.27, QColor(15, 116, 132));
+    roll_curve.setColorAt(0.46, QColor(34, 159, 170));
+    roll_curve.setColorAt(0.59, QColor(86, 207, 211));
+    roll_curve.setColorAt(0.66, QColor(157, 237, 235));
+    roll_curve.setColorAt(0.73, QColor(83, 207, 211));
+    roll_curve.setColorAt(0.88, QColor(37, 168, 180));
+    roll_curve.setColorAt(1.00, QColor(15, 117, 132));
+    g.setBrush(roll_curve);
+    g.setPen(QPen(QColor(10, 91, 105), 1.8));
+    g.drawPath(roll);
+
+    /* Moulded plastic loses light at both ends of the roll.  Keep the effect
+       narrow: the vertical gradient above carries the cylindrical form, while
+       this edge falloff gives the shell thickness without turning it into a
+       left-to-right tube. */
+    QLinearGradient roll_ends(bx, 0, bx + bw, 0);
+    roll_ends.setColorAt(0.00, QColor(0, 48, 59, 92));
+    roll_ends.setColorAt(0.055, QColor(0, 61, 70, 42));
+    roll_ends.setColorAt(0.17, QColor(0, 0, 0, 0));
+    roll_ends.setColorAt(0.76, QColor(0, 0, 0, 0));
+    roll_ends.setColorAt(0.95, QColor(0, 58, 69, 50));
+    roll_ends.setColorAt(1.00, QColor(0, 39, 50, 112));
+    g.fillPath(roll, roll_ends);
+
+    /* A restrained specular streak follows the roll axis in the reference
+       photographs; the darker band beneath it makes the curvature visible
+       even on a dim display. */
+    QLinearGradient roll_glare(0, by + 116, 0, by + 184);
+    roll_glare.setColorAt(0.00, QColor(255, 255, 255, 0));
+    roll_glare.setColorAt(0.37, QColor(231, 255, 253, 24));
+    roll_glare.setColorAt(0.51, QColor(244, 255, 253, 82));
+    roll_glare.setColorAt(0.64, QColor(226, 255, 252, 22));
+    roll_glare.setColorAt(1.00, QColor(0, 55, 66, 0));
+    g.fillPath(roll, roll_glare);
+
+    g.setPen(QPen(QColor(196, 246, 241, 72), 1.4));
+    g.drawLine(QPointF(bx + 31, by + 2),
+               QPointF(bx + bw - 31, by + 2));
+    g.setPen(QPen(QColor(4, 76, 90, 72), 2.0));
+    g.drawLine(QPointF(bx + 8, by + 213),
+               QPointF(bx + bw - 8, by + 213));
+
+    /* Main top cover, including its narrow darker side walls and front lip. */
+    g.setBrush(QColor(12, 102, 116));
+    g.drawRoundedRect(QRectF(bx, by + 214, bw, bh - 214), 14, 14);
+    QLinearGradient lid_colour(bx, by + 214, bx + bw, by + bh);
+    lid_colour.setColorAt(0.00, QColor(55, 188, 198));
+    lid_colour.setColorAt(0.43, QColor(34, 174, 187));
+    lid_colour.setColorAt(0.76, QColor(31, 161, 176));
+    lid_colour.setColorAt(1.00, QColor(20, 133, 149));
+    g.setBrush(lid_colour);
+    g.setPen(QPen(QColor(17, 111, 125), 2.0));
+    g.drawRoundedRect(QRectF(bx + 7, by + 220, bw - 14, bh - 235),
+                      12, 12);
+    QLinearGradient roll_shadow(0, by + 220, 0, by + 252);
+    roll_shadow.setColorAt(0.00, QColor(0, 57, 68, 116));
+    roll_shadow.setColorAt(0.24, QColor(0, 64, 74, 64));
+    roll_shadow.setColorAt(1.00, QColor(0, 64, 74, 0));
+    g.setPen(Qt::NoPen);
+    g.setBrush(roll_shadow);
+    g.drawRoundedRect(QRectF(bx + 9, by + 221, bw - 18, 31), 9, 9);
+    g.setPen(QPen(QColor(180, 241, 239, 58), 2.0));
+    g.drawLine(bx + 19, by + 230, bx + 19, by + bh - 29);
+    g.setPen(QPen(QColor(0, 77, 90, 70), 3.0));
+    g.drawLine(bx + bw - 17, by + 232, bx + bw - 17, by + bh - 28);
+    g.setPen(QPen(QColor(9, 91, 105), 2.0));
+    g.drawLine(bx + 12, by + bh - 23, bx + bw - 12, by + bh - 23);
+    g.setPen(QPen(QColor(154, 225, 225, 94), 2.0));
+    g.drawLine(bx + 22, by + bh - 29, bx + bw - 22, by + bh - 29);
+
+    /* D-shaped black legend plate copied from the real 3000, not the reversed
+       3000S lamp order. */
+    const int plate_x = bx + 69;
+    const int plate_y = by + 262;
+    const int plate_w = 206;
+    const int plate_h = 226;
+    QPainterPath plate;
+    plate.moveTo(plate_x, plate_y);
+    plate.lineTo(plate_x + 113, plate_y);
+    plate.cubicTo(plate_x + 168, plate_y, plate_x + plate_w,
+                  plate_y + 46, plate_x + plate_w, plate_y + 112);
+    plate.cubicTo(plate_x + plate_w, plate_y + 179, plate_x + 169,
+                  plate_y + plate_h, plate_x + 113, plate_y + plate_h);
+    plate.lineTo(plate_x, plate_y + plate_h);
+    plate.closeSubpath();
+    QLinearGradient plate_colour(plate_x, plate_y, plate_x + plate_w,
+                                 plate_y + plate_h);
+    plate_colour.setColorAt(0.0, QColor(24, 25, 26));
+    plate_colour.setColorAt(0.48, QColor(5, 6, 7));
+    plate_colour.setColorAt(1.0, QColor(29, 31, 32));
+    g.setBrush(plate_colour);
+    g.setPen(QPen(QColor(193, 199, 193), 1.2));
+    g.drawPath(plate);
+
+    QFont logo = cp80_win != nullptr ? cp80_win->font() : QFont();
+    logo.setBold(true);
+    logo.setPixelSize(18);
+    g.setFont(logo);
+    g.setPen(QColor(246, 239, 222));
+    g.drawText(QRect(plate_x + 11, plate_y + 8, 60, 22),
+               Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("NSM"));
+    logo.setPixelSize(27);
+    g.setFont(logo);
+    g.drawText(QRect(plate_x + 10, plate_y + 27, 139, 34),
+               Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("DATAprint"));
+    logo.setPixelSize(23);
+    g.setFont(logo);
+    g.drawText(QRect(plate_x + 132, plate_y + 48, 68, 27),
+               Qt::AlignCenter, QStringLiteral("3000"));
+
+    static const Dp3000Text labels[] = {
+        Dp3000Text::StatusPowerOn,
+        Dp3000Text::StatusBatteryEmpty,
+        Dp3000Text::StatusToMachine,
+        Dp3000Text::StatusPcMachineError,
+        Dp3000Text::StatusPaperEnd,
+        Dp3000Text::StatusToPc,
+        Dp3000Text::StatusMemoryError,
+        Dp3000Text::StatusCharging
+    };
+    const bool linked = (prn_cp80_connected() != 0);
+    const bool supplied = linked || cp80_ac;
+    const bool powered = cp80_power && (supplied || (cp80_batt > 0.0));
+    const bool pc_active = false; /* DATAcontact/PC transport is not emulated. */
+    const bool lights[] = {
+        powered,
+        powered && (cp80_batt <= CP80_BATT_FLAT),
+        powered && linked,
+        powered && dp3000_transfer_error,
+        powered && !dp3000_paper_loaded,
+        powered && pc_active,
+        powered && dp3000_card_inserted
+            && (dp3000_memory_fault || dp3000_memory_full),
+        supplied
+    };
+
+    QFont legend = cp80_win != nullptr ? cp80_win->font() : QFont();
+    legend.setPixelSize(10);
+    legend.setBold(true);
+    g.setFont(legend);
+    for (int i = 0; i < 8; i++) {
+        const int y = plate_y + 91 + (i * 16);
+        const bool light_on = lights[i]
+                           && !((i == 6) && dp3000_memory_fault
+                                && ((cp80_blink & 1) == 0));
+        const bool error = (i == 1) || (i == 3) || (i == 4) || (i == 6);
+        const bool activity = (i == 2) || (i == 5);
+        const QColor lit = error ? QColor(226, 47, 39)
+                         : activity ? QColor(238, 183, 35)
+                                    : QColor(62, 201, 87);
+        const QColor dark = error ? QColor(74, 25, 25)
+                          : activity ? QColor(74, 63, 29)
+                                     : QColor(27, 65, 39);
+
+        const int led_x = plate_x - 30;
+        QRadialGradient lens(led_x + 4, y + 3, 8);
+        lens.setColorAt(0.0, light_on ? lit.lighter(150)
+                                       : dark.lighter(112));
+        lens.setColorAt(0.55, light_on ? lit : dark);
+        lens.setColorAt(1.0, QColor(5, 8, 8));
+        g.setPen(QPen(QColor(3, 8, 9), 1.0));
+        g.setBrush(lens);
+        g.drawEllipse(QRectF(led_x, y, 11, 11));
+        if (light_on) {
+            g.setPen(QPen(QColor(255, 255, 236, 150), 1.0));
+            g.drawArc(QRectF(led_x + 2, y + 1, 7, 6), 32 * 16, 112 * 16);
+        }
+        g.setPen(QColor(234, 234, 229));
+        g.drawText(QRect(plate_x + 10, y - 2, 184, 13),
+                   Qt::AlignLeft | Qt::AlignVCenter,
+                   dp3000_text(labels[i]));
+        if (i < 7) {
+            g.setPen(QColor(137, 139, 136));
+            g.drawLine(plate_x + 9, y + 12, plate_x + 193, y + 12);
+        }
+    }
+
+    /* The front-edge PCMCIA-style SRAM card and two webbing attachment loops. */
+    const int card_x = bx + 119;
+    const int card_y = by + bh - 13;
+    g.setPen(QPen(QColor(4, 53, 62), 2.0));
+    g.setBrush(QColor(4, 75, 84));
+    g.drawRoundedRect(QRectF(card_x - 8, card_y, 110, 16), 2, 2);
+    if (dp3000_card_inserted) {
+        g.setBrush(QColor(177, 180, 169));
+        g.setPen(QPen(QColor(66, 68, 63), 1.0));
+        g.drawRect(QRectF(card_x, card_y + 9, 94, 19));
+        QFont card_font = legend;
+        card_font.setPixelSize(8);
+        g.setFont(card_font);
+        g.setPen(QColor(47, 49, 46));
+        g.drawText(QRect(card_x + 4, card_y + 10, 86, 16), Qt::AlignCenter,
+                   dp3000_text(Dp3000Text::CardTop));
+    }
+    g.setPen(QPen(QColor(22, 23, 24), 7.0));
+    g.drawLine(bx + 29, by + bh - 2, bx + 29, DP3000_HEAD_H);
+    g.drawLine(bx + bw - 29, by + bh - 2, bx + bw - 29, DP3000_HEAD_H);
+    g.setPen(QPen(QColor(149, 93, 29), 2.0));
+    g.drawLine(bx + 29, by + bh + 1, bx + 29, DP3000_HEAD_H);
+    g.drawLine(bx + bw - 29, by + bh + 1, bx + bw - 29, DP3000_HEAD_H);
+
+    /* Local switches.  The green side plunger advances paper; RESET is a
+       recessed pin switch so it cannot be pressed accidentally. */
+    const bool feed_down = dp3000_case_feed != nullptr
+                        && dp3000_case_feed->isDown();
+    g.setPen(QPen(QColor(4, 70, 60), 1.0));
+    g.setBrush(feed_down ? QColor(36, 137, 91) : QColor(72, 204, 127));
+    g.drawRoundedRect(QRectF(bx - 9 + (feed_down ? 3 : 0), by + 602,
+                             13, 25), 3, 3);
+    g.setBrush(QColor(9, 86, 98));
+    g.setPen(QPen(QColor(4, 58, 67), 1.0));
+    g.drawEllipse(QRectF(bx + bw - 8, by + 606, 10, 10));
+    g.setBrush(QColor(9, 20, 22));
+    g.drawEllipse(QRectF(bx + bw - 5, by + 609, 4, 4));
+
+    /* The impact paper leaves the slot toward the operator and lies over the
+       lower cover.  Width and 3.3 mm line feed stay tied to the physical scale. */
+    {
+        const int motion = (first == over)
+                         ? cp80_paper_motion_offset(DP3000_TEXT_LINE_H) : 0;
+        const int animated_h = qMax(CP80_EMPTY_LIP_H, paper_h - motion);
+        const QRect paper(DP3000_PAPER_L, slot_y + 7,
+                          DP3000_PAPER_W, animated_h);
+        /* QRect::right()/bottom() name the last included pixel, not the outer
+           edge.  Using them as polygon boundaries left the final antialiased
+           column transparent enough for the turquoise cover to show through
+           the right side of the sheet. */
+        const int paper_right = paper.x() + paper.width();
+        const int paper_bottom = paper.y() + paper.height();
+        QPainterPath paper_shape;
+        paper_shape.moveTo(paper.left(), paper.top());
+        paper_shape.lineTo(paper_right, paper.top());
+        paper_shape.lineTo(paper_right, paper_bottom - 2);
+        for (int x = paper_right; x >= paper.left(); x -= 10)
+            paper_shape.lineTo(x, paper_bottom - ((x / 10) & 1));
+        paper_shape.closeSubpath();
+
+        cp80_paper_hit_rect = paper;
+
+        g.setPen(QPen(QColor(16, 24, 25, 72), 3.0));
+        g.setBrush(QColor(242, 239, 226));
+        g.drawPath(paper_shape.translated(2, 3));
+        g.setPen(Qt::NoPen);
+        g.setBrush(QColor(242, 239, 226));
+        g.drawPath(paper_shape);
+        QLinearGradient paper_bow(paper.left(), 0, paper_right, 0);
+        paper_bow.setColorAt(0.0, QColor(80, 76, 63, 29));
+        paper_bow.setColorAt(0.18, QColor(255, 255, 255, 22));
+        paper_bow.setColorAt(0.55, QColor(255, 255, 255, 32));
+        paper_bow.setColorAt(1.0, QColor(76, 72, 59, 34));
+        g.fillPath(paper_shape, paper_bow);
+
+        g.save();
+        g.setClipPath(paper_shape);
+        g.setRenderHint(QPainter::Antialiasing, false);
+        g.setRenderHint(QPainter::TextAntialiasing, false);
+        g.setFont(mono);
+        g.setPen(QColor(34, 32, 28));
+        /* This paper exits toward the operator, down the top-view drawing.
+           The newest line therefore belongs nearest the slot and pushes all
+           older lines toward the free edge.  At the first animation frame the
+           new line is still hidden above the slot while the formerly newest
+           line remains exactly where it was. */
+        const int text_motion = paper_moving ? -motion : 0;
+        int y = paper.top() + 5 + fm.ascent() + text_motion;
+        for (auto it = lines.crbegin(); it != lines.crend(); ++it) {
+            const QString &line = *it;
+            const int columns = qMin(line.size(), DP3000_COLUMNS);
+            for (int column = 0; column < columns; column++)
+                g.drawText(QPointF(paper.left() + 6
+                                      + (column * DP3000_TEXT_CELL_W), y),
+                           line.mid(column, 1));
+            y += DP3000_TEXT_LINE_H;
+        }
+        g.restore();
+
+        if ((cp80_scroll != nullptr) && (over > 0)) {
+            cp80_scroll->setGeometry(
+                paper.right() - 11, paper.top() + 3, 9,
+                qMax(20, paper.height() - 6));
+        }
+    }
+
+    /* Deep slot, turquoise bevel and the M-160's visible metal tear rail. */
+    QPainterPath slot_bevel;
+    slot_bevel.moveTo(DP3000_PAPER_L - 15, slot_y - 8);
+    slot_bevel.lineTo(DP3000_PAPER_L + DP3000_PAPER_W + 15, slot_y - 8);
+    slot_bevel.lineTo(DP3000_PAPER_L + DP3000_PAPER_W + 8, slot_y + 15);
+    slot_bevel.lineTo(DP3000_PAPER_L - 8, slot_y + 15);
+    slot_bevel.closeSubpath();
+    QLinearGradient slot_colour(0, slot_y - 8, 0, slot_y + 15);
+    slot_colour.setColorAt(0.0, QColor(10, 106, 119));
+    slot_colour.setColorAt(0.35, QColor(27, 142, 156));
+    slot_colour.setColorAt(1.0, QColor(111, 218, 216));
+    /* The moulded turquoise bevel belongs behind the emerging sheet.  It is
+       drawn late so the slot itself stays crisp, therefore clip its lower lip
+       at the paper exit instead of letting the horizontal blue edge paint over
+       the first row of paper. */
+    g.save();
+    g.setClipRect(QRectF(0, 0, DP3000_HEAD_W, slot_y + 7));
+    g.setPen(Qt::NoPen);
+    g.setBrush(slot_colour);
+    g.drawPath(slot_bevel);
+    g.restore();
+    g.setBrush(QColor(5, 14, 16));
+    g.drawRoundedRect(QRectF(DP3000_PAPER_L - 4, slot_y - 2,
+                             DP3000_PAPER_W + 8, 10), 2, 2);
+    g.setPen(QPen(QColor(191, 194, 187), 2.0));
+    g.drawLine(DP3000_PAPER_L, slot_y + 7,
+               DP3000_PAPER_L + DP3000_PAPER_W, slot_y + 7);
+
+    /* A torn sheet is pulled forward and to the right, matching the physical
+       paper direction rather than the DPU's top-exit animation. */
+    if (torn_h > 0) {
+        QPixmap sheet = cp80_canvas(DP3000_PAPER_W, torn_h);
+        sheet.fill(QColor(242, 239, 226));
+        {
+            QPainter s(&sheet);
+            s.setRenderHint(QPainter::TextAntialiasing, false);
+            s.setFont(mono);
+            s.setPen(QColor(35, 34, 31));
+            int y = 5 + fm.ascent();
+            /* Preserve the live roll's physical order on the detached sheet:
+               its last printed line remains at the former slot edge. */
+            for (auto it = torn_lines.crbegin(); it != torn_lines.crend(); ++it) {
+                const QString &line = *it;
+                const int columns = qMin(line.size(), DP3000_COLUMNS);
+                for (int column = 0; column < columns; column++)
+                    s.drawText(QPointF(3 + (column * DP3000_TEXT_CELL_W), y),
+                               line.mid(column, 1));
+                y += DP3000_TEXT_LINE_H;
+            }
+        }
+
+        const double t = qBound(0.0, (double) cp80_tear_frame
+                                      / (double) (CP80_TEAR_FRAMES - 1), 1.0);
+        const QPointF origin(DP3000_PAPER_L, slot_y + 7);
+        QTransform motion;
+        motion.translate(54.0 * cp80_smoothstep(t), 30.0 * t * t);
+        motion.rotate(-6.0 * cp80_smoothstep(t));
+        g.save();
+        g.setOpacity(1.0 - cp80_smoothstep((t - 0.76) / 0.24));
+        g.setWorldTransform(motion);
+        g.drawPixmap(origin, sheet);
+        g.restore();
+    }
+
+    if (cp80_win != nullptr) {
+        const QString supply = prn_cp80_transfer_active()
+                                 ? QObject::tr(", receiving data set")
+                             : dp3000_transfer_error
+                                 ? QObject::tr(", transfer error")
+                             : linked && dp3000_complete_signal
+                                 ? QObject::tr(", complete — unplug VDAI")
+                             : linked ? QObject::tr(", VDAI connected")
+                             : dp3000_keyboard_connected && cp80_ac
+                                 ? QObject::tr(", keyboard active")
+                             : dp3000_keyboard_connected
+                                 ? QObject::tr(", keyboard needs adapter")
+                             : cp80_ac ? QObject::tr(", adapter connected")
+                                       : QString();
+        cp80_win->setWindowTitle(
+            cp80_power ? QObject::tr("NSM DATAprint 3000 — %1%%2")
+                              .arg(cp80_batt, 0, 'f', 1).arg(supply)
+                        : QObject::tr("NSM DATAprint 3000 — off"));
+    }
+    if (cp80_replace != nullptr) {
+        cp80_replace->setText(QObject::tr("Adapter"));
+        cp80_replace->setChecked(cp80_ac);
+    }
+    if (cp80_link_btn != nullptr) {
+        cp80_link_btn->setText(QObject::tr("VDAI cable"));
+        cp80_link_btn->setChecked(linked);
+        if (prn_cp80_transfer_active())
+            cp80_link_btn->setToolTip(QObject::tr(
+                "Receiving a data set. Do not unplug until the completion signal."));
+        else if (dp3000_transfer_error)
+            cp80_link_btn->setToolTip(QObject::tr(
+                "The last transfer was aborted or failed its checksum. Unplug, retry in Photo Play, then reconnect."));
+        else if (linked && dp3000_complete_signal)
+            cp80_link_btn->setToolTip(QObject::tr(
+                "The complete data set was verified and committed. It is safe to unplug the VDAI cable."));
+        else if (linked)
+            cp80_link_btn->setToolTip(QObject::tr(
+                "VDAI connected — waiting for Photo Play to send its data set."));
+        else
+            cp80_link_btn->setToolTip(QObject::tr(
+                "VDAI unplugged — connect it when Photo Play asks for the DATAprint interface."));
+    }
+    if (cp80_feed_btn != nullptr) {
+        cp80_feed_btn->setText(QObject::tr("Keyboard"));
+        cp80_feed_btn->setChecked(dp3000_keyboard_connected);
+    }
+    if (cp80_paper_btn != nullptr) {
+        cp80_paper_btn->setText(QObject::tr("Paper roll"));
+        cp80_paper_btn->setChecked(dp3000_paper_loaded);
+    }
+    if (dp3000_wp_btn != nullptr) {
+        dp3000_wp_btn->setText(QObject::tr("Card WP"));
+        dp3000_wp_btn->setChecked(dp3000_card_write_protected);
+        dp3000_wp_btn->setEnabled(dp3000_card_inserted);
+    }
+    if (dp3000_card != nullptr) {
+        const int free_kb = qMax(0, DP3000_STORE_MAX
+            - dp3000_records_bytes(dp3000_records)) / 1024;
+        dp3000_card->setToolTip(dp3000_card_inserted
+            ? QObject::tr("SRAM card %1 — %2 stored data set(s), %3 KB free. Switch the DATAprint off before removal.")
+                  .arg(dp3000_settings.card_number, 4, 10, QLatin1Char('0'))
+                  .arg(dp3000_records.size()).arg(free_kb)
+            : QObject::tr("No SRAM card inserted. Click to insert the persisted 256 kB card image."));
+    }
+
+    if (cp80_batt_sl != nullptr) {
+        const int want = int(cp80_batt + 0.5);
+        if (cp80_batt_sl->value() != want) {
+            cp80_batt_sl->blockSignals(true);
+            cp80_batt_sl->setValue(want);
+            cp80_batt_sl->blockSignals(false);
+        }
+        cp80_batt_sl->setToolTip(QObject::tr(
+            "Battery set: %1%. Drag to set the test level; a connected game "
+            "can power the DATAprint even when the batteries are empty.")
+                .arg(cp80_batt, 0, 'f', 1));
+        cp80_batt_sl->update();
+    }
+
+    g.end();
+    cp80_view->setPixmap(out);
+    cp80_view->setFixedSize(DP3000_HEAD_W, H);
+
+    auto place_button = [](QPushButton *button, int x, int y, int w, int h) {
+        if (button == nullptr)
+            return;
+        button->setGeometry(x, y, w, h);
+    };
+    place_button(dp3000_case_feed, bx - 14, by + 592, 26, 45);
+    place_button(dp3000_case_reset, bx + bw - 17, by + 594, 28, 34);
+    place_button(dp3000_key_yes, key_centres[0] - 23, keyboard_y + 94, 46, 50);
+    place_button(dp3000_key_init, key_centres[1] - 23, keyboard_y + 94, 46, 50);
+    place_button(dp3000_key_no, key_centres[2] - 23, keyboard_y + 94, 46, 50);
+    place_button(dp3000_card, card_x - 9, card_y - 3, 112, 37);
+    cp80_resize_to_content();
+    cp80_update_paper_hover();
+}
+
+static void
 cp80_render()
 {
-    if ((cp80_view == nullptr) || (cp80_body == nullptr))
+    if (cp80_view == nullptr)
         return;
+
+    if (cp80_model == Cp80PrinterModel::Dataprint3000) {
+        cp80_render_dp3000();
+        return;
+    }
+
+    if (cp80_body == nullptr)
+        return;
+
+    cp80_update_model_controls();
 
     const QFont mono = cp80_print_font();
 
@@ -2964,7 +4470,7 @@ cp80_render()
                                : qMax(CP80_HEAD_H - max_canvas, natural_top);
     const int H      = CP80_HEAD_H - top;
 
-    QPixmap out(CP80_HEAD_W, H);
+    QPixmap out = cp80_canvas(CP80_HEAD_W, H);
 
     out.fill(Qt::transparent);
 
@@ -2991,17 +4497,13 @@ cp80_render()
         const QPainterPath paper_shape = cp80_live_paper_shape(
             r, crumple_depth, &leading_edge, &shadow_edge);
 
-        cp80_paper_hit_rect = QRect(
-            cp80_physical_to_logical(r.left()),
-            cp80_physical_to_logical(r.top()),
-            cp80_physical_to_logical(r.width()),
-            cp80_physical_to_logical(r.height()));
+        cp80_paper_hit_rect = r;
 
         /* The line rises from behind the slot instead of teleporting upward.
            Clipping at the slot is also what makes the paper look threaded
            through the mechanism rather than pasted over the photograph. */
         g.save();
-        g.setClipRect(0, 0, out.width(), slot_y + 1);
+        g.setClipRect(0, 0, CP80_HEAD_W, slot_y + 1);
         g.setRenderHint(QPainter::Antialiasing, true);
 
         /* Stroke the silhouette itself rather than an offset copy.  The shadow
@@ -3063,7 +4565,7 @@ cp80_render()
            it.  Drawing this last also leaves the leading edge visible after a
            feed animation has fully settled at the top of the window. */
         g.save();
-        g.setClipRect(0, 0, out.width(), slot_y + 1);
+        g.setClipRect(0, 0, CP80_HEAD_W, slot_y + 1);
         g.setRenderHint(QPainter::Antialiasing, true);
         g.setPen(QPen(QColor(83, 85, 94, 118), 1.25));
         g.drawPath(leading_edge);
@@ -3079,11 +4581,8 @@ cp80_render()
             const int scroll_top = scroll_paper.top() + crumple_depth + 3;
 
             cp80_scroll->setGeometry(
-                cp80_physical_to_logical(scroll_paper.right() - 12),
-                cp80_physical_to_logical(scroll_top),
-                cp80_physical_to_logical(9),
-                cp80_physical_to_logical(qMax(20, scroll_paper.bottom()
-                                                       - scroll_top - 3)));
+                scroll_paper.right() - 12, scroll_top, 9,
+                qMax(20, scroll_paper.bottom() - scroll_top - 3));
         }
     }
 
@@ -3091,7 +4590,7 @@ cp80_render()
         /* Cut a real silhouette rather than rotating a rectangular widget.  A
            repeating but non-uniform tooth profile reads as the DPU-414's tear
            bar at native size and stays deterministic between repaints. */
-        QPixmap      sheet(CP80_PAPER_W, tornH);
+        QPixmap      sheet = cp80_canvas(CP80_PAPER_W, tornH);
         QPainterPath shape;
         QPainterPath torn_edge;
 
@@ -3287,9 +4786,11 @@ cp80_render()
     /* Always there now that it unplugs as well as plugs in: an adapter is a
        thing on the desk, not a button that appears when the machine is in
        trouble. */
-    if (cp80_replace != nullptr)
+    if (cp80_replace != nullptr) {
         cp80_replace->setText(cp80_ac ? QObject::tr("Disconnect adapter")
                                       : QObject::tr("Connect adapter"));
+        cp80_replace->setChecked(cp80_ac);
+    }
     if (cp80_pwr_btn != nullptr)
         cp80_pwr_btn->setText(cp80_power ? QObject::tr("Power: on")
                                          : QObject::tr("Power: off"));
@@ -3311,36 +4812,875 @@ cp80_render()
     }
 
     g.end();
-    out.setDevicePixelRatio(cp80_device_pixel_ratio());
     cp80_view->setPixmap(out);
-    cp80_view->setFixedSize(cp80_physical_to_logical(out.width()),
-                            cp80_physical_to_logical(out.height()));
+    cp80_view->setFixedSize(CP80_HEAD_W, H);
 
     /* The panel buttons ride with the picture.  The machine is always flush
        with the bottom of the pixmap, so their offset from the bottom never
        changes however long the roll gets. */
-    const int base = out.height() - CP80_HEAD_H;
+    const int base = H - CP80_HEAD_H;
 
     if (cp80_btn_on != nullptr)
         cp80_btn_on->setGeometry(
-            cp80_physical_to_logical(CP80_SCALE(CP80_BTN_ON_X)),
-            cp80_physical_to_logical(base + CP80_SCALE(CP80_BTN_Y)),
-            cp80_physical_to_logical(CP80_SCALE(CP80_BTN_ON_W)),
-            cp80_physical_to_logical(CP80_SCALE(CP80_BTN_H)));
+            CP80_SCALE(CP80_BTN_ON_X), base + CP80_SCALE(CP80_BTN_Y),
+            CP80_SCALE(CP80_BTN_ON_W), CP80_SCALE(CP80_BTN_H));
     if (cp80_btn_fd != nullptr)
         cp80_btn_fd->setGeometry(
-            cp80_physical_to_logical(CP80_SCALE(CP80_BTN_FD_X)),
-            cp80_physical_to_logical(base + CP80_SCALE(CP80_BTN_Y)),
-            cp80_physical_to_logical(CP80_SCALE(CP80_BTN_FD_W)),
-            cp80_physical_to_logical(CP80_SCALE(CP80_BTN_H)));
+            CP80_SCALE(CP80_BTN_FD_X), base + CP80_SCALE(CP80_BTN_Y),
+            CP80_SCALE(CP80_BTN_FD_W), CP80_SCALE(CP80_BTN_H));
 
     cp80_resize_to_content();
     cp80_update_paper_hover();
 }
 
+static bool
+dp3000_keyboard_ready()
+{
+    if ((cp80_model != Cp80PrinterModel::Dataprint3000)
+        || !dp3000_keyboard_connected || !cp80_ac)
+        return false;
+
+    /* A key is itself one of the manual's ways of switching the DATAprint on.
+       This matters after RESET has put an otherwise connected idle unit to
+       sleep: the next keyboard operation must wake it again. */
+    cp80_power = true;
+    return true;
+}
+
+static QString
+dp3000_localised(const char *german, const char *english)
+{
+    return QString::fromUtf8(dp3000_english ? english : german);
+}
+
+static bool
+dp3000_has_stored_data()
+{
+    return !dp3000_records.isEmpty();
+}
+
+static void
+dp3000_arm_input_timeout()
+{
+    /* The one-minute operator interval starts after the question has emerged
+       from the printer, not while its (sometimes multi-line) prompt is still
+       being printed. */
+    dp3000_input_timeout_requested = true;
+    if (dp3000_input_timeout != nullptr) {
+        dp3000_input_timeout->stop();
+        if (!dp3000_keyboard_job && cp80_queued.isEmpty())
+            dp3000_input_timeout->start(60000);
+    }
+}
+
+static void
+dp3000_cancel_input_timeout()
+{
+    dp3000_input_timeout_requested = false;
+    if (dp3000_input_timeout != nullptr)
+        dp3000_input_timeout->stop();
+}
+
+static QString
+dp3000_format_record(const QString &record, Dp3000PrintFormat format)
+{
+    if (format == Dp3000PrintFormat::Maximum)
+        return record;
+
+    const QStringList lines = record.split(QLatin1Char('\n'));
+    QStringList out;
+    bool in_cash = false;
+
+    for (int i = 0; i < lines.size(); i++) {
+        const QString line = lines.at(i);
+        const QString lower = line.toLower();
+        const QString trimmed = line.trimmed();
+        bool keep = false;
+
+        switch (format) {
+            case Dp3000PrintFormat::Medium:
+                keep = !trimmed.isEmpty();
+                if (trimmed.startsWith(QStringLiteral("---"))
+                    && !out.isEmpty()
+                    && out.constLast().trimmed().startsWith(QStringLiteral("---")))
+                    keep = false;
+                break;
+
+            case Dp3000PrintFormat::Short:
+                keep = (i < 4) || lower.contains(QStringLiteral("serial"))
+                    || lower.contains(QStringLiteral("date"))
+                    || lower.contains(QStringLiteral("total"))
+                    || lower.contains(QStringLiteral("gesamt"))
+                    || lower.startsWith(QStringLiteral("pr "));
+                break;
+
+            case Dp3000PrintFormat::CashBag:
+                if (lower.contains(QStringLiteral("coin"))
+                    || lower.contains(QStringLiteral("note"))
+                    || lower.contains(QStringLiteral("kasse"))
+                    || lower.contains(QStringLiteral("cash")))
+                    in_cash = true;
+                keep = (i < 4) || in_cash || lower.contains(QStringLiteral("total"))
+                    || lower.contains(QStringLiteral("gesamt"));
+                break;
+
+            case Dp3000PrintFormat::Custom:
+                /* The V4 custom block mask was authored in DATAcontact.  The
+                   simulator exposes the documented on/off choice: enabled uses
+                   the compact operator fields; disabled falls back to maximum. */
+                if (!dp3000_settings.first_custom)
+                    return record;
+                keep = (i < 4) || lower.contains(QStringLiteral("book"))
+                    || lower.contains(QStringLiteral("kasse"))
+                    || lower.contains(QStringLiteral("action"))
+                    || lower.contains(QStringLiteral("total"))
+                    || lower.contains(QStringLiteral("gesamt"));
+                break;
+
+            case Dp3000PrintFormat::Maximum:
+                keep = true;
+                break;
+        }
+        if (keep)
+            out.append(line);
+    }
+
+    QString result = out.join(QLatin1Char('\n'));
+    if (!result.endsWith(QLatin1Char('\n')))
+        result += QLatin1Char('\n');
+    return result;
+}
+
+static QString
+dp3000_settings_status(bool complete)
+{
+    static const char *const lengths_de[] = {
+        "MAXIMALER AUSDRUCK", "MITTELLANGER AUSDRUCK", "KURZER AUSDRUCK",
+        "GELDSACKBELEG", "SELBSTDEF. AUSDRUCK", "KEIN AUSDRUCK"
+    };
+    static const char *const lengths_en[] = {
+        "MAXIMUM PRINTOUT", "MEDIUM PRINTOUT", "SHORT PRINTOUT",
+        "CASH-BAG RECEIPT", "CUSTOM PRINTOUT", "NO PRINTOUT"
+    };
+    static const int baud[] = { 2400, 4800, 9600, 19200, 38400 };
+    const char *const *lengths = dp3000_english ? lengths_en : lengths_de;
+    QString s = QStringLiteral("------------------------\nSTATUS\n"
+                               "------------------------\n")
+              + dp3000_localised("  8KB PUFFER VORHANDEN\n",
+                                 "  8KB BUFFER AVAILABLE\n");
+
+    if (dp3000_card_inserted) {
+        const int available = qMax(0, DP3000_STORE_MAX
+                                      - dp3000_records_bytes(dp3000_records));
+        s += dp3000_localised("%1KB SPEICHER FREI\n",
+                              "%1KB MEMORY AVAILABLE\n")
+                 .arg(available / 1024, 4);
+        s += dp3000_has_stored_data()
+           ? dp3000_localised("DATEN SIND GESPEICHERT\n",
+                              "DATA IS STORED\n")
+           : dp3000_text(Dp3000Text::NoData) + QLatin1Char('\n');
+    } else {
+        s += dp3000_text(Dp3000Text::NoMemoryCard) + QLatin1Char('\n');
+    }
+
+    if (!complete)
+        return s;
+
+    s += QStringLiteral("========================\n")
+       + dp3000_localised("AKTUELLE EINSTELLUNG:\n",
+                          "CURRENT SETTINGS:\n")
+       + QStringLiteral("------------------------\n");
+    s += dp3000_clock_now().toString(QStringLiteral("dd.MM.yy/hh:mm"))
+       + QStringLiteral("     V4.00\n");
+    s += dp3000_localised("DATAPRINT:          %1\n",
+                          "DATAPRINT:          %1\n")
+             .arg(dp3000_settings.dataprint_number, 4, 10, QLatin1Char('0'));
+    s += dp3000_localised("SPEICHERKARTE:      %1\n",
+                          "MEMORY CARD:        %1\n")
+             .arg(dp3000_settings.card_number, 4, 10, QLatin1Char('0'));
+    s += dp3000_settings.storage_mode
+       ? dp3000_localised("SPEICHERBETRIEB\n", "STORAGE MODE\n")
+       : dp3000_localised("NUR-DRUCKER-BETRIEB\n", "PRINTER-ONLY MODE\n");
+    s += dp3000_localised("1.AUSDRUCK: %1\n", "FIRST PRINTOUT: %1\n")
+             .arg(QString::fromLatin1(lengths[qBound(0,
+                   dp3000_settings.first_print_length, 5)]));
+    s += dp3000_localised("2.AUSDRUCK: %1\n", "SECOND PRINTOUT: %1\n")
+             .arg(QString::fromLatin1(lengths[qBound(0,
+                   dp3000_settings.second_print_length, 5)]));
+    s += dp3000_localised("PC-BAUDRATE %1 BAUD\n", "PC BAUD RATE %1 BAUD\n")
+             .arg(baud[qBound(0, dp3000_settings.pc_baud, 4)]);
+    s += dp3000_localised("SCHLUESSEL: %1\n", "KEY CODE: %1\n")
+             .arg(dp3000_settings.key_code);
+    s += dp3000_localised("MEHRWERTSTEUER %1,%2%\n", "VAT RATE %1.%2%\n")
+             .arg(dp3000_settings.vat_half_percent / 2)
+             .arg((dp3000_settings.vat_half_percent & 1) ? 5 : 0);
+    return s;
+}
+
+static QString
+dp3000_setting_name(Dp3000Setting setting)
+{
+    static const char *const german[] = {
+        "DATUM/UHRZEIT", "DATAPRINT NUMMER", "SPEICHERKARTEN NUMMER",
+        "BETRIEBSART", "LAENGE 1. AUSDRUCK", "SELBSTDEF. 1. AUSDRUCK",
+        "LAENGE 2. AUSDRUCK", "SELBSTDEF. 2. AUSDRUCK", "KASSENBELEG",
+        "BETRIEB OHNE KARTE", "NUMMERN DRUCKEN", "GERAETEAUSWERTUNG",
+        "GERAETEEINSTELLUNG UEBERSCHREIBEN", "PC-BAUDRATE", "SCHLUESSEL",
+        "AUSWERTUNGSART", "GERAETEDATEN LOESCHEN", "MIT STATISTIK",
+        "MIT KOPIE", "MIT LISTE", "MIT KONTROLLE", "IMPFCODE LOESCHEN",
+        "UHR-STELLER", "MEHRWERTSTEUER"
+    };
+    static const char *const english[] = {
+        "DATE/TIME", "DATAPRINT NUMBER", "MEMORY-CARD NUMBER",
+        "OPERATING MODE", "FIRST PRINTOUT LENGTH", "CUSTOM FIRST PRINTOUT",
+        "SECOND PRINTOUT LENGTH", "CUSTOM SECOND PRINTOUT", "CASH RECEIPT",
+        "OPERATION WITHOUT CARD", "PRINT NUMBERS", "MACHINE EVALUATION",
+        "OVERWRITE MACHINE SETTINGS", "PC BAUD RATE", "KEY CODE",
+        "EVALUATION TYPE", "DELETE MACHINE DATA", "INCLUDE STATISTICS",
+        "INCLUDE COPY", "INCLUDE LIST", "CHECK TRANSFER", "DELETE ADP CODE",
+        "SET MACHINE CLOCK", "VAT RATE"
+    };
+    const int i = static_cast<int>(setting);
+    return QString::fromUtf8((dp3000_english ? english : german)[i]);
+}
+
+static QString
+dp3000_setting_value(Dp3000Setting setting)
+{
+    static const char *const lengths_de[] = { "MAXIMAL", "MITTEL", "KURZ", "GELDSACK", "SELBSTDEF.", "KEINER" };
+    static const char *const lengths_en[] = { "MAXIMUM", "MEDIUM", "SHORT", "CASH-BAG", "CUSTOM", "NONE" };
+    static const int baud[] = { 2400, 4800, 9600, 19200, 38400 };
+    const char *const *lengths = dp3000_english ? lengths_en : lengths_de;
+    auto yesno = [](bool v) {
+        return v ? dp3000_localised("EIN", "ON")
+                 : dp3000_localised("AUS", "OFF");
+    };
+
+    switch (setting) {
+        case Dp3000Setting::DateTime: return dp3000_clock_now().toString(QStringLiteral("dd.MM.yy hh:mm"));
+        case Dp3000Setting::DataprintNumber: return QStringLiteral("%1").arg(dp3000_settings.dataprint_number, 4, 10, QLatin1Char('0'));
+        case Dp3000Setting::CardNumber: return QStringLiteral("%1").arg(dp3000_settings.card_number, 4, 10, QLatin1Char('0'));
+        case Dp3000Setting::StorageMode: return dp3000_settings.storage_mode ? dp3000_localised("SPEICHER", "STORAGE") : dp3000_localised("NUR-DRUCKER", "PRINTER ONLY");
+        case Dp3000Setting::FirstPrintLength: return QString::fromLatin1(lengths[dp3000_settings.first_print_length]);
+        case Dp3000Setting::FirstCustom: return yesno(dp3000_settings.first_custom);
+        case Dp3000Setting::SecondPrintLength: return QString::fromLatin1(lengths[dp3000_settings.second_print_length]);
+        case Dp3000Setting::SecondCustom: return yesno(dp3000_settings.second_custom);
+        case Dp3000Setting::CashReceipt: return yesno(dp3000_settings.cash_receipt);
+        case Dp3000Setting::WithoutCard: return yesno(dp3000_settings.without_card);
+        case Dp3000Setting::PrintNumbers: return yesno(dp3000_settings.print_numbers);
+        case Dp3000Setting::EvaluationEnabled: return yesno(dp3000_settings.evaluation_enabled);
+        case Dp3000Setting::OverwriteMachineSettings: return yesno(dp3000_settings.overwrite_machine_settings);
+        case Dp3000Setting::PcBaud: return QString::number(baud[dp3000_settings.pc_baud]);
+        case Dp3000Setting::KeyCode: return dp3000_settings.key_code;
+        case Dp3000Setting::EvaluationType: return QString::number(dp3000_settings.evaluation_type + 1);
+        case Dp3000Setting::DeleteMachineData: return yesno(dp3000_settings.delete_machine_data);
+        case Dp3000Setting::Statistics: return yesno(dp3000_settings.statistics);
+        case Dp3000Setting::Copy: return yesno(dp3000_settings.copy);
+        case Dp3000Setting::List: return yesno(dp3000_settings.list);
+        case Dp3000Setting::Control: return yesno(dp3000_settings.control);
+        case Dp3000Setting::DeleteAdpCode: return yesno(dp3000_settings.delete_adp_code);
+        case Dp3000Setting::ClockSetter: return yesno(dp3000_settings.clock_setter);
+        case Dp3000Setting::Vat: return QStringLiteral("%1,%2%").arg(dp3000_settings.vat_half_percent / 2).arg((dp3000_settings.vat_half_percent & 1) ? 5 : 0);
+        case Dp3000Setting::Count: break;
+    }
+    return QString();
+}
+
+static void
+dp3000_operator_queue(const QString &message)
+{
+    QString text = message;
+
+    if (!text.endsWith(QLatin1Char('\n')))
+        text += QLatin1Char('\n');
+    cp80_queued += text;
+    dp3000_keyboard_job = true;
+    dp3000_keyboard_paused = false;
+    dp3000_transfer_error = false;
+    cp80_power = true;
+    cp80_render();
+}
+
+static void
+dp3000_finish_settings()
+{
+    dp3000_device_settings_save();
+    dp3000_store_save();
+    dp3000_keyboard_state = Dp3000KeyboardState::Idle;
+    dp3000_cancel_input_timeout();
+    dp3000_operator_queue(dp3000_settings_status(true)
+        + QStringLiteral("------------------------\n")
+        + dp3000_localised("ENDE", "END"));
+}
+
+static void
+dp3000_settings_parameter_prompt()
+{
+    const Dp3000Setting setting = static_cast<Dp3000Setting>(dp3000_setting_index);
+    dp3000_keyboard_state = Dp3000KeyboardState::SettingsParameter;
+    dp3000_operator_queue(dp3000_setting_name(setting) + QLatin1Char('\n')
+        + dp3000_setting_value(setting) + QLatin1Char('\n')
+        + dp3000_localised("AENDERN? ...JA/NEIN", "CHANGE? ...YES/NO"));
+    dp3000_arm_input_timeout();
+}
+
+static void
+dp3000_settings_next_parameter()
+{
+    dp3000_setting_index++;
+    const int evaluation_first = static_cast<int>(Dp3000Setting::KeyCode);
+    const int count = static_cast<int>(Dp3000Setting::Count);
+
+    if (dp3000_setting_index == evaluation_first) {
+        dp3000_keyboard_state = Dp3000KeyboardState::SettingsEvaluationBlock;
+        dp3000_operator_queue(dp3000_localised(
+            "AUSWERTUNGS-PARAMETER\nAENDERN? ...JA/NEIN",
+            "EVALUATION PARAMETERS\nCHANGE? ...YES/NO"));
+        dp3000_arm_input_timeout();
+    } else if (dp3000_setting_index >= count) {
+        dp3000_finish_settings();
+    } else {
+        dp3000_settings_parameter_prompt();
+    }
+}
+
+static void
+dp3000_setting_adjust(int delta)
+{
+    const Dp3000Setting setting = static_cast<Dp3000Setting>(dp3000_setting_index);
+    auto toggle = [delta](int &v) { if (delta != 0) v = !v; };
+
+    switch (setting) {
+        case Dp3000Setting::DateTime:
+        {
+            QDateTime clock = dp3000_clock_now();
+            switch (dp3000_edit_subindex) {
+                case 0: clock = clock.addYears(delta); break;
+                case 1: clock = clock.addMonths(delta); break;
+                case 2: clock = clock.addDays(delta); break;
+                case 3: clock = clock.addSecs(delta * 3600); break;
+                default: clock = clock.addSecs(delta * 60); break;
+            }
+            dp3000_clock_set(clock);
+            break;
+        }
+        case Dp3000Setting::DataprintNumber: {
+            static const int place[] = { 1000, 100, 10, 1 };
+            const int p = place[qBound(0, dp3000_edit_subindex, 3)];
+            int digit = (dp3000_settings.dataprint_number / p) % 10;
+            digit = (digit + delta + 10) % 10;
+            dp3000_settings.dataprint_number =
+                dp3000_settings.dataprint_number - (((dp3000_settings.dataprint_number / p) % 10) * p) + (digit * p);
+            break;
+        }
+        case Dp3000Setting::CardNumber: {
+            static const int place[] = { 1000, 100, 10, 1 };
+            const int p = place[qBound(0, dp3000_edit_subindex, 3)];
+            int digit = (dp3000_settings.card_number / p) % 10;
+            digit = (digit + delta + 10) % 10;
+            dp3000_settings.card_number =
+                dp3000_settings.card_number - (((dp3000_settings.card_number / p) % 10) * p) + (digit * p);
+            break;
+        }
+        case Dp3000Setting::StorageMode: toggle(dp3000_settings.storage_mode); break;
+        case Dp3000Setting::FirstPrintLength:
+            dp3000_settings.first_print_length = (dp3000_settings.first_print_length + delta + 6) % 6;
+            break;
+        case Dp3000Setting::FirstCustom: toggle(dp3000_settings.first_custom); break;
+        case Dp3000Setting::SecondPrintLength:
+            dp3000_settings.second_print_length = (dp3000_settings.second_print_length + delta + 6) % 6;
+            break;
+        case Dp3000Setting::SecondCustom: toggle(dp3000_settings.second_custom); break;
+        case Dp3000Setting::CashReceipt: toggle(dp3000_settings.cash_receipt); break;
+        case Dp3000Setting::WithoutCard: toggle(dp3000_settings.without_card); break;
+        case Dp3000Setting::PrintNumbers: toggle(dp3000_settings.print_numbers); break;
+        case Dp3000Setting::EvaluationEnabled: toggle(dp3000_settings.evaluation_enabled); break;
+        case Dp3000Setting::OverwriteMachineSettings: toggle(dp3000_settings.overwrite_machine_settings); break;
+        case Dp3000Setting::PcBaud:
+            dp3000_settings.pc_baud = (dp3000_settings.pc_baud + delta + 5) % 5;
+            break;
+        case Dp3000Setting::KeyCode: {
+            const int at = qBound(0, dp3000_edit_subindex, 7);
+            int digit = dp3000_settings.key_code.mid(at, 1).toInt();
+            digit = (digit + delta + 10) % 10;
+            dp3000_settings.key_code[at] = QChar(QLatin1Char('0').unicode() + digit);
+            break;
+        }
+        case Dp3000Setting::EvaluationType:
+            dp3000_settings.evaluation_type = (dp3000_settings.evaluation_type + delta + 6) % 6;
+            break;
+        case Dp3000Setting::DeleteMachineData: toggle(dp3000_settings.delete_machine_data); break;
+        case Dp3000Setting::Statistics: toggle(dp3000_settings.statistics); break;
+        case Dp3000Setting::Copy: toggle(dp3000_settings.copy); break;
+        case Dp3000Setting::List: toggle(dp3000_settings.list); break;
+        case Dp3000Setting::Control: toggle(dp3000_settings.control); break;
+        case Dp3000Setting::DeleteAdpCode: toggle(dp3000_settings.delete_adp_code); break;
+        case Dp3000Setting::ClockSetter: toggle(dp3000_settings.clock_setter); break;
+        case Dp3000Setting::Vat:
+            dp3000_settings.vat_half_percent = qBound(28,
+                dp3000_settings.vat_half_percent + delta, 40);
+            break;
+        case Dp3000Setting::Count: break;
+    }
+
+    const int edit_parts = (setting == Dp3000Setting::DateTime) ? 5
+                         : ((setting == Dp3000Setting::DataprintNumber)
+                            || (setting == Dp3000Setting::CardNumber)) ? 4
+                         : (setting == Dp3000Setting::KeyCode) ? 8 : 1;
+    dp3000_operator_queue(dp3000_setting_name(setting) + QLatin1Char('\n')
+        + dp3000_setting_value(setting) + QStringLiteral(" [%1/%2]")
+              .arg(dp3000_edit_subindex + 1).arg(edit_parts)
+        + dp3000_localised("\n+/- AENDERN, INIT WEITER",
+                           "\n+/- CHANGE, INIT NEXT"));
+    dp3000_arm_input_timeout();
+}
+
+static void
+dp3000_begin_settings_after_status()
+{
+    dp3000_keyboard_state = Dp3000KeyboardState::SettingsShowCurrent;
+    dp3000_operator_queue(dp3000_settings_status(false)
+        + dp3000_localised("DIE AKTUELLE EINSTELLUNG\nZEIGEN? ...JA/NEIN",
+                           "SHOW CURRENT SETTINGS?\n...YES/NO"));
+    dp3000_arm_input_timeout();
+}
+
+static void
+dp3000_begin_print_job(Dp3000PrintFormat format)
+{
+    dp3000_print_job_records.clear();
+    dp3000_print_format = format;
+    for (auto it = dp3000_records.crbegin(); it != dp3000_records.crend(); ++it)
+        dp3000_print_job_records.append(dp3000_format_record(*it, format));
+
+    dp3000_print_job_record = 0;
+    dp3000_keyboard_state = Dp3000KeyboardState::Idle;
+    if (dp3000_print_job_records.isEmpty()) {
+        dp3000_operator_queue(dp3000_text(Dp3000Text::NoData));
+        return;
+    }
+    dp3000_operator_queue(dp3000_print_job_records.constFirst());
+}
+
+static bool
+dp3000_keyboard_begin()
+{
+    if (dp3000_keyboard_ready()) {
+        dp3000_cancel_input_timeout();
+        return true;
+    }
+
+    /* The manual requires both the keyboard and mains adapter, but it does not
+       classify a key press without them as a transfer fault.  A disconnected
+       keyboard cannot signal the DATAprint at all, and without the adapter the
+       keyboard interface is simply unavailable: leave the key's mechanical
+       click audible, but do not light FEHLER PC/AUTOMAT or start an alarm. */
+    cp80_render();
+    return false;
+}
+
+static bool
+dp3000_is_print_prompt(Dp3000KeyboardState state)
+{
+    return (state == Dp3000KeyboardState::PrintMaximal)
+        || (state == Dp3000KeyboardState::PrintMedium)
+        || (state == Dp3000KeyboardState::PrintShort)
+        || (state == Dp3000KeyboardState::PrintBag)
+        || (state == Dp3000KeyboardState::PrintCustom);
+}
+
+static void
+dp3000_print_prompt(Dp3000KeyboardState state, Dp3000Text question)
+{
+    dp3000_keyboard_state = state;
+    dp3000_operator_queue(dp3000_text(question) + QLatin1Char('\n')
+                          + dp3000_text(Dp3000Text::YesNo));
+    dp3000_arm_input_timeout();
+}
+
+static void
+dp3000_print_stored(Dp3000PrintFormat format)
+{
+    if (!dp3000_card_inserted) {
+        dp3000_keyboard_state = Dp3000KeyboardState::Idle;
+        dp3000_operator_queue(dp3000_text(Dp3000Text::NoCard));
+    } else if (!dp3000_has_stored_data()) {
+        dp3000_keyboard_state = Dp3000KeyboardState::Idle;
+        dp3000_operator_queue(dp3000_text(Dp3000Text::NoData));
+    } else {
+        dp3000_begin_print_job(format);
+        if (!dp3000_paper_loaded) {
+            dp3000_keyboard_paused = true;
+            dp3000_paper_restart_required = true;
+        }
+    }
+}
+
+static void
+dp3000_keyboard_yes()
+{
+    if (!dp3000_keyboard_begin())
+        return;
+
+    /* Section 4.2.1 requires another press of DRUCKEN after a new roll is
+       fitted.  Merely toggling the service control must not restart the motor. */
+    if (dp3000_paper_restart_required) {
+        if (!dp3000_paper_loaded) {
+            cp80_render();
+            return;
+        }
+        dp3000_paper_restart_required = false;
+        dp3000_keyboard_paused = false;
+        if ((dp3000_print_job_record >= 0)
+            && (dp3000_print_job_record < dp3000_print_job_records.size()))
+            cp80_queued = dp3000_print_job_records.at(dp3000_print_job_record);
+        cp80_power = true;
+        cp80_render();
+        return;
+    }
+
+    switch (dp3000_keyboard_state) {
+        case Dp3000KeyboardState::PrintMaximal:
+            dp3000_print_stored(Dp3000PrintFormat::Maximum);
+            break;
+        case Dp3000KeyboardState::PrintMedium:
+            dp3000_print_stored(Dp3000PrintFormat::Medium);
+            break;
+        case Dp3000KeyboardState::PrintShort:
+            dp3000_print_stored(Dp3000PrintFormat::Short);
+            break;
+        case Dp3000KeyboardState::PrintBag:
+            dp3000_print_stored(Dp3000PrintFormat::CashBag);
+            break;
+        case Dp3000KeyboardState::PrintCustom:
+            dp3000_print_stored(Dp3000PrintFormat::Custom);
+            break;
+
+        case Dp3000KeyboardState::DeleteConfirm:
+            dp3000_keyboard_state = Dp3000KeyboardState::DeleteAgain;
+            dp3000_operator_queue(
+                dp3000_text(Dp3000Text::PressDeleteAgain));
+            break;
+
+        case Dp3000KeyboardState::InitialiseConfirm:
+            dp3000_keyboard_state = Dp3000KeyboardState::InitialiseAgain;
+            dp3000_operator_queue(
+                dp3000_text(Dp3000Text::InitialiseWarning));
+            break;
+
+        case Dp3000KeyboardState::InitialiseAgain:
+        {
+            const bool card_present = dp3000_card_inserted;
+
+            if (dp3000_card_inserted && dp3000_card_write_protected) {
+                dp3000_keyboard_state = Dp3000KeyboardState::Idle;
+                dp3000_operator_queue(dp3000_localised(
+                    "DIE SPEICHERKARTE IST\nSCHREIBGESCHUETZT!",
+                    "MEMORY CARD IS\nWRITE-PROTECTED!"));
+                break;
+            }
+
+            if (dp3000_card_inserted) {
+                dp3000_records.clear();
+                dp3000_deleted_records.clear();
+                dp3000_memory_fault = false;
+                dp3000_memory_full = false;
+                dp3000_store_save();
+                dp3000_recovery_save();
+            }
+            dp3000_settings = Dp3000Settings();
+            dp3000_device_settings_save();
+            dp3000_store_save();
+            QString message = dp3000_text(Dp3000Text::Initialised)
+                            + QLatin1Char('\n');
+            message += card_present
+                ? dp3000_text(Dp3000Text::DataDeleted)
+                    + QLatin1Char('\n')
+                : dp3000_text(Dp3000Text::NoCard) + QLatin1Char('\n');
+            dp3000_operator_queue(message);
+            dp3000_begin_settings_after_status();
+            break;
+        }
+
+        case Dp3000KeyboardState::SettingsShowCurrent:
+            dp3000_keyboard_state = Dp3000KeyboardState::SettingsOperatingBlock;
+            dp3000_operator_queue(dp3000_settings_status(true)
+                + dp3000_localised("BETRIEBS-PARAMETER\nAENDERN? ...JA/NEIN",
+                                   "OPERATING PARAMETERS\nCHANGE? ...YES/NO"));
+            dp3000_arm_input_timeout();
+            break;
+
+        case Dp3000KeyboardState::SettingsOperatingBlock:
+            dp3000_setting_index = 0;
+            dp3000_settings_parameter_prompt();
+            break;
+
+        case Dp3000KeyboardState::SettingsEvaluationBlock:
+            dp3000_setting_index = static_cast<int>(Dp3000Setting::KeyCode);
+            dp3000_settings_parameter_prompt();
+            break;
+
+        case Dp3000KeyboardState::SettingsParameter:
+            dp3000_keyboard_state = Dp3000KeyboardState::SettingsEdit;
+            dp3000_edit_subindex = 0;
+            dp3000_setting_adjust(0);
+            break;
+
+        case Dp3000KeyboardState::SettingsEdit:
+            dp3000_setting_adjust(+1);
+            break;
+
+        case Dp3000KeyboardState::DeleteAgain:
+            /* The second confirmation is specifically the delete key. */
+            dp3000_operator_queue(
+                dp3000_text(Dp3000Text::PressDeleteAgain));
+            break;
+
+        case Dp3000KeyboardState::RecoverConfirm:
+            dp3000_records = dp3000_deleted_records;
+            dp3000_deleted_records.clear();
+            dp3000_memory_full = dp3000_records_bytes(dp3000_records)
+                               >= DP3000_STORE_MAX;
+            dp3000_store_save();
+            dp3000_recovery_save();
+            dp3000_keyboard_state = Dp3000KeyboardState::Idle;
+            dp3000_operator_queue(dp3000_text(Dp3000Text::DataRestored));
+            break;
+
+        case Dp3000KeyboardState::Idle:
+        default:
+            if (dp3000_keyboard_job) {
+                /* Pause/resume is handled from press/release so a short click
+                   cannot stop the mechanism; the manual requires holding the
+                   key until the current line has completed. */
+                return;
+            } else if (!dp3000_card_inserted) {
+                dp3000_operator_queue(dp3000_text(Dp3000Text::NoCard));
+            } else if (!dp3000_has_stored_data()) {
+                dp3000_operator_queue(dp3000_text(Dp3000Text::NoData));
+            } else {
+                dp3000_print_prompt(Dp3000KeyboardState::PrintMaximal,
+                                    Dp3000Text::PrintMaximum);
+            }
+            break;
+    }
+}
+
+static void
+dp3000_keyboard_initialise()
+{
+    if (!dp3000_keyboard_begin())
+        return;
+
+    if (dp3000_is_print_prompt(dp3000_keyboard_state)) {
+        dp3000_keyboard_state = Dp3000KeyboardState::Idle;
+        dp3000_operator_queue(dp3000_text(Dp3000Text::Cancelled));
+        return;
+    }
+    if (dp3000_card_inserted && dp3000_card_write_protected
+        && (dp3000_keyboard_state == Dp3000KeyboardState::Idle)) {
+        dp3000_operator_queue(dp3000_localised(
+            "DIE SPEICHERKARTE IST\nSCHREIBGESCHUETZT!",
+            "MEMORY CARD IS\nWRITE-PROTECTED!"));
+        return;
+    }
+    if (dp3000_keyboard_state == Dp3000KeyboardState::SettingsEdit) {
+        const Dp3000Setting setting =
+            static_cast<Dp3000Setting>(dp3000_setting_index);
+        const int parts = (setting == Dp3000Setting::DateTime) ? 5
+                        : ((setting == Dp3000Setting::DataprintNumber)
+                           || (setting == Dp3000Setting::CardNumber)) ? 4
+                        : (setting == Dp3000Setting::KeyCode) ? 8 : 1;
+
+        if (++dp3000_edit_subindex < parts)
+            dp3000_setting_adjust(0);
+        else
+            dp3000_settings_next_parameter();
+        return;
+    }
+    if (dp3000_keyboard_state == Dp3000KeyboardState::SettingsParameter) {
+        dp3000_settings_next_parameter();
+        return;
+    }
+    if ((dp3000_keyboard_state == Dp3000KeyboardState::SettingsShowCurrent)
+        || (dp3000_keyboard_state == Dp3000KeyboardState::SettingsOperatingBlock)
+        || (dp3000_keyboard_state == Dp3000KeyboardState::SettingsEvaluationBlock)) {
+        dp3000_finish_settings();
+        return;
+    }
+    if ((dp3000_keyboard_state == Dp3000KeyboardState::Idle)
+        && dp3000_keyboard_job)
+        return;
+
+    dp3000_keyboard_state = Dp3000KeyboardState::InitialiseConfirm;
+    dp3000_operator_queue(dp3000_text(Dp3000Text::InitialiseConfirm));
+    dp3000_arm_input_timeout();
+}
+
+static void
+dp3000_keyboard_no_delete()
+{
+    if (!dp3000_keyboard_begin())
+        return;
+
+    switch (dp3000_keyboard_state) {
+        case Dp3000KeyboardState::PrintMaximal:
+            dp3000_print_prompt(Dp3000KeyboardState::PrintMedium,
+                                Dp3000Text::PrintMedium);
+            break;
+
+        case Dp3000KeyboardState::PrintMedium:
+            dp3000_print_prompt(Dp3000KeyboardState::PrintShort,
+                                Dp3000Text::PrintShort);
+            break;
+
+        case Dp3000KeyboardState::PrintShort:
+            dp3000_print_prompt(Dp3000KeyboardState::PrintBag,
+                                Dp3000Text::PrintBag);
+            break;
+
+        case Dp3000KeyboardState::PrintBag:
+            dp3000_print_prompt(Dp3000KeyboardState::PrintCustom,
+                                Dp3000Text::PrintCustom);
+            break;
+
+        case Dp3000KeyboardState::PrintCustom:
+            dp3000_keyboard_state = Dp3000KeyboardState::Idle;
+            break;
+
+        case Dp3000KeyboardState::SettingsShowCurrent:
+            dp3000_keyboard_state = Dp3000KeyboardState::SettingsOperatingBlock;
+            dp3000_operator_queue(dp3000_localised(
+                "BETRIEBS-PARAMETER\nAENDERN? ...JA/NEIN",
+                "OPERATING PARAMETERS\nCHANGE? ...YES/NO"));
+            dp3000_arm_input_timeout();
+            break;
+
+        case Dp3000KeyboardState::SettingsOperatingBlock:
+            dp3000_keyboard_state = Dp3000KeyboardState::SettingsEvaluationBlock;
+            dp3000_operator_queue(dp3000_localised(
+                "AUSWERTUNGS-PARAMETER\nAENDERN? ...JA/NEIN",
+                "EVALUATION PARAMETERS\nCHANGE? ...YES/NO"));
+            dp3000_arm_input_timeout();
+            break;
+
+        case Dp3000KeyboardState::SettingsEvaluationBlock:
+            dp3000_finish_settings();
+            break;
+
+        case Dp3000KeyboardState::SettingsParameter:
+            dp3000_settings_next_parameter();
+            break;
+
+        case Dp3000KeyboardState::SettingsEdit:
+            dp3000_setting_adjust(-1);
+            break;
+
+        case Dp3000KeyboardState::DeleteAgain:
+            if (dp3000_card_write_protected) {
+                dp3000_keyboard_state = Dp3000KeyboardState::Idle;
+                dp3000_operator_queue(dp3000_localised(
+                    "DIE SPEICHERKARTE IST\nSCHREIBGESCHUETZT!",
+                    "MEMORY CARD IS\nWRITE-PROTECTED!"));
+                break;
+            }
+            dp3000_deleted_records = dp3000_records;
+            dp3000_records.clear();
+            dp3000_memory_full = false;
+            dp3000_store_save();
+            dp3000_recovery_save();
+            dp3000_keyboard_state = Dp3000KeyboardState::Idle;
+            dp3000_operator_queue(dp3000_text(Dp3000Text::DataDeleted));
+            break;
+
+        case Dp3000KeyboardState::InitialiseConfirm:
+        case Dp3000KeyboardState::InitialiseAgain:
+            dp3000_begin_settings_after_status();
+            break;
+
+        case Dp3000KeyboardState::DeleteConfirm:
+        case Dp3000KeyboardState::RecoverConfirm:
+            dp3000_keyboard_state = Dp3000KeyboardState::Idle;
+            dp3000_operator_queue(dp3000_text(Dp3000Text::Cancelled));
+            break;
+
+        case Dp3000KeyboardState::Idle:
+        default:
+            if (dp3000_keyboard_job) {
+                return;
+            } else if (!dp3000_card_inserted) {
+                dp3000_operator_queue(dp3000_text(Dp3000Text::NoCard));
+            } else if (!dp3000_has_stored_data()
+                       && !dp3000_deleted_records.isEmpty()) {
+                dp3000_keyboard_state = Dp3000KeyboardState::RecoverConfirm;
+                dp3000_operator_queue(
+                    dp3000_text(Dp3000Text::RestoreDeleted));
+            } else if (!dp3000_has_stored_data()) {
+                dp3000_operator_queue(dp3000_text(Dp3000Text::NoData));
+            } else {
+                dp3000_keyboard_state = Dp3000KeyboardState::DeleteConfirm;
+                dp3000_operator_queue(
+                    dp3000_text(Dp3000Text::DataStoredDelete));
+            }
+            break;
+    }
+}
+
+static void
+dp3000_keyboard_print_pressed()
+{
+    if ((dp3000_keyboard_state != Dp3000KeyboardState::Idle)
+        || !dp3000_keyboard_job || dp3000_paper_restart_required
+        || !dp3000_keyboard_ready())
+        return;
+
+    dp3000_print_press_handled = true;
+    if (dp3000_keyboard_paused) {
+        dp3000_keyboard_paused = false;
+        dp3000_pause_requested = false;
+    } else {
+        dp3000_pause_requested = true;
+    }
+    cp80_render();
+}
+
+static void
+dp3000_keyboard_print_released()
+{
+    /* Releasing before the mechanism reaches the line boundary is the short
+       press which the manual says must not stop the total print. */
+    if (!dp3000_keyboard_paused)
+        dp3000_pause_requested = false;
+    cp80_render();
+}
+
 static int
 cp80_manual_feed_once()
 {
+    if (cp80_model == Cp80PrinterModel::Dataprint3000) {
+        cp80_power = true;
+        if (!cp80_can_print() || !dp3000_paper_loaded) {
+            cp80_render();
+            return 0;
+        }
+
+        cp80_printed += QLatin1Char('\n');
+        cp80_batt_spend(QString(), false);
+        cp80_line_batt.append(cp80_drive_level());
+        if (dp3000_paper_lines > 0)
+            dp3000_paper_lines--;
+        if (dp3000_paper_lines == 0) {
+            dp3000_paper_loaded = false;
+            if (!cp80_queued.isEmpty()) {
+                dp3000_paper_restart_required = true;
+                dp3000_keyboard_paused = true;
+            }
+        }
+        prn_dp3000_sound_feed(1000);
+        cp80_begin_paper_motion();
+        return DP3000_FEED_MS;
+    }
+
     /* Holding FEED is a continuous paper operation, but only while OFFLINE.
        Each repeated advance still spends the motor's share of the pack and
        gets its own paper motion. */
@@ -3362,10 +5702,19 @@ cp80_manual_feed_once()
 static void
 cp80_feed_line()
 {
+    const bool dp3000 = (cp80_model == Cp80PrinterModel::Dataprint3000);
+    const bool keyboard_path = dp3000 && dp3000_keyboard_job
+                            && cp80_ac
+                            && !dp3000_keyboard_paused;
+
     /* A flat pack prints nothing, and neither does a printer that is off or
        offline.  What has already arrived stays in the buffer -- that is the
        state the manual describes, with the ONLINE lamp blinking over it. */
-    if (cp80_queued.isEmpty() || !cp80_power || (prn_cp80_connected() == 0))
+    if (cp80_queued.isEmpty() || !cp80_power
+        || ((prn_cp80_connected() == 0) && !keyboard_path))
+        return;
+    if (dp3000 && (!dp3000_paper_loaded
+                   || dp3000_paper_restart_required))
         return;
 
     /* Put online on a pack that cannot drive the head: it goes straight back
@@ -3395,14 +5744,241 @@ cp80_feed_line()
     cp80_queued.remove(0, at + 1);
     const int speed = cp80_batt_spend(line);
 
-    prn_cp80_sound_line(unsigned(columns), unsigned(ink), unsigned(speed));
+    if (dp3000 && (dp3000_paper_lines > 0)) {
+        dp3000_paper_lines--;
+        if (dp3000_paper_lines == 0) {
+            dp3000_paper_loaded = false;
+            if (!cp80_queued.isEmpty()) {
+                dp3000_paper_restart_required = true;
+                dp3000_keyboard_paused = true;
+            }
+        }
+    }
+
+    if (dp3000 && dp3000_pause_requested && keyboard_path) {
+        /* A held DRUCKEN key takes effect only after the line that was already
+           in progress has completed, exactly as the operator guide specifies. */
+        dp3000_keyboard_paused = true;
+        dp3000_pause_requested = false;
+    }
+
+    if (cp80_model == Cp80PrinterModel::Dpu414)
+        prn_cp80_sound_line(unsigned(columns), unsigned(ink), unsigned(speed));
+    else
+        prn_dp3000_sound_line(unsigned(columns), unsigned(ink), unsigned(speed));
     cp80_line_batt.append(cp80_drive_level());
-    if (columns > 0)
+    if ((cp80_model == Cp80PrinterModel::Dpu414) && (columns > 0))
         cp80_head_away = !cp80_head_away;
-    cp80_schedule_home(unsigned(columns), unsigned(speed),
-        ((cp80_feed != nullptr) ? cp80_feed->interval() : CP80_FIRST_LINE_MS)
-        + CP80_HOME_DELAY_MS);
+    if (cp80_model == Cp80PrinterModel::Dpu414)
+        cp80_schedule_home(unsigned(columns), unsigned(speed),
+            ((cp80_feed != nullptr) ? cp80_feed->interval() : CP80_FIRST_LINE_MS)
+            + CP80_HOME_DELAY_MS);
+    if (dp3000 && keyboard_path && cp80_queued.isEmpty()) {
+        if ((dp3000_print_job_record >= 0)
+            && (++dp3000_print_job_record < dp3000_print_job_records.size())) {
+            cp80_queued = dp3000_print_job_records.at(dp3000_print_job_record);
+        } else {
+            dp3000_print_job_records.clear();
+            dp3000_print_job_record = -1;
+            dp3000_keyboard_job = false;
+            dp3000_keyboard_paused = false;
+            if (dp3000_input_timeout_requested
+                && (dp3000_keyboard_state != Dp3000KeyboardState::Idle)
+                && (dp3000_input_timeout != nullptr))
+                dp3000_input_timeout->start(60000);
+            else if (dp3000_keyboard_state == Dp3000KeyboardState::Idle)
+                dp3000_cancel_input_timeout();
+        }
+        if (!dp3000_paper_loaded && !cp80_queued.isEmpty()) {
+            dp3000_paper_restart_required = true;
+            dp3000_keyboard_paused = true;
+        }
+    } else if (dp3000 && !keyboard_path && cp80_queued.isEmpty()
+               && (prn_cp80_connected() != 0)) {
+        /* The queue is empty when the final mechanical event starts, not when
+           it ends.  Delay the once-per-second "unplug now" signal until the
+           last shuttle/feed cycle has actually stopped.  A generation token
+           prevents a newer transfer from inheriting an older completion. */
+        const unsigned generation = dp3000_job_generation;
+        const int delay = columns ? DP3000_LINE_MS : DP3000_FEED_MS;
+
+        QTimer::singleShot(delay, cp80_win, [generation]() {
+            if ((generation == dp3000_job_generation)
+                && (cp80_model == Cp80PrinterModel::Dataprint3000)
+                && (prn_cp80_connected() != 0) && cp80_queued.isEmpty()
+                && !dp3000_keyboard_job && !dp3000_memory_fault
+                && !dp3000_transfer_error && dp3000_paper_loaded) {
+                dp3000_complete_signal = true;
+                cp80_render();
+            }
+        });
+    }
     cp80_begin_paper_motion();
+}
+
+static void
+dp3000_trim_wire_padding(QString *record)
+{
+    /* The command frame ends in two LFs which the generic paper parser quite
+       correctly renders.  They are transport padding, not part of the stored
+       device report. */
+    while (record->startsWith(QLatin1Char('\n'))
+           || record->startsWith(QLatin1Char('\r')))
+        record->remove(0, 1);
+    if (!record->isEmpty() && !record->endsWith(QLatin1Char('\n')))
+        record->append(QLatin1Char('\n'));
+}
+
+static QString
+dp3000_record_envelope(const QString &payload)
+{
+    QString record;
+    const QDateTime stamp = dp3000_clock_now();
+
+    dp3000_dataset_number++;
+    if (dp3000_dataset_number == 0)
+        dp3000_dataset_number = 1;
+    record += stamp.toString(QStringLiteral("dd.MM.yy/hh:mm"))
+           + QStringLiteral("     V4.00\n");
+    record += dp3000_localised("DATENSATZ: %1\n", "DATA SET:  %1\n")
+                  .arg(dp3000_dataset_number, 13, 10, QLatin1Char(' '));
+    if (dp3000_settings.print_numbers) {
+        record += dp3000_localised("DATAPRINT:          %1\n",
+                                   "DATAPRINT:          %1\n")
+                      .arg(dp3000_settings.dataprint_number, 4, 10,
+                           QLatin1Char('0'));
+        record += dp3000_localised("SPEICHERKARTE:      %1\n",
+                                   "MEMORY CARD:        %1\n")
+                      .arg(dp3000_settings.card_number, 4, 10,
+                           QLatin1Char('0'));
+    }
+    record += payload;
+    return record;
+}
+
+static QString
+dp3000_photo_play_print(const QString &record, int setting)
+{
+    /* NONE and MAXIMUM are fully defined for the recovered Photo Play stream.
+       Medium/short/cash-bag/custom need the still-unknown ESC K tag meanings;
+       printing the full authentic report is preferable to silently inventing
+       sections while retaining those choices for a future measured mapping. */
+    if (setting == 5)
+        return QString();
+    return record;
+}
+
+static void
+dp3000_finish_transfer(uint64_t serial, int result, uint16_t expected,
+                       uint16_t calculated)
+{
+    if (serial != 0)
+        dp3000_transfer_completed_seen = serial;
+    if ((serial == 0) || (serial != dp3000_pending_serial)
+        || (serial == dp3000_discard_transfer_serial)) {
+        dp3000_pending_record.clear();
+        dp3000_pending_serial = 0;
+        return;
+    }
+
+    QString payload = dp3000_pending_record;
+    dp3000_pending_record.clear();
+    dp3000_pending_serial = 0;
+    if (result <= 0) {
+        dp3000_transfer_error = true;
+        dp3000_complete_signal = false;
+        pclog("DP3000: rejecting record %llu: checksum %04X, calculated %04X\n",
+              (unsigned long long) serial, expected, calculated);
+        cp80_render();
+        return;
+    }
+
+    dp3000_trim_wire_padding(&payload);
+    const bool card_writable = dp3000_card_inserted
+                            && !dp3000_card_write_protected
+                            && !dp3000_memory_fault;
+    const bool cardless_ok = !dp3000_card_inserted
+                          && dp3000_settings.without_card;
+    const bool storage_fault_fallback = dp3000_card_inserted
+                                     && dp3000_memory_fault;
+
+    if (!card_writable && !cardless_ok && !storage_fault_fallback) {
+        if (dp3000_card_write_protected
+            && (serial != dp3000_wp_notified_serial)) {
+            cp80_queued += dp3000_localised(
+                "DIE SPEICHERKARTE IST\nSCHREIBGESCHUETZT!\n",
+                "MEMORY CARD IS\nWRITE-PROTECTED!\n");
+            dp3000_wp_notified_serial = serial;
+        } else if (!dp3000_card_inserted
+                   && (serial != dp3000_no_card_notified_serial)) {
+            cp80_queued += dp3000_text(Dp3000Text::NoCard)
+                          + QLatin1Char('\n');
+            dp3000_no_card_notified_serial = serial;
+        }
+        dp3000_transfer_error = true;
+        cp80_render();
+        return;
+    }
+
+    const QString record = dp3000_record_envelope(payload);
+    bool stored = false;
+    bool force_full_print = cardless_ok || storage_fault_fallback
+                         || dp3000_memory_full;
+
+    if (card_writable && dp3000_settings.storage_mode
+        && !dp3000_memory_full) {
+        QStringList prospective = dp3000_records;
+        prospective.append(record);
+        if (dp3000_records_encode(prospective, true).size()
+            <= DP3000_STORE_MAX) {
+            if (!dp3000_deleted_records.isEmpty()) {
+                /* Recovery is possible until the first complete new record is
+                   committed, not merely until its first UART byte arrives. */
+                dp3000_deleted_records.clear();
+                dp3000_recovery_save();
+            }
+            dp3000_records = prospective;
+            dp3000_store_save();
+            stored = true;
+        } else {
+            dp3000_memory_full = true;
+            force_full_print = true;
+        }
+    }
+
+    /* The running data-set identity belongs to the inserted card even when
+       this particular data set was configured for paper-only output. */
+    if (dp3000_card_inserted && !stored && !dp3000_memory_fault
+        && !dp3000_memory_full)
+        dp3000_store_save();
+
+    QString paper;
+    if (force_full_print) {
+        paper = record;
+    } else {
+        paper += dp3000_photo_play_print(
+            record, dp3000_settings.first_print_length);
+        paper += dp3000_photo_play_print(
+            record, dp3000_settings.second_print_length);
+    }
+    if (!paper.isEmpty() && dp3000_card_inserted) {
+        const int available = qMax(0, DP3000_STORE_MAX
+            - dp3000_records_bytes(dp3000_records));
+        paper += dp3000_localised("ABLAGESPEICHER FREI: ",
+                                  "MEMORY AVAILABLE: ")
+              + QString::number(available / 1024) + QStringLiteral(" KB\n");
+    }
+    cp80_queued += paper;
+    dp3000_transfer_error = false;
+    dp3000_complete_signal = paper.isEmpty();
+    dp3000_job_generation++;
+    if (!dp3000_paper_loaded && !paper.isEmpty())
+        dp3000_paper_restart_required = true;
+    pclog("DP3000: accepted record %llu as data set %u (%s, %s)\n",
+          (unsigned long long) serial, dp3000_dataset_number,
+          stored ? "stored" : "not stored",
+          paper.isEmpty() ? "not printed" : "queued for print");
+    cp80_render();
 }
 
 static void
@@ -3429,12 +6005,52 @@ cp80_pump()
             cp80_queued.clear();
             cp80_printed.clear();
             cp80_line_batt.clear();
+            dp3000_pending_record.clear();
+            dp3000_pending_serial = 0;
             cp80_render();
         }
         if (n == 0)
             break;
         buf[n] = 0;
-        cp80_queued += QString::fromUtf8(buf);
+        const QString received = QString::fromUtf8(buf);
+
+        if (cp80_model == Cp80PrinterModel::Dataprint3000) {
+            const uint64_t transfer_serial = prn_cp80_transfer_serial();
+
+            /* RESET electrically aborts the current evaluation.  The guest
+               may already have placed more bytes in the UART, so discard the
+               rest of that numbered record until a new XON starts a new one. */
+            if ((dp3000_discard_transfer_serial != 0)
+                && (transfer_serial == dp3000_discard_transfer_serial))
+                continue;
+            if ((dp3000_discard_transfer_serial != 0)
+                && (transfer_serial != dp3000_discard_transfer_serial))
+                dp3000_discard_transfer_serial = 0;
+
+            if ((transfer_serial != 0)
+                && (transfer_serial != dp3000_transfer_serial_seen)) {
+                dp3000_transfer_serial_seen = transfer_serial;
+                dp3000_pending_serial = transfer_serial;
+                dp3000_pending_record.clear();
+                if (dp3000_plug_error_pending) {
+                    cp80_queued += dp3000_localised(
+                        "STECKER-FEHLER !\n", "PLUG ERROR !\n");
+                    dp3000_plug_error_pending = false;
+                } else if (dp3000_abort_pending) {
+                    cp80_queued += dp3000_localised(
+                        "!!WAR ABBRUCH / RESET!!\n",
+                        "!!WAS ABORTED / RESET!!\n");
+                    dp3000_abort_pending = false;
+                }
+            }
+            if (transfer_serial == dp3000_pending_serial)
+                dp3000_pending_record += received;
+            cp80_power = true;
+            dp3000_complete_signal = false;
+            prn_dp3000_sound_transfer();
+        } else {
+            cp80_queued += received;
+        }
 
         /* 28 KB of it, per the manual.  Past that a real printer would be
            holding the host off with its flow control; this at least refuses to
@@ -3450,12 +6066,188 @@ cp80_pump()
             cp80_queued.truncate(CP80_BUFFER_MAX);
         }
     }
+
+    if (cp80_model == Cp80PrinterModel::Dataprint3000) {
+        uint64_t completed = 0;
+        uint16_t expected = 0;
+        uint16_t calculated = 0;
+        const int result = prn_cp80_transfer_result(
+            &completed, &expected, &calculated);
+
+        if ((completed != 0) && (completed != dp3000_transfer_completed_seen))
+            dp3000_finish_transfer(completed, result, expected, calculated);
+
+        if (cp80_queued.size() > CP80_BUFFER_MAX)
+            cp80_queued.truncate(CP80_BUFFER_MAX);
+    }
+}
+
+static void
+dp3000_update_tooltips()
+{
+    if (dp3000_case_feed != nullptr) {
+        dp3000_case_feed->setToolTip(dp3000_english
+            ? QObject::tr("Paper feed — press or hold the green side switch")
+            : QObject::tr("Papiervorschub — press or hold the green side switch"));
+    }
+    if (dp3000_case_reset != nullptr) {
+        dp3000_case_reset->setToolTip(QObject::tr(
+            "RESET — clear the current operation and switch off when idle"));
+    }
+    if (dp3000_key_yes != nullptr) {
+        dp3000_key_yes->setToolTip(dp3000_english
+            ? QObject::tr("+ / yes / print — requires Keyboard and Adapter")
+            : QObject::tr("+ / ja / drucken — requires Keyboard and Adapter"));
+    }
+    if (dp3000_key_init != nullptr) {
+        dp3000_key_init->setToolTip(QObject::tr(
+            "init. — enter settings / confirm next field; requires Keyboard and Adapter"));
+    }
+    if (dp3000_key_no != nullptr) {
+        dp3000_key_no->setToolTip(dp3000_english
+            ? QObject::tr("− / no / delete — requires Keyboard and Adapter")
+            : QObject::tr("− / nein / löschen — requires Keyboard and Adapter"));
+    }
+    if (dp3000_card != nullptr) {
+        dp3000_card->setToolTip(QObject::tr(
+            "256 kB SRAM card — switch the DATAprint off before removing it"));
+    }
+}
+
+static void
+dp3000_select_english(bool enabled, bool persist)
+{
+    if (persist) {
+        photoplay_set_dataprint_english(enabled ? 1 : 0);
+        config_changed = 2;
+        config_save();
+    }
+
+    const bool changed = dp3000_english != enabled;
+    dp3000_english = enabled;
+    dp3000_update_tooltips();
+    if (changed && (cp80_model == Cp80PrinterModel::Dataprint3000)
+        && (cp80_win != nullptr))
+        cp80_render();
+}
+
+static void
+cp80_select_model(int index, bool persist)
+{
+    const Cp80PrinterModel next = (index == 1)
+        ? Cp80PrinterModel::Dataprint3000 : Cp80PrinterModel::Dpu414;
+
+    if (persist) {
+        photoplay_set_printer(
+            (next == Cp80PrinterModel::Dataprint3000)
+                ? PHOTOPLAY_PRINTER_DP3000 : PHOTOPLAY_PRINTER_DPU414);
+        config_changed = 2;
+        config_save();
+    }
+
+    cp80_model_initialised = true;
+    if (next == cp80_model)
+        return;
+
+    prn_dp3000_sound_signal(PRN_DP3000_SIGNAL_NONE);
+    dp3000_complete_signal = false;
+    dp3000_job_generation++;
+
+    /* The Tools menu exists before the optional printer window.  In that case
+       only choose the model; its battery/card state is loaded when it opens.
+       This avoids overwriting an unopened printer's saved battery level. */
+    if (cp80_win == nullptr) {
+        cp80_model = next;
+        if (!cp80_charge_overridden)
+            cp80_charge = (cp80_model == Cp80PrinterModel::Dataprint3000)
+                        ? DP3000_CHARGE_MINS : CP80_CHARGE_MINS;
+        return;
+    }
+
+    cp80_batt_store();
+    if (cp80_model == Cp80PrinterModel::Dataprint3000)
+        dp3000_store_save();
+
+    /* These are two different physical printers.  Never reinterpret paper or
+       a live serial/mechanical job through the newly selected mechanism. */
+    prn_cp80_set_connected(0);
+    prn_cp80_clear();
+    cp80_paper_at = 0;
+    cp80_queued.clear();
+    cp80_printed.clear();
+    cp80_line_batt.clear();
+    dp3000_keyboard_state = Dp3000KeyboardState::Idle;
+    dp3000_cancel_input_timeout();
+    dp3000_keyboard_job = false;
+    dp3000_keyboard_paused = false;
+    dp3000_pause_requested = false;
+    dp3000_print_job_records.clear();
+    dp3000_print_job_record = -1;
+    dp3000_paper_restart_required = false;
+    dp3000_transfer_error = false;
+    dp3000_abort_pending = false;
+    dp3000_plug_error_pending = false;
+    dp3000_discard_transfer_serial = 0;
+    dp3000_pending_serial = 0;
+    dp3000_pending_record.clear();
+    dp3000_transfer_serial_seen = prn_cp80_transfer_serial();
+    dp3000_transfer_completed_seen = prn_cp80_transfer_completed();
+    cp80_model = next;
+    cp80_power = (cp80_model == Cp80PrinterModel::Dataprint3000)
+               ? cp80_ac : true;
+    cp80_batt = CP80_BATT_FULL;
+    cp80_batt_load();
+    if (cp80_model == Cp80PrinterModel::Dataprint3000) {
+        dp3000_device_settings_load();
+        if (dp3000_card_inserted)
+            dp3000_store_load();
+    }
+    cp80_charging = false;
+    cp80_head_away = false;
+    if (cp80_home_timer != nullptr)
+        cp80_home_timer->stop();
+    if (!cp80_charge_overridden)
+        cp80_charge = (cp80_model == Cp80PrinterModel::Dataprint3000)
+                    ? DP3000_CHARGE_MINS : CP80_CHARGE_MINS;
+    if (cp80_feed != nullptr)
+        cp80_feed->setInterval(
+            (cp80_model == Cp80PrinterModel::Dataprint3000)
+                ? DP3000_LINE_MS : CP80_FIRST_LINE_MS);
+    cp80_render();
+    if (cp80_win->isVisible()) {
+        /* A model change also changes the paper direction.  Move to the new
+           stationary screen edge, then render again with the room available
+           on the correct side of the printer. */
+        cp80_anchor_vertical_edge();
+        cp80_render();
+    }
 }
 
 static void
 cp80_show(QWidget *parent)
 {
     bool created = false;
+
+    if (!cp80_model_initialised) {
+        const char *chosen = photoplay_printer();
+        const char *override_model = getenv("PEEPEEBOX_PRN_MODEL");
+
+        /* Retain the one-run developer override used by visual regression,
+           while the user-facing and persistent source is the INI setting. */
+        if ((override_model != nullptr)
+            && ((strcmp(override_model, "3000") == 0)
+                || (strcmp(override_model, "dataprint3000") == 0)
+                || (strcmp(override_model, "DATAPRINT3000") == 0)))
+            chosen = PHOTOPLAY_PRINTER_DP3000;
+
+        if (!strcmp(chosen, PHOTOPLAY_PRINTER_DP3000))
+            cp80_model = Cp80PrinterModel::Dataprint3000;
+        if (cp80_model == Cp80PrinterModel::Dataprint3000)
+            cp80_power = false;
+        cp80_charge = (cp80_model == Cp80PrinterModel::Dataprint3000)
+                    ? DP3000_CHARGE_MINS : CP80_CHARGE_MINS;
+        cp80_model_initialised = true;
+    }
 
     if (cp80_win == nullptr) {
         created = true;
@@ -3465,25 +6257,10 @@ cp80_show(QWidget *parent)
 
             if (screen != nullptr)
                 cp80_available_hint = screen->availableGeometry();
-            if (screen != nullptr)
-                cp80_dpr_hint = qMax<qreal>(1.0, screen->devicePixelRatio());
         }
 
         cp80_win = new QDialog(parent);
         cp80_win->setWindowTitle(QObject::tr("Seiko DPU-414"));
-
-        /* Counter-scale this dialog's content font.  Windows still draws its
-           native title bar normally, but the printer UI itself retains its
-           100% physical size on a 125% desktop. */
-        {
-            QFont fixed_font = cp80_win->font();
-            const int pixel_size = QFontInfo(fixed_font).pixelSize();
-
-            if (pixel_size > 0)
-                fixed_font.setPixelSize(qMax(8, cp80_physical_to_logical(
-                                                   pixel_size)));
-            cp80_win->setFont(fixed_font);
-        }
 
         for (QScreen *screen : QGuiApplication::screens()) {
             QObject::connect(screen, &QScreen::availableGeometryChanged,
@@ -3497,7 +6274,6 @@ cp80_show(QWidget *parent)
         cp80_body = new QPixmap(dpu.scaled(CP80_HEAD_W, CP80_HEAD_H,
                                            Qt::IgnoreAspectRatio,
                                            Qt::SmoothTransformation));
-        cp80_body->setDevicePixelRatio(1.0); /* fixed physical printer raster */
 
         cp80_view = new QLabel(cp80_win);
         cp80_view->setAlignment(Qt::AlignHCenter | Qt::AlignBottom);
@@ -3530,9 +6306,9 @@ cp80_show(QWidget *parent)
             "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
             "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical"
             " { background: transparent; }")
-            .arg(cp80_physical_to_logical(9))
-            .arg(cp80_physical_to_logical(4))
-            .arg(cp80_physical_to_logical(20)));
+            .arg(9)
+            .arg(4)
+            .arg(20));
         cp80_scroll->hide();
 
         QObject::connect(cp80_scroll, &QScrollBar::valueChanged, cp80_win, []() {
@@ -3548,6 +6324,26 @@ cp80_show(QWidget *parent)
         cp80_btn_fd->setCursor(Qt::PointingHandCursor);
         cp80_btn_fd->setToolTip(QObject::tr(
             "FEED — press or hold to advance paper while OFFLINE"));
+
+        dp3000_case_feed = new QPushButton(cp80_view);
+        dp3000_case_feed->setStyleSheet(bare);
+        dp3000_case_feed->setCursor(Qt::PointingHandCursor);
+        dp3000_case_reset = new QPushButton(cp80_view);
+        dp3000_case_reset->setStyleSheet(bare);
+        dp3000_case_reset->setCursor(Qt::PointingHandCursor);
+        dp3000_key_yes = new QPushButton(cp80_view);
+        dp3000_key_yes->setStyleSheet(bare);
+        dp3000_key_yes->setCursor(Qt::PointingHandCursor);
+        dp3000_key_init = new QPushButton(cp80_view);
+        dp3000_key_init->setStyleSheet(bare);
+        dp3000_key_init->setCursor(Qt::PointingHandCursor);
+        dp3000_key_no = new QPushButton(cp80_view);
+        dp3000_key_no->setStyleSheet(bare);
+        dp3000_key_no->setCursor(Qt::PointingHandCursor);
+        dp3000_card = new QPushButton(cp80_view);
+        dp3000_card->setStyleSheet(bare);
+        dp3000_card->setCursor(Qt::PointingHandCursor);
+        dp3000_update_tooltips();
 
         /* The physical momentary switches still snap when their electrical
            action is unavailable (power off or an exhausted pack), so trigger
@@ -3577,6 +6373,115 @@ cp80_show(QWidget *parent)
             cp80_btn_fd_down = false;
             if (cp80_manual_feed != nullptr)
                 cp80_manual_feed->stop();
+            cp80_render();
+        });
+
+        QObject::connect(dp3000_case_feed, &QPushButton::pressed,
+                         cp80_win, []() {
+            cp80_btn_fd_down = true;
+            prn_dp3000_sound_button();
+            const int repeat_ms = cp80_manual_feed_once();
+            if ((repeat_ms > 0) && (cp80_manual_feed != nullptr))
+                cp80_manual_feed->start(350);
+        });
+        QObject::connect(dp3000_case_feed, &QPushButton::released,
+                         cp80_win, []() {
+            cp80_btn_fd_down = false;
+            if (cp80_manual_feed != nullptr)
+                cp80_manual_feed->stop();
+            cp80_render();
+        });
+        QObject::connect(dp3000_case_reset, &QPushButton::pressed,
+                         cp80_win, []() {
+            prn_dp3000_sound_button();
+            cp80_render();
+        });
+        QObject::connect(dp3000_case_reset, &QPushButton::clicked,
+                         cp80_win, []() {
+            const bool transfer_interrupted = prn_cp80_transfer_active() != 0;
+            const bool interrupted = transfer_interrupted
+                                  || dp3000_keyboard_job;
+
+            if (transfer_interrupted) {
+                dp3000_discard_transfer_serial = prn_cp80_transfer_serial();
+                dp3000_pending_record.clear();
+                dp3000_pending_serial = 0;
+                prn_cp80_abort_transfer();
+            }
+
+            dp3000_keyboard_state = Dp3000KeyboardState::Idle;
+            dp3000_cancel_input_timeout();
+            dp3000_keyboard_job = false;
+            dp3000_keyboard_paused = false;
+            dp3000_pause_requested = false;
+            dp3000_print_job_records.clear();
+            dp3000_print_job_record = -1;
+            dp3000_paper_restart_required = false;
+            dp3000_transfer_error = interrupted;
+            dp3000_abort_pending = transfer_interrupted;
+            if (transfer_interrupted)
+                dp3000_plug_error_pending = false;
+            dp3000_complete_signal = false;
+            dp3000_job_generation++;
+            cp80_queued.clear();
+            if ((prn_cp80_connected() == 0) && !cp80_charging)
+                cp80_power = false;
+            cp80_render();
+        });
+
+        const auto press_key = []() {
+            prn_dp3000_sound_button();
+            cp80_render();
+        };
+        const auto repaint_key = []() { cp80_render(); };
+        QObject::connect(dp3000_key_yes, &QPushButton::pressed,
+                         cp80_win, [press_key]() {
+            press_key();
+            dp3000_keyboard_print_pressed();
+        });
+        QObject::connect(dp3000_key_yes, &QPushButton::released,
+                         cp80_win, []() { dp3000_keyboard_print_released(); });
+        QObject::connect(dp3000_key_init, &QPushButton::pressed,
+                         cp80_win, press_key);
+        QObject::connect(dp3000_key_init, &QPushButton::released,
+                         cp80_win, repaint_key);
+        QObject::connect(dp3000_key_no, &QPushButton::pressed,
+                         cp80_win, press_key);
+        QObject::connect(dp3000_key_no, &QPushButton::released,
+                         cp80_win, repaint_key);
+        QObject::connect(dp3000_key_yes, &QPushButton::clicked,
+                         cp80_win, []() {
+            if (dp3000_print_press_handled) {
+                dp3000_print_press_handled = false;
+                return;
+            }
+            dp3000_keyboard_yes();
+        });
+        QObject::connect(dp3000_key_init, &QPushButton::clicked,
+                         cp80_win, []() { dp3000_keyboard_initialise(); });
+        QObject::connect(dp3000_key_no, &QPushButton::clicked,
+                         cp80_win, []() { dp3000_keyboard_no_delete(); });
+        QObject::connect(dp3000_card, &QPushButton::clicked,
+                         cp80_win, []() {
+            prn_dp3000_sound_button();
+            if (dp3000_card_inserted) {
+                if (cp80_power) {
+                    /* The manual forbids removing SRAM while GERÄT EIN is lit.
+                       Refuse the destructive hot removal instead of silently
+                       pretending that it succeeded.  This is not a serial
+                       transfer fault, so it must not light FEHLER PC/AUTOMAT
+                       or start the external-error alarm. */
+                    cp80_render();
+                    return;
+                }
+                dp3000_store_save();
+                dp3000_recovery_save();
+                dp3000_card_inserted = false;
+            } else {
+                dp3000_card_inserted = true;
+                dp3000_memory_fault = false;
+                dp3000_store_load();
+            }
             cp80_render();
         });
 
@@ -3612,8 +6517,26 @@ cp80_show(QWidget *parent)
             QObject::connect(cp80_feed, &QTimer::timeout, cp80_win, []() {
                 cp80_feed_line();
             });
-            cp80_feed->start(CP80_FIRST_LINE_MS);
+            cp80_feed->start(
+                (cp80_model == Cp80PrinterModel::Dataprint3000)
+                    ? DP3000_LINE_MS : CP80_FIRST_LINE_MS);
         }
+
+        dp3000_input_timeout = new QTimer(cp80_win);
+        dp3000_input_timeout->setSingleShot(true);
+        QObject::connect(dp3000_input_timeout, &QTimer::timeout,
+                         cp80_win, []() {
+            dp3000_input_timeout_requested = false;
+            if ((cp80_model != Cp80PrinterModel::Dataprint3000)
+                || (dp3000_keyboard_state == Dp3000KeyboardState::Idle))
+                return;
+            dp3000_keyboard_state = Dp3000KeyboardState::Idle;
+            dp3000_print_job_records.clear();
+            dp3000_print_job_record = -1;
+            dp3000_operator_queue(dp3000_localised(
+                "KEINE TASTE: ABGESCHALTET",
+                "NO KEY: SWITCHED OFF"));
+        });
 
         /* There was a "Dataprint connected" checkbox and a line saying which
            port it listened on.  Both are gone: the ON LINE button on the
@@ -3635,11 +6558,27 @@ cp80_show(QWidget *parent)
 
         cp80_tear_btn = new QPushButton(QObject::tr("Tear off"), cp80_win);
         auto *save = new QPushButton(QObject::tr("Save paper…"), cp80_win);
+        cp80_link_btn = new QPushButton(QObject::tr("VDAI cable"), cp80_win);
+        cp80_link_btn->setCheckable(true);
+        cp80_link_btn->setToolTip(QObject::tr(
+            "Plug or unplug the DATAprint's 9-pin VDAI cable at the Photo Play"));
+        cp80_feed_btn = new QPushButton(QObject::tr("Keyboard"), cp80_win);
+        cp80_feed_btn->setCheckable(true);
+        cp80_feed_btn->setToolTip(QObject::tr(
+            "Plug or unplug the three-button keyboard from the PC connector"));
+        cp80_paper_btn = new QPushButton(QObject::tr("Paper roll"), cp80_win);
+        cp80_paper_btn->setCheckable(true);
+        cp80_paper_btn->setToolTip(QObject::tr(
+            "Remove or fit a 57 mm, 40 m plain-paper roll"));
+        dp3000_wp_btn = new QPushButton(QObject::tr("Card WP"), cp80_win);
+        dp3000_wp_btn->setCheckable(true);
+        dp3000_wp_btn->setToolTip(QObject::tr(
+            "Memory-card write-protect switch; protected cards can be read but "
+            "not evaluated, deleted, or initialized"));
 
-        /* The power switch is on the left-hand side of the machine, which this
-           photograph does not show, so it is a labelled button rather than an
-           invisible one on the picture.  Everything else on the panel is where
-           the panel has it. */
+        /* The DPU has a power switch.  DATAprint power is event-driven by its
+           cable, keyboard, adapter, paper-feed and RESET controls, so this
+           generic switch is hidden when that model is selected. */
         cp80_pwr_btn = new QPushButton(QObject::tr("Power: on"), cp80_win);
 
         QObject::connect(cp80_pwr_btn, &QPushButton::clicked, cp80_win, []() {
@@ -3657,18 +6596,110 @@ cp80_show(QWidget *parent)
             cp80_render();
         });
 
+        QObject::connect(cp80_link_btn, &QPushButton::clicked, cp80_win, []() {
+            if (!prn_cp80_present())
+                return;
+            prn_dp3000_sound_button();
+            const bool connecting = (prn_cp80_connected() == 0);
+            if (!connecting && (prn_cp80_transfer_active() != 0)) {
+                dp3000_transfer_error = true;
+                dp3000_plug_error_pending = true;
+                dp3000_discard_transfer_serial = prn_cp80_transfer_serial();
+                dp3000_pending_record.clear();
+                dp3000_pending_serial = 0;
+            }
+            if (connecting) {
+                cp80_power = true;
+                dp3000_transfer_error = false;
+            }
+            dp3000_complete_signal = false;
+            dp3000_job_generation++;
+            prn_cp80_set_connected(connecting ? 1 : 0);
+            cp80_render();
+        });
+
+        QObject::connect(cp80_feed_btn, &QPushButton::clicked, cp80_win, []() {
+            if (cp80_model != Cp80PrinterModel::Dataprint3000)
+                return;
+            prn_dp3000_sound_button();
+            dp3000_keyboard_connected = !dp3000_keyboard_connected;
+            if (!dp3000_keyboard_connected) {
+                const bool was_active = dp3000_keyboard_job
+                                     || (dp3000_keyboard_state
+                                         != Dp3000KeyboardState::Idle);
+                cp80_queued.clear();
+                dp3000_cancel_input_timeout();
+                dp3000_keyboard_paused = false;
+                dp3000_keyboard_state = Dp3000KeyboardState::Idle;
+                dp3000_print_job_records.clear();
+                dp3000_print_job_record = -1;
+                if (was_active) {
+                    dp3000_transfer_error = true;
+                    dp3000_operator_queue(dp3000_localised(
+                        "VERBINDUNGSFEHLER\nPC / TASTATUR !",
+                        "CONNECTION ERROR\nPC / KEYBOARD !"));
+                    dp3000_transfer_error = true;
+                } else {
+                    dp3000_keyboard_job = false;
+                }
+            } else if (cp80_ac) {
+                cp80_power = true;
+                dp3000_transfer_error = false;
+            }
+            cp80_render();
+        });
+
+        QObject::connect(cp80_paper_btn, &QPushButton::clicked, cp80_win, []() {
+            if (cp80_model != Cp80PrinterModel::Dataprint3000)
+                return;
+            prn_dp3000_sound_button();
+            dp3000_paper_loaded = !dp3000_paper_loaded;
+            dp3000_paper_lines = dp3000_paper_loaded ? DP3000_BATT_LINES : 0;
+            if (!dp3000_paper_loaded && !cp80_queued.isEmpty()) {
+                dp3000_paper_restart_required = true;
+                dp3000_keyboard_paused = true;
+            } else if (dp3000_paper_loaded && cp80_queued.isEmpty()) {
+                dp3000_paper_restart_required = false;
+            }
+            cp80_render();
+        });
+
+        QObject::connect(dp3000_wp_btn, &QPushButton::toggled,
+                         cp80_win, [](bool enabled) {
+            if ((cp80_model != Cp80PrinterModel::Dataprint3000)
+                || !dp3000_card_inserted)
+                return;
+            dp3000_card_write_protected = enabled;
+            prn_dp3000_sound_button();
+            cp80_render();
+        });
+
         /* Only there when it is needed, which is the point: a flat pack should
            be noticed because the paper came out blank, and the fix should then
            be obvious rather than hidden in a menu. */
         cp80_replace = new QPushButton(QObject::tr("Connect adapter"), cp80_win);
+        cp80_replace->setCheckable(true);
         cp80_replace->setToolTip(QObject::tr(
-            "Plug in or unplug the AC adapter. About ten hours from flat, per "
-            "the manual; PEEPEEBOX_PRN_CHARGE=<minutes> shortens it for testing"));
+            "Plug in or unplug the AC adapter. Full charge is 14 hours for the "
+            "DATAprint 3000 and 10 hours for the DPU-414; "
+            "PEEPEEBOX_PRN_CHARGE=<minutes> shortens it for testing"));
 
         QObject::connect(cp80_replace, &QPushButton::clicked, cp80_win, []() {
+            if (cp80_model == Cp80PrinterModel::Dataprint3000)
+                prn_dp3000_sound_button();
             cp80_ac = !cp80_ac;
-            if (!cp80_ac)
+            if (!cp80_ac) {
                 cp80_charging = false;
+                if (cp80_model == Cp80PrinterModel::Dataprint3000
+                    && dp3000_keyboard_job) {
+                    dp3000_keyboard_job = false;
+                    dp3000_keyboard_paused = false;
+                    dp3000_transfer_error = true;
+                }
+            } else if (cp80_model == Cp80PrinterModel::Dataprint3000) {
+                cp80_power = true;
+                dp3000_transfer_error = false;
+            }
             /* Deliberately does not come back online by itself: the manual has
                the operator connect the adapter and then push ONLINE, and a
                printer that restarted a job on its own would be a surprise. */
@@ -3693,8 +6724,16 @@ cp80_show(QWidget *parent)
             const bool printing = (prn_cp80_connected() != 0)
                                 && !cp80_queued.isEmpty();
 
-            cp80_charging = cp80_ac && cp80_power && !printing
-                          && (cp80_batt < CP80_BATT_FULL);
+            if (cp80_model == Cp80PrinterModel::Dataprint3000) {
+                /* The 3000 is recharged by its adapter and, when the socket
+                   supplies enough voltage, by the connected game itself. */
+                cp80_charging = cp80_power
+                              && (cp80_ac || (prn_cp80_connected() != 0))
+                              && (cp80_batt < CP80_BATT_FULL);
+            } else {
+                cp80_charging = cp80_ac && cp80_power && !printing
+                              && (cp80_batt < CP80_BATT_FULL);
+            }
 
             if (cp80_charging) {
                 cp80_batt += (CP80_BATT_FULL / (cp80_charge * 60.0))
@@ -3716,13 +6755,20 @@ cp80_show(QWidget *parent)
 
             /* Repaint only when something on the machine is actually moving. */
             if (was_charging || cp80_charging || cp80_ac
-                || (cp80_batt <= CP80_BATT_FLAT) || !cp80_queued.isEmpty())
+                || (cp80_batt <= CP80_BATT_FLAT) || !cp80_queued.isEmpty()
+                || dp3000_memory_fault || dp3000_transfer_error
+                || !dp3000_paper_loaded)
                 cp80_render();
         });
         cp80_blink_t->start(CP80_BLINK_MS);
 
         /* Whatever the pack was left at, before anything can spend it. */
         cp80_batt_load();
+        if (cp80_model == Cp80PrinterModel::Dataprint3000) {
+            dp3000_device_settings_load();
+            if (dp3000_card_inserted && !dp3000_store_initialised)
+                dp3000_store_load();
+        }
 
         {
             const char *drain  = getenv("PEEPEEBOX_PRN_DRAIN");
@@ -3737,8 +6783,10 @@ cp80_show(QWidget *parent)
             if (charge != NULL) {
                 const double v = atof(charge);
 
-                if (v > 0.0)
+                if (v > 0.0) {
                     cp80_charge = v;
+                    cp80_charge_overridden = true;
+                }
             }
         }
 
@@ -3805,7 +6853,10 @@ cp80_show(QWidget *parent)
             cp80_tear_frame = 0;
             cp80_tearing    = true;
             cp80_tear_btn->setEnabled(false);
-            prn_cp80_sound_tear();
+            if (cp80_model == Cp80PrinterModel::Dataprint3000)
+                prn_dp3000_sound_tear();
+            else
+                prn_cp80_sound_tear();
 
             prn_cp80_tear(&cp80_paper_at);
             cp80_edge_generation++;
@@ -3842,58 +6893,89 @@ cp80_show(QWidget *parent)
         cp80_batt_sl = new Cp80BatterySlider(cp80_win);
         cp80_batt_sl->setRange(0, 100);
         cp80_batt_sl->setValue(int(cp80_batt + 0.5));
-        cp80_batt_sl->setFixedSize(cp80_physical_to_logical(132),
-                                   cp80_physical_to_logical(30));
+        cp80_batt_sl->setFixedSize(132, 30);
         cp80_batt_sl->setToolTip(QObject::tr(
             "Battery pack: drag to set the test level. The machine drains it a "
-            "line at a time and charges it over ten hours."));
+            "line at a time; full charge is 14 hours for DATAprint and 10 hours "
+            "for DPU-414."));
 
         QObject::connect(cp80_batt_sl, &QSlider::valueChanged, cp80_win, [](int v) {
             cp80_batt       = double(v);
             cp80_batt_dirty = true;
             if (cp80_feed != nullptr)
-                cp80_feed->setInterval(int(CP80_FIRST_LINE_MS
-                                           + ((CP80_LINE_MS_FLAT - CP80_FIRST_LINE_MS)
-                                              * cp80_fade_at(cp80_drive_level()))));
+                cp80_feed->setInterval(
+                    (cp80_model == Cp80PrinterModel::Dataprint3000)
+                        ? DP3000_LINE_MS
+                        : int(CP80_FIRST_LINE_MS
+                              + ((CP80_LINE_MS_FLAT - CP80_FIRST_LINE_MS)
+                                 * cp80_fade_at(cp80_drive_level()))));
             cp80_batt_store();
             cp80_render();
         });
 
         cp80_controls = new QWidget(cp80_win);
-        auto *row = new QHBoxLayout(cp80_controls);
+        auto *controls_box = new QVBoxLayout(cp80_controls);
+        auto *row = new QHBoxLayout();
 
+        controls_box->setContentsMargins(0, 0, 0, 0);
+        controls_box->setSpacing(5);
         row->setContentsMargins(0, 0, 0, 0);
-        row->setSpacing(cp80_physical_to_logical(6));
+        row->setSpacing(6);
 
-        const int control_height = cp80_physical_to_logical(27);
+        const int control_height = 27;
         cp80_pwr_btn->setFixedHeight(control_height);
         cp80_replace->setFixedHeight(control_height);
+        cp80_link_btn->setFixedHeight(control_height);
+        cp80_feed_btn->setFixedHeight(control_height);
+        cp80_paper_btn->setFixedHeight(control_height);
+        dp3000_wp_btn->setFixedHeight(control_height);
         cp80_tear_btn->setFixedHeight(control_height);
         save->setFixedHeight(control_height);
 
+        row->addWidget(cp80_link_btn);
+        row->addWidget(cp80_feed_btn);
         row->addWidget(cp80_pwr_btn);
         row->addWidget(cp80_replace);
-        row->addStretch(1);
+        row->addWidget(cp80_paper_btn);
+        row->addWidget(dp3000_wp_btn);
         row->addWidget(cp80_batt_sl);
+        row->addStretch(1);
         row->addWidget(cp80_tear_btn);
         row->addWidget(save);
 
-        auto *box = new QVBoxLayout(cp80_win);
-        const int outer_margin = cp80_physical_to_logical(11);
+        controls_box->addLayout(row);
 
-        box->setContentsMargins(outer_margin, outer_margin,
-                                outer_margin, outer_margin);
-        box->setSpacing(0);
-        box->addWidget(cp80_view, 0, Qt::AlignHCenter | Qt::AlignBottom);
-        box->addSpacing(cp80_physical_to_logical(8));
-        box->addWidget(cp80_status);
-        box->addWidget(cp80_controls);
+        cp80_layout = new QVBoxLayout(cp80_win);
+        const int outer_margin = 11;
+
+        cp80_layout->setContentsMargins(outer_margin, outer_margin,
+                                        outer_margin, outer_margin);
+        cp80_layout->setSpacing(0);
+        cp80_layout->addWidget(cp80_view, 0,
+                               Qt::AlignHCenter | Qt::AlignBottom);
+        cp80_layout->addSpacing(8);
+        cp80_layout->addWidget(cp80_status);
+        cp80_layout->addWidget(cp80_controls);
 
         cp80_render();
     }
 
     cp80_win->show();
     cp80_win->raise();
+
+    /* Headless visual-regression hook.  It is intentionally opt-in and saves
+       the complete simulator dialog, including native controls. */
+    if (created) {
+        const char *capture = getenv("PEEPEEBOX_PRN_SCREENSHOT");
+
+        if ((capture != nullptr) && (*capture != 0)) {
+            const QString path = QString::fromUtf8(capture);
+            QTimer::singleShot(500, cp80_win, [path]() {
+                if (cp80_win != nullptr)
+                    cp80_win->grab().save(path, "PNG");
+            });
+        }
+    }
 
     /* Beside the cabinet, with the printer resting above the taskbar.  Wait one
        event-loop turn so frameGeometry includes the platform title bar. */
@@ -3906,9 +6988,6 @@ cp80_show(QWidget *parent)
                                  cp80_win, [](QScreen *screen) {
                     if (screen != nullptr)
                         cp80_available_hint = screen->availableGeometry();
-                    if (screen != nullptr)
-                        cp80_dpr_hint = qMax<qreal>(1.0,
-                                                   screen->devicePixelRatio());
                     cp80_render();
                 });
             }
