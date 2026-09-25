@@ -147,6 +147,98 @@ hs_sweep_table(uint16_t pass1)
     }
 }
 
+/* The burst that opens a sweep is the password, spelled out.  The library clocks 46 and
+   then fifteen command bytes, and each of those is a fixed table lookup on one nibble of
+   the password word (pass2 << 16 | pass1): bytes 1..8 take nibbles 0..7, bytes 9..13 take
+   7 down to 3, byte 15 takes nibble 1, byte 14 is constant.  Read out of I.G.O. 3's
+   library under unicorn over 170 passwords, every burst reproduced; I.G.O. 6's and
+   Italy's libraries send the same bytes (docs/research-v2/10.11).  The same burst with
+   byte 10 replaced by 50 opens the identity table instead, and the zero password's
+   burst -- the one every library sends before the identity ramp -- is special-cased by
+   the library to hs_ramp_burst.
+
+   A real part answers only its own password's burst: given another pair's, it says
+   nothing until it next sees one it knows.  Measured on the IGO 8 Italy dongle, a
+   68BB/1329 part: the library's status call with 7477/7D57 fails and with 68BB/1329
+   succeeds. */
+static const uint8_t hs_burst_tab[15][16] = {
+    { 0x1E, 0x2E, 0x48, 0x06, 0x18, 0x28, 0x0C, 0x00, 0x6A, 0x0C, 0x3A, 0x5A, 0x22, 0x42, 0x4E, 0x12 },
+    { 0x58, 0x68, 0x70, 0x38, 0x58, 0x68, 0x70, 0x7C, 0x7C, 0x38, 0x38, 0x58, 0x38, 0x58, 0x68, 0x38 },
+    { 0x4A, 0x7A, 0x1A, 0x52, 0x4A, 0x7A, 0x5E, 0x52, 0x1A, 0x5E, 0x7A, 0x1A, 0x7A, 0x1A, 0x1A, 0x4A },
+    { 0x7A, 0x3E, 0x1A, 0x7A, 0x1A, 0x7A, 0x7A, 0x2A, 0x2A, 0x1A, 0x7A, 0x32, 0x2A, 0x1A, 0x3E, 0x32 },
+    { 0x34, 0x04, 0x1C, 0x54, 0x34, 0x04, 0x1C, 0x10, 0x10, 0x54, 0x54, 0x34, 0x54, 0x34, 0x04, 0x54 },
+    { 0x4C, 0x08, 0x08, 0x68, 0x08, 0x68, 0x58, 0x08, 0x68, 0x58, 0x40, 0x08, 0x68, 0x58, 0x40, 0x4C },
+    { 0x68, 0x2C, 0x08, 0x68, 0x08, 0x68, 0x68, 0x38, 0x38, 0x08, 0x68, 0x20, 0x38, 0x08, 0x2C, 0x20 },
+    { 0x04, 0x40, 0x40, 0x20, 0x40, 0x20, 0x10, 0x40, 0x20, 0x10, 0x08, 0x40, 0x20, 0x10, 0x08, 0x04 },
+    { 0x52, 0x32, 0x02, 0x1A, 0x52, 0x32, 0x02, 0x1A, 0x16, 0x16, 0x52, 0x52, 0x32, 0x52, 0x32, 0x02 },
+    { 0x70, 0x10, 0x58, 0x40, 0x70, 0x10, 0x58, 0x40, 0x54, 0x54, 0x10, 0x10, 0x10, 0x70, 0x40, 0x70 },
+    { 0x70, 0x10, 0x20, 0x38, 0x70, 0x10, 0x20, 0x38, 0x34, 0x34, 0x70, 0x70, 0x10, 0x70, 0x10, 0x20 },
+    { 0x08, 0x08, 0x4C, 0x4C, 0x2C, 0x4C, 0x2C, 0x1C, 0x4C, 0x2C, 0x1C, 0x04, 0x4C, 0x2C, 0x1C, 0x04 },
+    { 0x3E, 0x5E, 0x16, 0x0E, 0x3E, 0x5E, 0x16, 0x0E, 0x1A, 0x1A, 0x5E, 0x5E, 0x5E, 0x3E, 0x0E, 0x3E },
+    { 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C },
+    { 0x38, 0x38, 0x7C, 0x7C, 0x1C, 0x7C, 0x1C, 0x2C, 0x7C, 0x1C, 0x2C, 0x34, 0x7C, 0x1C, 0x2C, 0x34 }
+};
+static const uint8_t hs_burst_nib[15] = { 0, 1, 2, 3, 4, 5, 6, 7, 7, 6, 5, 4, 3, 0, 1 };
+static const uint8_t hs_ramp_burst[15] = {
+    0x0A, 0x78, 0x5A, 0x3A, 0x14, 0x48, 0x28, 0x00, 0x12, 0x50, 0x30, 0x0C, 0x1E, 0x5C, 0x3C
+};
+#define HS_BURST_MODE 9 /* index of the byte the identity variant sets to 50 */
+
+/* What a burst leaves the part doing; the last three are also its mode. */
+enum { HB_OTHER = 0, HB_SWEEP, HB_IDENT, HB_FOREIGN };
+
+/* What a part holding `pw` (pass2 << 16 | pass1) makes of a fifteen-byte burst: its own
+   sweep or identity burst, the zero-password ramp burst (which every part answers), a
+   sweep burst for some other password, or something else -- a keyed-round preamble or a
+   service request -- which leaves it as it was.  "Some other password" means the bytes
+   decode consistently through the tables; over a full real I.G.O. 2 boot no other burst
+   does, nor any of 100,000 random ones. */
+static int
+hs_burst_class(const uint8_t *b, uint32_t pw)
+{
+    uint16_t cand[8];
+    int      own   = 1;
+    int      ident = 0;
+
+    if (!memcmp(b, hs_ramp_burst, sizeof(hs_ramp_burst)))
+        return HB_IDENT;
+    for (int n = 0; n < 8; n++)
+        cand[n] = 0xFFFF;
+    for (int i = 0; i < 15; i++) {
+        const int     n    = hs_burst_nib[i];
+        const uint8_t want = hs_burst_tab[i][(pw >> (4 * n)) & 0x0F];
+        uint16_t      fits = 0;
+
+        if ((i == HS_BURST_MODE) && (b[i] == 0x50) && (want != 0x50)) {
+            ident = 1;
+            continue;
+        }
+        if (b[i] != want)
+            own = 0;
+        for (int v = 0; v < 16; v++)
+            if (hs_burst_tab[i][v] == b[i])
+                fits |= (uint16_t) (1u << v);
+        cand[n] &= fits;
+    }
+    if (own)
+        return ident ? HB_IDENT : HB_SWEEP;
+    for (int n = 0; n < 8; n++)
+        if (!cand[n])
+            return HB_OTHER;
+    return HB_FOREIGN;
+}
+
+/* The pair's second password, for the burst check. */
+static uint16_t
+hd_pass2(uint16_t pass1)
+{
+    switch (pass1) {
+        case 0x7477: return 0x7D57;
+        case 0x6B91: return 0x24A3;
+        default:     return 0x1329; /* 68BB */
+    }
+}
+
 enum {
     HD_IDLE = 0, /* deselected, or waiting for a start bit */
     HD_OP,
@@ -251,8 +343,14 @@ typedef struct {
     int      hs_sweep;          /* how far into the 64-step sweep */
     uint8_t  hs_fold[8];        /* the sweep answers, folded the way 0x24FB does */
     int      hs_fold_next;      /* ...and which step is expected next, to spot lost sync */
-    uint8_t  hs_serial;         /* bit-7 releases: XORed into every byte of this sweep */
     uint64_t hs_table;          /* the sweep table of this release's password pair */
+    int      hb_gate;           /* check the password in each burst -- see hs_burst_class() */
+    uint32_t hb_pw;             /* the part's own pair, pass2 << 16 | pass1 */
+    uint8_t  hb_prev;           /* the last DATA write, for bit 0's rising edge */
+    int      hb_n;              /* bytes collected since a 46, -1 when not collecting */
+    uint8_t  hb_win[15];
+    int      hb_mode;           /* HB_SWEEP, HB_IDENT, or HB_FOREIGN: silent until an own burst */
+    int      hb_foreign;        /* how many times it went silent, for the log */
 
     /* The keyed round the picture cipher asks for -- see the section above t_query(). */
     uint32_t t_key;             /* this release's 32 key bits, 0 if it has none */
@@ -1951,17 +2049,15 @@ enum {
    in both -- try 7477/7D57, fall back to 68BB/1329, and if neither answers, set BOTH
    passwords to zero and carry on.
 
-   This part answers service 1 with a 1 and service 5 with neither, so the probe always
-   takes that last branch.  pass1 is the descramble key, so what those releases actually
-   decode the record with is 0x0000, not the password their dongle holds -- measured, not
-   inferred: I.G.O. 6 DE put ">ÞÈ" on screen where "Vers" belongs, which is
-   record bytes 3..6 XORed byte-wise with 0x68BB, i.e. our scramble undone with zero.
-   `probe` keeps the dumped password on record while serving the key the guest will use.
-   Make service 5 answer and this flips back to pass1. */
+   On the hardware the probe settles on 68BB/1329: a real part refuses the 7477 burst
+   (docs/research-v2/10.11), measured on the IGO 8 Italy dongle.  This part does the same
+   now -- `probe` switches on its burst check, hs_burst_class() -- so these releases
+   decode the record with the pair their dongle holds, like every other release.  What
+   this part used to make them do instead is in hd_load(). */
 static const struct {
     const char *banner;
     uint16_t    pass1;
-    int         probe; /* MENU.EXE hunts for the pair; against this part it finds none */
+    int         probe; /* MENU.EXE hunts for the pair: the part must refuse the wrong one */
     int         swap;  /* the guest unpacks each word low byte first */
     int         shape;
     int32_t     v6;    /* the last two dwords vary by generation */
@@ -2013,7 +2109,14 @@ static const struct {
        bytes, probe, sweep twice and reports "wrong dongle version" without ever
        reading memory, so the type-1 path checks something after the sweep that the
        type-5 path does not, and it is not yet mapped.  14 stays: it is the only
-       answer that boots. */
+       answer that boots.
+
+       What it checked was the sweep (2026-09-25, docs/research-v2/10.12): I.G.O. 5 was
+       being served 68BB's sweep table, and its second sweep a replay of the first.
+       With the part's own table and its bursts followed -- the second sweep opened by a
+       burst the part refuses, so answered with nothing -- the measured identity is what
+       a real 2005 part gives, and I.G.O. 5 is back on it.  The field stays for the
+       record and is 0 in every row. */
     int         synth_ident;
 } hd_keys[] = {
     { "Version 2001",  0x7477, 0, 0, HD_R2001, 160678,     -35733698, 0xCF47CB42, 0x7DF, 0, 0 },
@@ -2030,7 +2133,7 @@ static const struct {
        served, the bytes were clocked into the Microwire decoder instead, and the menu
        stopped at "wrong dongle version" -- where the same image had reached the menu
        (garbled buttons) before the two forms were told apart. */
-    { "Version 2005B", 0x6B91, 0, 1, HD_RVERS,      0,            0, 0xAB32E970, 0x5DF, 1, 14 }, /* I.G.O. 5 */
+    { "Version 2005B", 0x6B91, 0, 1, HD_RVERS,      0,            0, 0xAB32E970, 0x5DF, 1, 0 }, /* I.G.O. 5 */
     /* The first I.G.O. 5, before the B: the IT CZ033 image, whose MAIN.SET is dated
        23.11.2004 and says "Version 2005 (IT)".  Its MENU.EXE and all 43 of its games are
        the older library, the one I.G.O. 2 and 3 carry, and that library does not parse
@@ -2040,11 +2143,16 @@ static const struct {
        NUL that ends the territory, which is I.G.O. 3's shape; the B shape's '-' ran on
        into "Version 2005 (IT-Version2005)" and a "wrong dongle version" screen.  The
        transport is left as the B row's, which is what read that record off the wire. */
-    { "Version 2005",  0x6B91, 0, 1, HD_RSION,      0,            0, 0xAB32E970, 0x5DF, 1, 14 }, /* I.G.O. 5, pre-B */
-    /* 2006 and later ship plain GIF: there is nothing for the round to decrypt, and a
-       key would only be guessing at a part no game asks. */
-    { "Version 2006",  0x68BB, 1, 1, HD_RVERS,      0,            0,          0,     0, 0, 0 }, /* I.G.O. 6 */
-    { "Version 2007",  0x68BB, 0, 1, HD_RVERS,      0,            0,          0,     0, 0, 0 }, /* I.G.O. 7 */
+    { "Version 2005",  0x6B91, 0, 1, HD_RSION,      0,            0, 0xAB32E970, 0x5DF, 1, 0 }, /* I.G.O. 5, pre-B */
+    /* 2006 and later ship plain GIF, so no picture needs the round -- but their parts
+       compute it all the same, and their library asks: the 68BB/1329 part's key and
+       register, measured on the 2006 PT and 2007 ES dongles (docs/research-v2/10.3).
+       Their library is I.G.O. 3's and 5's, bit 7 set throughout its session layer; with
+       these rows saying otherwise the sweep went unrecognised, a refused burst silenced
+       nothing, and I.G.O. 6's probe took 7477 (docs/research-v2/10.12).  Scored against
+       the real I.G.O. 7 ES boot, the session layer then agrees on 2,048 of 2,048 reads. */
+    { "Version 2006",  0x68BB, 1, 1, HD_RVERS,      0,            0, 0x3B227944, 0x7DF, 1, 0 }, /* I.G.O. 6 */
+    { "Version 2007",  0x68BB, 0, 1, HD_RVERS,      0,            0, 0x3B227944, 0x7DF, 1, 0 }, /* I.G.O. 7 */
     /* I.G.O. Italy reports NDONGLE rather than HDONGLE, which was read as meaning it is
        not on this path at all.  It is, and it is not even a special case: MENU.EXE
        0x3C322 is the same filler every other I.G.O. build uses, down to the format
@@ -2057,7 +2165,7 @@ static const struct {
        Its passwords are not literals either -- 0x3C252 is the same probe I.G.O. 6 runs,
        so the key is zero here too.  The 2008 pair is on record for when service 5 can
        tell the two apart. */
-    { "Version 08",    0x68BB, 1, 1, HD_RVERS,      0,            0,          0,     0, 0, 0 }  /* I.G.O. Italy */
+    { "Version 08",    0x68BB, 1, 1, HD_RVERS,      0,            0, 0x3B227944, 0x7DF, 1, 0 }  /* I.G.O. Italy */
 };
 
 /* The row this banner belongs to, or -1 if no release in the table claims it.  That
@@ -2090,7 +2198,8 @@ static void
 hd_load(pp_t *dev, const char *banner)
 {
     const int      rel  = hd_release(banner);
-    /* A probing release descrambles with the FIRST pair its probe tries, not with zero.
+    /* History, kept because each step was measured: a probing release used to descramble
+     * with the FIRST pair its probe tries, because this part accepted any pair.
      *
      * I.G.O. 6 and I.G.O. Italy write their passwords at runtime and hunt: try
      * 7477/7D57, fall back to 68BB/1329, and if service 5 answers neither, set both to
@@ -2109,7 +2218,10 @@ hd_load(pp_t *dev, const char *banner)
      * be scrambled with that.  The dumped pair for these releases (0x68BB/0x1329) stays
      * on record in the table; it is what the hardware holds, and it is what this should
      * switch back to if service 5 is ever modelled well enough to tell the pairs apart. */
-    const uint16_t key  = hd_keys[rel].probe ? 0x7477 : hd_keys[rel].pass1;
+    /* ...and the part now refuses the pair it does not hold, so the probe settles on the
+       real one, as it does on the hardware (docs/research-v2/10.11): the record is
+       scrambled with the dongle's own pass1 for every release. */
+    const uint16_t key  = hd_keys[rel].pass1;
     const int      swap = hd_keys[rel].swap;
 
     uint8_t rec[HD_RECORD];
@@ -2702,6 +2814,33 @@ out:
     dev->t_last = val;
 }
 
+/* Collect the command bytes a burst is made of -- clocked on DATA bit 0, bit 7 and bit 0
+   dropped -- and judge each burst once its fifteen bytes are in. */
+static void
+hb_data(pp_t *dev, uint8_t val)
+{
+    if ((val & 1) && !(dev->hb_prev & 1)) {
+        const uint8_t b = (uint8_t) (val & 0x7E);
+
+        if (b == 0x46)
+            dev->hb_n = 0;
+        else if (dev->hb_n >= 0) {
+            dev->hb_win[dev->hb_n++] = b;
+            if (dev->hb_n == 15) {
+                const int c = hs_burst_class(dev->hb_win, dev->hb_pw);
+
+                if ((c == HB_FOREIGN) && (dev->hb_mode != HB_FOREIGN) && (dev->hb_foreign++ < 4))
+                    pp_log("PP: a burst this part does not accept -- silent until it sees its"
+                           " own\n");
+                if (c != HB_OTHER)
+                    dev->hb_mode = c;
+                dev->hb_n = -1;
+            }
+        }
+    }
+    dev->hb_prev = val;
+}
+
 static void
 pp_write_data(uint8_t val, void *priv)
 {
@@ -2720,6 +2859,8 @@ pp_write_data(uint8_t val, void *priv)
         return;
     }
     if (dev->hd_probe) {
+        if (dev->hb_gate)
+            hb_data(dev, val);
         if (dev->t_key)
             t_data(dev, val);
         /* Three protocols share these wires and only one of them is Microwire.  On
@@ -2800,74 +2941,35 @@ pp_strobe(uint8_t old, uint8_t val, void *priv)
         pp_latch_nibble(dev);
 }
 
-/* What we answer step `n` of the 64-step sweep with.
+/* What we answer step `n` of the 64-step sweep with: the bit at the step's address in
+ * the table the last burst selected (docs/research-v2/10.12).
  *
- * Normally the measured reply: the bit at the step's address in the release's password
- * pair's sweep table (hs_sweep_table).  For 68BB/1329 that is HS_SWEEP_A, what a real part
- * put on DO identically on all six occurrences in the first capture; 2001 and I.G.O. 3/5
- * used to be served that 68BB answer too, and now get their own.
- *
- * PEEPEEBOX_SWEEP_ZERO exists to settle one question that reading I.G.O. 3's MENU.EXE
- * could not.  Its gate at 0x20EA folds these 64 bits into eight bytes and passes if any
- * one of them equals the corresponding byte of DS:0x4C86 -- which is eight zero bytes in
- * the image and is written nowhere.  Taken at face value that means a part passes only
- * if its reply contains a zero byte, which a measured reply (F5 7A 37 E7 8F 8F BD DA)
- * does not, and which a pseudorandom reply would manage about three times in a hundred.
- * That is not a plausible gate, so one of the readings is wrong.
- *
- * Setting this variable answers the first eight steps with 0, making the first folded
- * byte 00 while leaving the rest measured, so the fold is neither all-zero nor all-ones.
- * If I.G.O. 3 then boots, the gate really is "any byte equal" and the expected value
- * really is zero.  If it does not, the fault is upstream of the compare and this whole
- * reading needs revisiting.  Either outcome is worth one boot; neither is a fix, and it
- * is off unless asked for. */
+ * The newer libraries check that the part is not a replay -- they sweep twice and refuse
+ * the part if any folded byte of the second sweep equals the first (I.G.O. 3's core
+ * 0x20EA).  A real part passes because the second sweep is not opened by the same burst.
+ * I.G.O. 3's library sets the burst's mode byte to 50, and the part answers from its
+ * identity table; I.G.O. 5's and 7's change another byte, which the part does not accept,
+ * and it answers nothing -- every bit 1.  This device used to XOR each sweep with a serial
+ * number to the same end; with the bursts modelled that is no longer needed, and it made
+ * one read in eight of every I.G.O. 5 sweep wrong against a real part. */
 static int
 hs_sweep_bit(pp_t *dev, int n)
 {
-    static int want = -1;
-    int        bit;
+    /* the address this step's payload names */
+    const uint8_t addr = (uint8_t) (hs_sweep_w[n] >> 1);
+    int           bit;
 
-    if (want < 0)
-        want = (getenv("PEEPEEBOX_SWEEP_ZERO") != NULL);
-
-    if (want && dev->t_sess_hi && (n < 8)) {
-        if (n == 0)
-            pp_log("PP: PEEPEEBOX_SWEEP_ZERO -- answering sweep steps 0..7 with 0 to test"
-                   " the 0x20EA gate.  This is an experiment, not a fix.\n");
-        bit = 0;
-    } else {
-        /* the address this step's payload names, answered from the pair's own table */
-        const uint8_t addr = (uint8_t) (hs_sweep_w[n] >> 1);
-
+    /* A burst the part does not accept silences the sweep it opens -- every step 1, as the
+       real part answered I.G.O. 5's second sweep and the library's 7477 probe -- and only
+       that: silencing the rest of the session layer too (the identity ramp, the 1E/1C
+       tail of a memory read) is what put "dongle error" on I.G.O. 3 when its library
+       logged in again, and a real part does not do it. */
+    if (dev->hb_gate && (dev->hb_mode == HB_FOREIGN))
+        bit = 1;
+    else if (dev->hb_gate && (dev->hb_mode == HB_IDENT))
+        bit = (int) ((HD_SIGNATURE >> addr) & 1u);
+    else
         bit = (int) ((dev->hs_table >> (63 - addr)) & 1u);
-    }
-
-    /* I.G.O. 3's library is a newer HASP build than I.G.O. 2's, and it checks that the
-       part is not a replay.  Every five to fourteen calls it logs in again, sweeps
-       twice -- the same 64 questions both times -- folds each into eight bytes, and if
-       ANY byte of the second equals the same byte of the first (core 0x20EA) it sets a
-       flag at DS:0x4C50.  Five calls later every service is refused: IsHasp answers 0,
-       ReadBlock fails, the menu formats an empty banner, and the screen says IDONGLE
-       not found.  A real part evidently never answers a sweep the same way twice.
-       This one used to replay the one reply captured off the 68BB part, every time.
-
-       So every byte of sweep k is XORed with k mod 255.  Any two sweeps within 255 of
-       each other then differ in all eight bytes, whichever earlier sweep a library
-       keeps as its reference; none can be all-zero or all-one, the only thing the
-       sweep routine itself rejects (core 0x257B), because the captured bytes are not
-       all equal; and the first sweep is still exactly the capture.  Nothing else reads
-       the answers -- the keyed rounds and the record are unaffected.
-
-       Alternating with the complement was tried first and got the menu up, but only
-       promises that NEIGHBOURING sweeps differ; FIND IT then stopped at exit with
-       07.377.23 "check dongle failed", status 7 being this gate's refusal.  Found with
-       tools/dongcap/hasplib.py: a hundred encodes, none refused, where the fixed reply
-       had forty-nine of sixty refused.  I.G.O. 2's library has no such gate and keeps
-       the capture untouched. */
-    if (dev->t_sess_hi)
-        bit ^= (dev->hs_serial >> (7 - (n & 7))) & 1;
-    if (dev->t_sess_hi && (n == 63))
-        dev->hs_serial = (uint8_t) ((dev->hs_serial + 1) % 255);
 
     /* Record what the guest is actually being handed, in its own terms.
      *
@@ -3636,6 +3738,15 @@ pp_init(const device_t *info)
         dev->t_sess_hi = hd_keys[trel].sess_hi;
         dev->t_synth_ident = hd_keys[trel].synth_ident;
         dev->hs_table  = hs_sweep_table(hd_keys[trel].pass1);
+        /* Every I.G.O. release's part follows its bursts, as the real ones do -- scored
+           against three real boots (I.G.O. 2, 5 and 7) the session layer then agrees on
+           all but two of 17,463 reads.  Not 2001: its library hands the part its password
+           in another form (the 0x7DF register, docs/research-v2/10.3), which the burst
+           tables have not been measured against. */
+        dev->hb_gate   = (hd_keys[trel].shape != HD_R2001);
+        dev->hb_pw     = ((uint32_t) hd_pass2(hd_keys[trel].pass1) << 16) | hd_keys[trel].pass1;
+        dev->hb_n      = -1;
+        dev->hb_mode   = HB_SWEEP;
         /* 0x1C selects the 256-word size, so the library addresses the part with eight
            bits; the measured 0x18 selects 64 words and six.  The decoder has to expect
            what the identity it gave promised. */
@@ -3662,8 +3773,9 @@ pp_init(const device_t *info)
             snprintf(how, sizeof(how), "no parallel HASP part on the port%s",
                      (hd_opt < 0) ? " (Auto: this release does not use one)" : " (switched off)");
         else if (hd_keys[hd_rel < 0 ? 0 : hd_rel].probe)
-            snprintf(how, sizeof(how), "parallel HASP, record key 7477"
-                                       " (this release probes, and takes the first pair)");
+            snprintf(how, sizeof(how), "parallel HASP, record key %04X"
+                                       " (this release probes; the part refuses 7477)",
+                     hd_keys[hd_rel < 0 ? 0 : hd_rel].pass1);
         else
             snprintf(how, sizeof(how), "parallel HASP, record key %04X",
                      hd_keys[hd_rel < 0 ? 0 : hd_rel].pass1);

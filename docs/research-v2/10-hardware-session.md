@@ -237,6 +237,7 @@ games use and refuses the rest.
 - **09.6 mostly closed.** There is no challenge function (the part refuses every other
   challenge); `A3`/`A4` are `1206`/`7343`; the picture table is read off the part. Still
   open: the closed form behind the table and how the constant enters it.
+- **The session layer** is modelled as the part follows it: bursts select a table or silence it (`10.12`).
 - **09.11 closed.** Modes 1..4 are mode 0's register with one feedback term more (`10.10`).
 - **09.8** — I.G.O. 4's dongle is a CDONGLE. Its `KDONGLE` letter is the menu's name for
   it.
@@ -304,3 +305,95 @@ reads `GAMESTAT.OLD` at all. The terms were measured on a `6B91/24A3` part and t
 agrees; they are **the design's, not the pair's**: the same four terms with `68BB`'s key and
 register reproduce the 2006 PT part's 200 recorded mode 1..4 answers and the 2007 ES part's,
 200 of 200 each (I.G.O. 3's library under unicorn, the part given I.G.O. 3's bit-7 session).
+
+## 10.11 The password burst, and I.G.O. 6 and Italy
+
+The burst that opens a sweep (`10.2`) is the password spelled out. After the leading `46`,
+each of the fifteen command bytes is a fixed table lookup on **one nibble** of the password
+word `pass2 << 16 | pass1`:
+
+```
+byte   1..8    nibbles 0..7
+byte   9..13   nibbles 7, 6, 5, 4, 3
+byte  14       constant 1C
+byte  15       nibble 1
+```
+
+The tables (`hs_burst_tab` in `dongle_photoplay.c`) were read out of I.G.O. 3's library
+under unicorn — first by changing one nibble at a time from three base passwords to find
+which byte follows which nibble, then filled from random passwords — and reproduce **170 of
+170** bursts. The zero password is the library's special case: it sends the ramp burst
+`0A 78 5A 3A 14 48 28 00 12 50 30 0C 1E 5C 3C` instead, which is why every part answers the
+identity ramp. The identity variant is the same burst with byte 10 set to `50`.
+
+I.G.O. 6's and Italy's menus carry the same library (the entry is byte-identical; found at
+image offsets `0x3697B` and `0x3DE2D`, DGROUP from the startup code's `mov dx`) and send
+exactly these bursts for `7477` and for `68BB`.
+
+**The rule a part follows, as modelled:** its own password's burst (sweep or identity) or
+the ramp burst — answer; a burst that decodes through the tables as some *other*
+password's sweep burst — say nothing (DO held high) until it next sees one of its own;
+anything else — a keyed-round preamble, a service request — no change. Over the whole real
+I.G.O. 2 boot of 2026-09-06, judged as a `68BB` part, that rule never goes silent (96
+identity, 6 sweep, 447 other bursts), and none of 100,000 random bursts decode as a sweep
+burst.
+
+*Verified:* I.G.O. 6's and Italy's own libraries, against a part with that rule, fail the
+status probe with `7477/7D57` and pass it with `68BB/1329`, then read the record — what the
+Italy dongle did on the bench.
+
+The emulator now applies the rule for the two releases that probe, and scrambles their
+record with `68BB`, the pair their dongles hold. It is not applied to the others: they only
+ever send their own pair, and 2001's library hands the part its password in another form
+(the `0x7DF` register, `10.3`) that this check has not been measured against.
+
+## 10.12 The session layer is the bursts — and I.G.O. 5's buttons
+
+I.G.O. 5 PT (MB001, original) was booted on the Atom through the passthrough with the real
+2005 PT dongle: its button faces display correctly and a game starts. Under the emulator
+they did not, and the emulator's I.G.O. 5 answered the whole session layer with a
+synthesised rule instead of the measured identity (`synth_ident`).
+
+Replaying that real boot into the model part and scoring every STATUS read showed why:
+
+- the newer libraries' **second sweep is opened by a burst the part does not accept** —
+  I.G.O. 5's changes the ninth byte of its own burst (`02` → `1A`; mapped on the part: of all
+  64 values in that position only `02` is accepted), and the part answers the whole sweep
+  with nothing, every bit 1. I.G.O. 3's library sets the mode byte to `50` instead, and the
+  part answers from its identity table. Either way the second sweep differs from the first,
+  which is what the anti-replay gate (`05.8` fault 4) checks — a replaying clone would fail
+  it. The emulator's XOR-by-sweep-number imitated the outcome and got one read in eight of
+  every I.G.O. 5 sweep wrong.
+- a part answers the sweep from the table its last accepted burst selected, and a sweep
+  opened by a burst it does not accept gets nothing, every step 1. Only the sweep: the rest
+  of the session layer and a Microwire record read carry on as before. Silencing more than
+  the sweep put `dongle error` on I.G.O. 3, whose library sends the same refused burst each
+  time it logs in again, every eighth call; with the sweep alone, 30 encodes through its
+  library pass and the real boots below fit better still.
+
+With that rule, the measured identity, each pair's own sweep table and no XOR, the session
+layer of three real boots agrees on all but two reads:
+
+| boot | session reads wrong | before (pattern matcher, XOR) |
+|---|---|---|
+| I.G.O. 5 PT, 2005 PT dongle | 0 of 4,048 | 92 |
+| I.G.O. 7 ES, 2007 ES dongle | 0 of 2,048 | 21 |
+| I.G.O. 2 PT, 2002 PT dongle | 1 of 11,367 | 1 |
+
+The one left is an idle read during the BIOS's port probe. (The record reads differ only where each real record holds its
+per-unit debris.) I.G.O. 6's and Italy's probes still behave as the real part: `7477`
+refused, `68BB` accepted, and the records read `DE-Version2006A` and `IT-Version08IT`.
+
+The emulator now follows the bursts for every I.G.O. release (not 2001: `10.11`), answers
+the sweep from the selected table, goes silent in the session layer after a refused burst,
+silences a sweep opened by a refused burst, and serves I.G.O. 5 the measured identity; the
+XOR and the synthesised identity are gone.
+
+**I.G.O. 6, 7 and Italy.** Their rows in the emulator's release table said the session layer
+runs with bit 7 clear and gave no keyed round. Their library is I.G.O. 3's and 5's — bit 7
+set throughout — and their `68BB` parts compute the round like any other (`10.3`). With the
+rows wrong the sweep went unrecognised, the refused `7477` burst silenced nothing, and
+I.G.O. 6 settled on `7477` and put a garbled banner under "wrong dongle version". With bit 7
+and the `68BB` key and register, the real I.G.O. 7 ES boot's session layer agrees on 2,048
+of 2,048 reads, and I.G.O. 6 refuses `7477`, accepts `68BB` and reads its record under it,
+as the hardware does.
