@@ -22,12 +22,12 @@ for that type, not that the cabinet has one.
 | Photo Play 2001 / I.G.O. 1 | `Version 2001` | HASP4, pass `7477/7D57` | — | transport complete; picture key `CF47CB42` fitted and verified offline |
 | I.G.O. 2 | `Version 2002` | HASP4, pass `68BB/1329` | — | **complete** — boots, FIND IT plays, photographs decrypt on screen |
 | I.G.O. 3 | `Version 2003` | HASP4, pass `6B91/24A3` | — | **complete** — boots, FIND IT plays with photographs decrypting, the games pass their known-answer check (`05.8`) |
-| I.G.O. 4 | `Version 2004` | a parallel dongle, **not** HASP — no HASP library in any of its 43 executables | — | its pictures are plain GIF87a, so nothing on the image needs a content key |
+| I.G.O. 4 | `Version 2004` | **CDONGLE**, the 2000 generation's part (measured, `10.6`) — no HASP library in any of its 43 executables | — | boots on a real 2004 ES dongle; licence `A0` and the 48-byte record `AD`, as 2000 |
 | I.G.O. 5 | `Version 2005B` | HASP4, pass `6B91/24A3` | — | transport complete; pictures are plain |
-| I.G.O. 6 | `Version 2006A` | HASP4, pass `68BB/1329` (from the dumps) | — | transport complete; pictures are plain |
+| I.G.O. 6 | `Version 2006A` | HASP4, pass `68BB/1329` (from the dumps; the 2006 PT part measured, `10`) | — | transport complete; pictures are plain |
 | I.G.O. 7 | `Version 2007` | HASP4, pass `68BB/1329` | — | transport complete; pictures are plain |
 | I.G.O. 8 | `Version 2008` | **none** — serial card reader on COM2 | — | **complete** — untouched images boot |
-| I.G.O. Italy | `Version 08IT` | HASP4 (all 54 executables link it) | — | transport complete |
+| I.G.O. Italy | `Version 08IT` | HASP4, pass `68BB/1329` (measured on the IGO 8 Italy dongle, `10.2`) | — | transport complete |
 
 Two cautions that cost time when they were missed:
 

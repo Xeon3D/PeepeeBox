@@ -9,6 +9,7 @@ was deleted; every committed script that imported them broke silently.
 | `wad.py` | reads a GWAD archive (`FOTOPLAY.WAD`) out of a Photo Play disk image |
 | `catalog-photoplay.py` | the FAT16 reader `wad.py` is built on — walks the image and pulls a file out by path |
 | `findit_keys.txt` | the per-picture LCG key for all **1397** FIND IT pictures, one `NAME KEY` pair per line |
+| `hw-2026-09-24/` | the hardware session of `docs/research-v2/10`: passthrough boot traces (1999 PT, 2000 PT, I.G.O. 4 ES, I.G.O. 7 ES, the clones), `pictable.out.gz` (the 2000 part's whole picture table, 1,024 queries), `batch2003.out.gz` and `batch2003.wire.gz` (2,404 live EncodeData calls on a `6B91` part, with every port access), and the same 200 calls on the 2005, 2006 and 2007 parts |
 
 `findit_keys.txt` is what makes the 2001-generation picture cipher testable offline: the
 2000 images hold the same 1397 pictures with plaintext bodies, so undoing the 128-byte

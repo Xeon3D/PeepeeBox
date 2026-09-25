@@ -51,6 +51,10 @@ HD_WORDS, HD_START, HD_RECORD = 64, 8, 112
 HD_CS, HD_SK, HD_DI, HD_DO = 0x02, 0x20, 0x40, 0x20
 HD_SIGNATURE = 0xCEFF0AFFCECE0A0A
 HS_SWEEP_A = 0xF57A37E78F8FBDDA
+# Each password pair's sweep table, address a at bit 63 - a -- measured on the parts,
+# docs/research-v2/10.2.  A sweep step answers the bit at its payload's address.
+SWEEP_TABLE = {0x68BB: 0x225E9EDE445CDCDC, 0x7477: 0x423ED3BFE2BEF3BF,
+               0x6B91: 0x0EE697F74CE4D5F5}
 HS_SWEEP_W = bytes([
     0x78, 0x6A, 0x56, 0x26, 0x02, 0x18, 0x6E, 0x3C, 0x2E, 0x3A, 0x72, 0x52,
     0x0C, 0x64, 0x70, 0x74, 0x2E, 0x24, 0x78, 0x36, 0x22, 0x0C, 0x1C, 0x26,
@@ -79,6 +83,7 @@ class Part:
         self.mw_hi = not old_mw
         self.alt_sweep = self.sess_hi and not fixed_sweep
         self.sweep_serial = 0
+        self.sweep_table = SWEEP_TABLE.get(pass1, SWEEP_TABLE[0x68BB])
         rec = bytearray(HD_RECORD)
         rec[0:2] = territory.encode()
         rec[3:17] = b'sion 2000 (SP)'
@@ -277,7 +282,7 @@ class Part:
         # I.G.O. 3's library sweeps twice and flags the part if any folded byte repeats
         # (core 0x20EA); a real part never answers the same twice.  XOR every byte of
         # sweep k with k mod 255, so any two sweeps within 255 differ in all eight.
-        bit = (HS_SWEEP_A >> (63 - n)) & 1
+        bit = (self.sweep_table >> (63 - (HS_SWEEP_W[n] >> 1))) & 1
         if self.alt_sweep:
             bit ^= (self.sweep_serial >> (7 - (n & 7))) & 1
             if n == 63:

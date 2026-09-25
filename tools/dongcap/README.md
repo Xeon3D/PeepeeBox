@@ -156,3 +156,17 @@ python tools/dongcap/hasplib.py --old-probe <MENU.EXE>  the same with a pre-fix 
 
 Needs `unicorn`.  Nothing here touches hardware, and it never writes to the image it
 reads `MENU.EXE` out of.
+
+The live tools (2026-09-24) — `docs/research-v2/10`
+----------------------------------------------------
+
+All four run on the dongle host as root and reach the port directly (`ioperm`, or
+`/dev/port` for the Python one). Only one may use the port at a time, and nothing may be
+using it when a dongle is swapped.
+
+| | |
+|---|---|
+| `dongsession.c` | the HASP session questions: identity ramp and sweep, each after its burst. `-s` takes another pair's sweep burst (the three known ones are in `10.2`). Replaces `SESSION.COM`, which sends no burst and so never got an answer from any part |
+| `dongwire.c` | runs a script of `W xx` / `C xx` / `S [xx]` / `D n` / `M text` lines and scores each STATUS read against the expected value; `-m 40` for the CDONGLE's ACK line, `-b` packs answers into bytes. Any stretch of a `PEEPEEBOX_LPT_TRACE` log converts to a script |
+| `hasplive.py` | `hasplib.py`'s machine with the device swapped for the real port: a release's own HASP library (I.G.O. 3's `MENU.EXE`) makes any call with any password, `--wire` records every access |
+| `cdong.c` | the CDONGLE: `CMD:ARGS:LEN/CHUNK`, `+` to continue a transaction, `P<AA|AB>:<const>:<16 hex>` for a whole picture query. Needs about 200 µs per write, which is its default |

@@ -3,6 +3,12 @@
 Everything in the other files is measured, verified or explicitly recorded. This is the
 complement: the gaps, stated as gaps so nobody has to rediscover that they are gaps.
 
+**Read `10` alongside this file.** The hardware session of 2026-09-24/25 closed `9.2`
+(the session layer is keyed — the other way from what was hoped), `9.5` and most of `9.6`,
+narrowed `9.4`, answered `9.8` for I.G.O. 4, and showed that `05.1`'s "I.G.O. 6 and Italy
+decode with `0x0000`" does not hold on real hardware. The sections below are left as they
+were written; `10.8` says what each now stands at.
+
 ## 9.1 I.G.O. 3 does not boot — closed
 
 It boots. The five faults behind it are `05.8` and `docs/research/37`; what was written

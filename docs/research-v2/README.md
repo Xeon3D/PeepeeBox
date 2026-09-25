@@ -27,6 +27,7 @@ want to know how it was found, or why an earlier attempt failed, go to
 | `07-records-and-content-keys.md` | What the record must contain, and the content keys the games read out of it |
 | `08-not-a-dongle.md` | Four things that look like dongle problems and are not |
 | `09-open-questions.md` | What is genuinely still unknown, stated as unknown |
+| `10-hardware-session.md` | Every dongle 1999–2007 on the bench, 2026-09-24/25: the session layer as keyed tables, keys and records confirmed on the parts, the CDONGLE's real answers and its whole picture table |
 
 ## What "established" means here
 
