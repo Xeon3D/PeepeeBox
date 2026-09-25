@@ -237,6 +237,7 @@ games use and refuses the rest.
 - **09.6 mostly closed.** There is no challenge function (the part refuses every other
   challenge); `A3`/`A4` are `1206`/`7343`; the picture table is read off the part. Still
   open: the closed form behind the table and how the constant enters it.
+- **09.11 closed.** Modes 1..4 are mode 0's register with one feedback term more (`10.10`).
 - **09.8** — I.G.O. 4's dongle is a CDONGLE. Its `KDONGLE` letter is the menu's name for
   it.
 - **05.1's "decode with `0x0000`" is wrong for real hardware**: a real part makes I.G.O. 6
@@ -262,3 +263,44 @@ holds bit 5.
 
 The Atom host builds nothing now: the Linux Qt binary is built on the workstation in a
 `debian:trixie` container (matching the host's glibc and Qt 6.8) and copied over.
+
+## 10.10 EncodeData modes 1..4, solved
+
+`09.11` said modes 1..4 are not the shift register under any key or starting register,
+tested against the (challenge, answer) pairs in `GAMESTAT.OLD`. With the wire of 2,000 live
+encodes on the 2003 PT part, the oracle's own answers could be examined instead: the 40
+answers of every round, with the byte offered for each.
+
+Three observations settle it:
+
+1. **The first answer of a round is the same function of the query in every mode**, and it
+   is mode 0's: the complement of key `AB32E970` at the queried index, which is what
+   register `0x5DF` gives on the first step. Same key, same starting state.
+2. **Rounds depart from mode 0 at step 11 at the earliest** — every round in mode 1, and
+   roughly half as often at each later step in modes 2..4. The answer at step *s* reads the
+   bit fed back at step *s* − 11, so this is exactly what a change in **the feedback bit
+   alone** looks like.
+3. **So the feedback bits can be read off the answers**:
+   `b0[t] = ans[t+11] ^ key[i5[t+11]] ^ (i5[t+3] & 1)`, the register rebuilt exactly from
+   them, and the difference from mode 0's feedback fitted. It is linear, and exact:
+
+| mode | added to the feedback bit |
+|---|---|
+| 1 | register bit 3 |
+| 2 | `1 ^ parity(i5)` |
+| 3 | register bit 0 ^ register bit 3 |
+| 4 | `1 ^ parity(i5)` ^ register bit 6 |
+
+*Verified:* every complete round fits — 1,166, 1,170, 1,155 and 1,157 rounds in modes 1..4,
+46,000-odd answers each, without an exception (the 160 rounds that fail are ones the parser
+read as 39 queries, dropping the first). The method was checked first on mode 0: on the
+2026-09-06 capture it reproduces 4,440 of 4,440 answers and recovers `3B227944` with no
+contradiction. And end to end, I.G.O. 3's own library under unicorn, against
+`hasplib.py`'s part with these terms and no table, encodes **every `GAMESTAT.OLD` row in
+every mode to its recorded answer: 1,912 of 1,912 × 4**, no status errors.
+
+The emulator now computes the modes (`t_mode_term()` in `dongle_photoplay.c`) and no longer
+reads `GAMESTAT.OLD` at all. The terms were measured on a `6B91/24A3` part and the 2005 part
+agrees; they are **the design's, not the pair's**: the same four terms with `68BB`'s key and
+register reproduce the 2006 PT part's 200 recorded mode 1..4 answers and the 2007 ES part's,
+200 of 200 each (I.G.O. 3's library under unicorn, the part given I.G.O. 3's bit-7 session).

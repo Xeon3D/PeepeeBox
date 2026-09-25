@@ -73,6 +73,22 @@ PARTS = {
 IDLE, OP, ADDR, READ, WRITE, DONE = range(6)
 
 
+def mode_term(mode, cur, i5):
+    """What HaspEncodeData modes 1..4 add to the round's feedback bit -- the same shift
+    register, key and starting state as mode 0, one term more.  Read off a 6B91/24A3 part:
+    every one of 4,648 complete rounds in 2,000 live calls fits (docs/research-v2/10.10)."""
+    p = bin(i5 & 0x1F).count('1') & 1
+    if mode == 1:
+        return (cur >> 3) & 1
+    if mode == 2:
+        return 1 ^ p
+    if mode == 3:
+        return (cur ^ (cur >> 3)) & 1
+    if mode == 4:
+        return (1 ^ p ^ (cur >> 6)) & 1
+    return 0
+
+
 class Part:
     def __init__(self, pass1, territory='DE', base=0x378, old_probe=False,
                  edge_only=False, old_mw=False, fixed_sweep=False, modes=None):
@@ -161,6 +177,7 @@ class Part:
             b0 ^= self.t_cur >> 5
         if i5 & 4:
             b0 ^= self.t_cur >> 8
+        b0 ^= mode_term(self.mode, self.t_cur, i5)
         self.t_cur = (((self.t_cur ^ ((i5 & 1) << 2)) << 1) | (b0 & 1)) & 0xFFFFFFFF
         self.burst += 1
         self.log['query'] += 1

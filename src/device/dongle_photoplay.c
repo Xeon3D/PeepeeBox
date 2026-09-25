@@ -196,19 +196,6 @@ typedef struct {
     int     refuse;      /* a query the part does not answer: ACK stays up, never a reply */
 } cd_t;
 
-/* I.G.O. 3's known-answer table, turned into keyed-round pairs -- see kat_load(). */
-typedef struct {
-    uint32_t *in[5];  /* per EncodeData mode 1..4: the round inputs the table implies */
-    uint32_t *out[5]; /* ...and the outputs a real part gave for them */
-    int       n[5];
-    uint32_t *c_out;  /* this round's candidates: the output each promises, */
-    uint32_t *c_dat;  /*   and where the host's data register has got to */
-    uint8_t  *c_idx;  /*   and its byte index */
-    int       nc;     /* -1 when this round is not being answered from the table */
-    long      rounds[5];
-    long      missed[5];
-} kat_t;
-
 typedef struct {
     void *lpt;
 
@@ -288,7 +275,7 @@ typedef struct {
     int      t_mode;            /* ...latched by the command byte that opens a round: the
                                    EncodeData mode, 0 for the picture cipher's own */
     int      t_qn;              /* consultations since that command byte */
-    kat_t    kat;
+    long     t_mode_rounds[5];  /* rounds answered in each EncodeData mode, for the log */
 
     cd_t    cd;
 
@@ -2514,6 +2501,41 @@ pp_pass_sync_data(pp_t *dev)
  * instead, by its shape -- see t_read_query().
  */
 
+/* HaspEncodeData's modes 1..4 are this same register -- the same key, the same starting
+   state -- with one term more in the feedback bit.  Read off a real 6B91/24A3 part on
+   2026-09-25: 2,000 live encodes through I.G.O. 3's own library, 500 per mode, every port
+   access recorded.  A round's first eleven answers read only the starting register, so
+   they agreed with mode 0 in every mode, and the feedback bits could be read back off the
+   answers from step 11 on (docs/research-v2/10.10):
+
+       mode 1   register bit 3
+       mode 2   1 ^ parity(i5)
+       mode 3   register bits 0 ^ 3
+       mode 4   1 ^ parity(i5) ^ register bit 6
+
+   Each fits every one of its ~1,160 complete rounds, 46,000-odd answers, without an
+   exception; the 2005 part answers the same questions identically.  Through the library
+   under unicorn this reproduces FOTO/GAMESTAT.OLD, which is what those modes are used
+   for -- a recording of a 6B91 part that the games check themselves against, and which
+   this device used to replay instead (docs/research/37). */
+static unsigned
+t_mode_term(int mode, uint32_t cur, unsigned i5)
+{
+    unsigned p = i5 & 0x1F;
+
+    p ^= p >> 4;
+    p ^= p >> 2;
+    p ^= p >> 1;
+    p &= 1;
+    switch (mode) {
+        case 1:  return (cur >> 3) & 1;
+        case 2:  return 1 ^ p;
+        case 3:  return (cur ^ (cur >> 3)) & 1;
+        case 4:  return (1 ^ p ^ (cur >> 6)) & 1;
+        default: return 0;
+    }
+}
+
 /* One consultation: shift the register on the offered byte and return the answer. */
 static int
 t_step(pp_t *dev, uint8_t val)
@@ -2529,6 +2551,7 @@ t_step(pp_t *dev, uint8_t val)
         b0 ^= dev->t_cur >> 5;
     if (i5 & 4)
         b0 ^= dev->t_cur >> 8;
+    b0 ^= t_mode_term(dev->t_mode, dev->t_cur, i5);
 
     pre        = dev->t_cur ^ (uint32_t) ((i5 & 1) << 2);
     dev->t_cur = (pre << 1) | (b0 & 1);
@@ -2541,313 +2564,15 @@ t_step(pp_t *dev, uint8_t val)
     return (int) (((dev->t_cur >> 11) ^ st) & 1);
 }
 
-/* ------------------------------------------------------------------------------------
- * EncodeData modes 1..4, answered from the known-answer table.
- *
- * I.G.O. 3's games check the part at start-up against \FOTO\GAMESTAT.OLD.  It poses as
- * statistics and is a dBASE table of 1,922 rows (the same on every I.G.O. 3 image but
- * for the last few, which each install rewrites): a random 8-byte challenge R and, for
- * each of HaspEncodeData's modes p1 = 1..4, the block F_k whose encoding in that mode is
- * R -- recorded off a real 6B91/24A3 part.  One start in ten, the game encodes a random
- * row's F_k in the mode of the day and compares with R.  A mismatch sets a flag, and the
- * game reports it later: 07.377.xx "check dongle failed", mid-game in SHANGAI and at the
- * points screen in FIND IT and AMORE (docs/research/37).
- *
- * The library announces the mode on the wire -- after the 84/A4 run that opens a round
- * it sends CE CE CC 96 9C 9C CC CE, then clocks bit 4 k times on payload CA with no
- * read, then CE -- and this part never modelled what a real one does with it: every
- * mode came out as mode 0.  Mode 0 is right (the picture cipher and the boot check are
- * both mode 0); the others are not our shift register under any key or starting
- * register, which was tried exhaustively against the table.
- *
- * What the table does give is the answer to every question the games ask in those
- * modes.  EncodeData is the keyed round twice around keyless A and B rounds, and B is
- * affine over GF(2), so each row yields the two rounds' (input, output) pairs outright.
- * During a mode-k round the host walks its 32-bit data register and puts five bits of
- * it on the wire each query; every table input that is still consistent with the
- * queries so far is followed along, and once one remains its output fixes the answers:
- * decisions 8..39 of a round are forced by the output (docs/research-v2/05.4), the first
- * seven are free and get the shift register's answer.  A round whose input is not in the
- * table -- random data, which nothing compares -- is answered by the shift register.
- * Verified in unicorn with SHANGAI's own check out of its decrypted memory: 200 random
- * rows in each of the four modes all verify, and 60 runs of the start-up check leave the
- * flag clear, where the shift register alone sets it within four.
- */
-#define KAT_POLY 0x80500062u
-#define KAT_CA   0x5B2C004Au
-#define KAT_CB   0x803425C3u
-
-static uint32_t
-kat_rol(uint32_t v, int s)
-{
-    s &= 31;
-    return s ? ((v << s) | (v >> (32 - s))) : v;
-}
-
-static void
-kat_a_rounds(uint32_t *b0, uint32_t *b1)
-{
-    for (int s = 25; s >= 0; s -= 5) {
-        const uint32_t n = kat_rol(*b0 ^ KAT_CA, s) ^ *b1;
-
-        *b1 = *b0;
-        *b0 = n;
-    }
-}
-
-static void
-kat_b_rounds(uint32_t *b0, uint32_t *b1)
-{
-    for (int s = 10; s >= 0; s -= 2) {
-        const uint32_t n = kat_rol(*b0 ^ KAT_CB, s) ^ *b1;
-
-        *b1 = *b0;
-        *b0 = n;
-    }
-}
-
-static uint32_t
-kat_b_first(uint32_t b0, uint32_t b1)
-{
-    kat_b_rounds(&b0, &b1);
-    return b0;
-}
-
-/* The first word of B as a function of its first input is x -> M.x ^ h(second input),
-   M the same for every row.  inv[] is M's inverse, one column per bit. */
-static int
-kat_invert_b(uint32_t inv[32])
-{
-    uint32_t col[32], rows[32], rhs[32];
-    const uint32_t f0 = kat_b_first(0, 0);
-
-    for (int i = 0; i < 32; i++)
-        col[i] = kat_b_first(1u << i, 0) ^ f0;
-    /* Solve M.x = e_j for every j at once: rows are output bits, the right-hand side
-       carries the identity. */
-    for (int b = 0; b < 32; b++) {
-        rows[b] = 0;
-        for (int i = 0; i < 32; i++)
-            rows[b] |= ((col[i] >> b) & 1u) << i;
-        rhs[b] = 1u << b;
-    }
-    for (int c = 0, r = 0; c < 32; c++, r++) {
-        int p = r;
-
-        while ((p < 32) && !((rows[p] >> c) & 1u))
-            p++;
-        if (p == 32)
-            return 0;
-        uint32_t t = rows[r]; rows[r] = rows[p]; rows[p] = t;
-        t = rhs[r]; rhs[r] = rhs[p]; rhs[p] = t;
-        for (int k = 0; k < 32; k++) {
-            if ((k != r) && ((rows[k] >> c) & 1u)) {
-                rows[k] ^= rows[r];
-                rhs[k] ^= rhs[r];
-            }
-        }
-    }
-    /* now x_c = XOR of the output bits in rhs[c] */
-    for (int j = 0; j < 32; j++) {
-        inv[j] = 0;
-        for (int c = 0; c < 32; c++)
-            inv[j] |= ((rhs[c] >> j) & 1u) << c;
-    }
-    return 1;
-}
-
-static uint32_t
-kat_mul(const uint32_t inv[32], uint32_t v)
-{
-    uint32_t x = 0;
-
-    for (int j = 0; j < 32; j++)
-        if ((v >> j) & 1u)
-            x ^= inv[j];
-    return x;
-}
-
-static void
-kat_free(kat_t *kt)
-{
-    for (int k = 0; k < 5; k++) {
-        free(kt->in[k]);
-        free(kt->out[k]);
-        kt->in[k] = kt->out[k] = NULL;
-        kt->n[k] = 0;
-    }
-    free(kt->c_out);
-    free(kt->c_dat);
-    free(kt->c_idx);
-    kt->c_out = kt->c_dat = NULL;
-    kt->c_idx = NULL;
-    kt->nc = -1;
-}
-
-static void
-kat_load(pp_t *dev)
-{
-    static const char *const path[] = { "FOTO       ", "GAMESTATOLD" };
-    /* Each field is XORed with a fixed ten-byte mask by the table code; the first
-       eight bytes of each are all that is used. */
-    static const uint8_t mask[5][8] = {
-        { 0x7c, 0x89, 0x83, 0x7b, 0xa4, 0x89, 0x31, 0x2e },
-        { 0x15, 0xf2, 0xb3, 0xaf, 0x1e, 0xa0, 0xbd, 0xd1 },
-        { 0xf9, 0x0b, 0xfc, 0x66, 0x8c, 0x3b, 0x9f, 0xea },
-        { 0x4b, 0x6f, 0x77, 0x10, 0x67, 0xd2, 0xac, 0xf7 },
-        { 0xf5, 0x38, 0x17, 0xfc, 0x02, 0xae, 0xee, 0x40 }
-    };
-    kat_t    *kt   = &dev->kat;
-    uint32_t  size = 0, inv[32];
-    uint8_t  *d;
-
-    kat_free(kt);
-    if ((d = photoplay_image_read_file(path, 2, &size, 4u << 20)) == NULL)
-        return;
-
-    const uint32_t nrec = (size >= 12) ? (uint32_t) (d[4] | (d[5] << 8) | (d[6] << 16) | ((uint32_t) d[7] << 24)) : 0;
-    const uint32_t hlen = (size >= 12) ? (uint32_t) (d[8] | (d[9] << 8)) : 0;
-    const uint32_t rlen = (size >= 12) ? (uint32_t) (d[10] | (d[11] << 8)) : 0;
-
-    /* Only the shape this table has: five 10-byte character fields after the flag. */
-    if ((d[0] != 0x03) || (rlen != 51) || (nrec == 0) || (nrec > 100000) ||
-        ((uint64_t) hlen + ((uint64_t) nrec * rlen) > size) || !kat_invert_b(inv)) {
-        pp_log("PP: \\FOTO\\GAMESTAT.OLD is not the table this part knows -- EncodeData"
-               " modes 1..4 will be answered by the shift register\n");
-        free(d);
-        return;
-    }
-
-    for (int k = 1; k <= 4; k++) {
-        kt->in[k] = malloc(sizeof(uint32_t) * 2 * nrec);
-        kt->out[k] = malloc(sizeof(uint32_t) * 2 * nrec);
-    }
-    kt->c_out = malloc(sizeof(uint32_t) * 2 * nrec);
-    kt->c_dat = malloc(sizeof(uint32_t) * 2 * nrec);
-    kt->c_idx = malloc(2 * nrec);
-    for (int k = 1; k <= 4; k++)
-        if ((kt->in[k] == NULL) || (kt->out[k] == NULL))
-            goto nomem;
-    if ((kt->c_out == NULL) || (kt->c_dat == NULL) || (kt->c_idx == NULL))
-        goto nomem;
-
-    const uint32_t h0 = kat_b_first(0, 0);
-
-    for (uint32_t i = 0; i < nrec; i++) {
-        const uint8_t *r = d + hlen + (i * rlen);
-        uint8_t        R[8];
-
-        for (int b = 0; b < 8; b++)
-            R[b] = r[1 + b] ^ mask[0][b];
-
-        for (int k = 1; k <= 4; k++) {
-            uint8_t F[8];
-
-            for (int b = 0; b < 8; b++)
-                F[b] = r[11 + (10 * (k - 1)) + b] ^ mask[k][b];
-
-            const uint32_t f0 = (uint32_t) (F[0] | (F[1] << 8) | (F[2] << 16) | ((uint32_t) F[3] << 24));
-            const uint32_t f1 = (uint32_t) (F[4] | (F[5] << 8) | (F[6] << 16) | ((uint32_t) F[7] << 24));
-            uint32_t       l1 = (uint32_t) (R[0] | (R[1] << 8) | (R[2] << 16) | ((uint32_t) R[3] << 24));
-            uint32_t       r1 = (uint32_t) (R[4] | (R[5] << 8) | (R[6] << 16) | ((uint32_t) R[7] << 24));
-
-            kat_a_rounds(&l1, &r1);                           /* (L1,R1) = A(R) */
-            /* B(L2, L1) = (L3, R3) with L3 = F.hi: L2 = M^-1 (L3 ^ h(L1)) */
-            const uint32_t h  = kat_b_first(0, l1) ^ h0;      /* B's dependence on L1 */
-            const uint32_t l2 = kat_mul(inv, f1 ^ h ^ h0);
-            uint32_t       b0 = l2, b1 = l1;
-
-            kat_b_rounds(&b0, &b1);                           /* b0 == L3, b1 == R3 */
-
-            const int n = kt->n[k];
-
-            kt->in[k][n]     = f1;
-            kt->out[k][n]     = b1 ^ f0;                       /* g(L3) = R3 ^ F.lo */
-            kt->in[k][n + 1] = l1;
-            kt->out[k][n + 1] = r1 ^ l2;                       /* g(L1) = R1 ^ L2 */
-            kt->n[k]        = n + 2;
-        }
-    }
-    free(d);
-    kt->nc = -1;
-    pp_log("PP: \\FOTO\\GAMESTAT.OLD read -- %u rows; EncodeData modes 1..4 are answered"
-           " from it\n", nrec);
-    return;
-
-nomem:
-    free(d);
-    kat_free(kt);
-}
-
-/* Decisions c_8..c_39 of a round whose output is g, as bit (j - 8) of the result. */
-static uint32_t
-kat_forced(uint32_t g)
-{
-    uint32_t c = 0, acc = 0;
-
-    for (int b = 31; b >= 0; b--) {
-        if (((g ^ acc) >> b) & 1u) {
-            c |= 1u << b;
-            acc ^= KAT_POLY >> (31 - b);
-        }
-    }
-    return c;
-}
-
-/* One consultation on a bit-7 release: the shift register, unless this round is in a
-   mode the table covers and its input is one of the table's. */
+/* One consultation on a bit-7 release.  Every mode is computed now: see t_mode_term(). */
 static int
 t_answer(pp_t *dev, uint8_t val)
 {
-    kat_t         *kt  = &dev->kat;
-    const unsigned i5  = (unsigned) (((val >> 1) & 0x07) | ((val >> 2) & 0x18));
-    const int      qn  = dev->t_qn++;
-    const int      k   = dev->t_mode;
-    int            ans = t_step(dev, val);
+    const int k = dev->t_mode;
 
-    if (qn == 0) {
-        kt->nc = -1;
-        if ((k >= 1) && (k <= 4) && kt->n[k]) {
-            memcpy(kt->c_out, kt->out[k], sizeof(uint32_t) * kt->n[k]);
-            memcpy(kt->c_dat, kt->in[k], sizeof(uint32_t) * kt->n[k]);
-            memset(kt->c_idx, 0, kt->n[k]);
-            kt->nc = kt->n[k];
-        }
-    }
-    if (kt->nc <= 0)
-        return ans;
-
-    /* Keep the inputs whose host register would have put this i5 on the wire. */
-    int m = 0;
-
-    for (int c = 0; c < kt->nc; c++) {
-        if (((kt->c_dat[c] >> (8 * kt->c_idx[c])) & 0x1F) == i5) {
-            kt->c_out[m] = kt->c_out[c];
-            kt->c_dat[m] = kt->c_dat[c];
-            kt->c_idx[m] = kt->c_idx[c];
-            m++;
-        }
-    }
-    kt->nc = m;
-    if (m == 0) {
-        kt->nc = -1;
-        if (k >= 1 && k <= 4)
-            kt->missed[k]++;
-        return ans;
-    }
-
-    if ((qn >= 7) && (qn <= 38))
-        ans = (int) (((kat_forced(kt->c_out[0]) >> (qn + 1 - 8)) & 1u) ^ (kt->c_dat[0] & 1u));
-
-    for (int c = 0; c < m; c++) {
-        const uint32_t data = kt->c_dat[c];
-
-        kt->c_idx[c] = (uint8_t) (((data & 1u) << 1) | (uint32_t) ans);
-        kt->c_dat[c] = ((data & 1u) == (uint32_t) ans) ? (data >> 1) : ((data >> 1) ^ KAT_POLY);
-    }
-    if ((qn == 38) && (kt->rounds[k]++ == 0))
-        pp_log("PP: EncodeData mode %d -- answered from the known-answer table\n", k);
-    return ans;
+    if ((dev->t_qn++ == 38) && (k >= 1) && (k <= 4) && (dev->t_mode_rounds[k]++ == 0))
+        pp_log("PP: EncodeData mode %d -- answered by the shift register with its mode term\n", k);
+    return t_step(dev, val);
 }
 
 /* A query on a bit-7 release, recognised when its answer is read.
@@ -2967,7 +2692,6 @@ t_data(pp_t *dev, uint8_t val)
         dev->t_pending = 0;
         dev->t_qn      = 0;
         dev->t_mode    = dev->t_modeclk;
-        dev->kat.nc    = -1;
     } else if (query) {
         dev->t_ans      = (uint8_t) t_step(dev, val);
         dev->t_pending  = 1;
@@ -3925,11 +3649,6 @@ pp_init(const device_t *info)
         if (dev->t_synth_ident)
             pp_log("PP: session layer answered by the synthesised rule, identity 0x%02X, not the measured 68BB part\n",
                    dev->t_synth_ident << 1);
-        /* The bit-7 releases check the part against a known-answer table in EncodeData
-           modes 1..4 -- see kat_load().  Only those carry one. */
-        dev->kat.nc = -1;
-        if (dev->t_key && dev->t_sess_hi)
-            kat_load(dev);
     }
 
     /* Say what all of that resolved to, where the user can see it. */
@@ -3998,10 +3717,8 @@ pp_close(void *priv)
 
     pp_log("PP: detached after %d command bytes\n", dev->n_cmd);
     for (int k = 1; k <= 4; k++)
-        if (dev->kat.rounds[k] || dev->kat.missed[k])
-            pp_log("PP: EncodeData mode %d -- %ld rounds from the table, %ld not in it\n",
-                   k, dev->kat.rounds[k], dev->kat.missed[k]);
-    kat_free(&dev->kat);
+        if (dev->t_mode_rounds[k])
+            pp_log("PP: EncodeData mode %d -- %ld rounds\n", k, dev->t_mode_rounds[k]);
     free(dev);
 }
 
