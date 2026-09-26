@@ -397,3 +397,49 @@ I.G.O. 6 settled on `7477` and put a garbled banner under "wrong dongle version"
 and the `68BB` key and register, the real I.G.O. 7 ES boot's session layer agrees on 2,048
 of 2,048 reads, and I.G.O. 6 refuses `7477`, accepts `68BB` and reads its record under it,
 as the hardware does.
+
+## 10.13 The CDONGLE picture function, as far as it goes
+
+What the part computes for a picture query, from the full tables (`10.6`) and two more
+batches on the 2000 PT dongle — 1,284 queries over 321 constants under each command
+(`cdongle-constants.out.gz`), and 340 with every bit of 20 random constants flipped
+(`cdongle-constant-bitflips.out.gz`). Every answer fits.
+
+**Each position is a rotate and an XOR, and `AA` and `AB` are the two directions of it.**
+For name byte `c` at position `j`, with one secret byte `V_j` and one rotation `R_j`:
+
+```
+AA   S_j(c) = rotl8(c XOR V_j, R_j)          -- encrypt
+AB   S_j(c) = rotr8(c, R_j) XOR V_j          -- decrypt, the inverse
+```
+
+`R_j` is 1 for one pair of positions (`j` and `j+4`) and 5 for the other three; on an 8051
+those are `RL A` and `RL A` + `SWAP A` (`RR A` for `AB`). The four tables the games use
+reduce to these, each reproducing its full table 2,048 of 2,048:
+
+| case | command, constant | `R_0..R_7` | `V_0..V_7` |
+|---|---|---|---|
+| 0 | `AA`, `038B` | 1 5 5 5 1 5 5 5 | `7C 9B 4C EF 9B 7C AB 2F` |
+| 1 | `AB`, `0A8E` | 5 1 5 5 5 1 5 5 | `58 2C AB 7C D8 4C 8B 5C` |
+| 2 | `AA`, `1206` | 5 1 5 5 5 1 5 5 | `DC EC EB 3C 5C 0C CB 1C` |
+| 3 | `AB`, `7343` | 1 5 5 5 1 5 5 5 | `FF 18 CF 2D 1F F8 2F 6D` |
+
+**How the constant enters.** Split it as `H` (high byte), `m` (bits 2..7) and `s` (bits 0..1),
+and number the positions by slot `t = (j + s) mod 4`, positions `j` and `j+4` sharing one:
+
+- `s` rotates the slots: slot 3 takes the odd rotation (`R = 1`), and the rotation pair
+  moves one position per step of `s`.
+- `m` is added into slot 2 only, through `rotl3`: flipping one of its bits flips the rotated
+  bit, with an addition's carries (`20 40 80 01 02 04`, or chains such as `E3 C3 83 …`).
+- `H` adds into every slot, again under `rotl3` — the top four bits exactly, `+H` in slots
+  1..3 and `-H` in slot 0 — and its low bits shift the whole sequence along the positions
+  (`0100` gives `0001`'s sequence one position on, `0200` gives `0002`'s two on).
+- `V_j` is not linear in the constant's bits over GF(2), nor affine mod 256.
+
+**Open:** how the eight base values arise, and exactly how `s` and the low bits of `H`
+interact — the rest of the closed form. It does not matter to any game: every Photo Play
+2000 and I.G.O. 4 picture is asked for under the four pairs above, all read off the part in
+full, and the emulator serves those exactly and refuses any other (where a real part would
+answer). If it is ever wanted, the way to finish it is the one that settled the 1999 dongle:
+read the part's microcontroller, if it is an unprotected 8051 like that one, and
+disassemble the routine.
