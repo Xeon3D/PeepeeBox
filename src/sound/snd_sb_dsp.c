@@ -1044,7 +1044,12 @@ sb_ess_update_filter_freq(sb_dsp_t *dsp)
     else
         ESSreg(0xA1) = 128 - (397700UL / dsp->sb_freq);
 
-    sb_ess_update_reg_a2(dsp, (uint8_t) temp);
+    /* temp is negative at the usual sample rates (-246 at 22 kHz).  A negative double
+       converted straight to uint8_t is undefined: GCC on x86 wraps it (-246 -> 0x0A), but
+       clang on arm64 passes the value through unmasked, the filter clock comes out as 0,
+       and recalc_sb16_filter(0) turns every coefficient into NaN, which silences all of
+       the card's output.  Through int it is defined, and it is what x86 has always done. */
+    sb_ess_update_reg_a2(dsp, (uint8_t) (int) temp);
 }
 
 static uint8_t
