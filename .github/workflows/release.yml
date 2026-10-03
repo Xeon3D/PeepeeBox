@@ -283,7 +283,8 @@ jobs:
           echo "MPB_ANDROID_SDK=$ANDROID_HOME"    >> "$GITHUB_ENV"
           echo "MPB_JAVA_HOME=$JAVA_HOME"         >> "$GITHUB_ENV"
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"               "ndk;27.2.12479018" "platforms;android-36" "build-tools;36.1.0" > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+              "ndk;27.2.12479018" "platforms;android-36" "build-tools;36.1.0" > /dev/null
 
       - name: Cache the libraries
         id: deps
@@ -308,11 +309,8 @@ jobs:
           if [ -z "$KEYSTORE" ]; then echo "signed=false" >> "$GITHUB_OUTPUT"; exit 0; fi
           mkdir -p "$MPB_ANDROID"
           echo "$KEYSTORE" | base64 -d > "$MPB_ANDROID/ppbox-release.keystore"
-          printf 'storeFile=%s
-storePassword=%s
-keyAlias=peepeebox
-keyPassword=%s
-'               "$MPB_ANDROID/ppbox-release.keystore" "$PASSWORD" "$PASSWORD" > "$MPB_ANDROID/ppbox-release-signing.properties"
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=peepeebox\nkeyPassword=%s\n' \
+              "$MPB_ANDROID/ppbox-release.keystore" "$PASSWORD" "$PASSWORD" > "$MPB_ANDROID/ppbox-release-signing.properties"
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
       # The release number is the version job's, as for the desktop builds.
