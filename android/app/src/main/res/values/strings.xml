@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PeepeeBox</string>
+    <string name="credit">Credit</string>
+    <string name="setup">Setup</string>
+    <string name="fullscreen">Fullscreen</string>
+    <string name="more">More</string>
+    <string name="machine_manager">Machine Manager</string>
+    <string name="manager">Manager</string>
+    <string name="money">Coins &amp; notes…</string>
+    <string name="pause">Pause</string>
+    <string name="resume">Resume</string>
+    <string name="reset">Reset</string>
+    <string name="exit">Exit</string>
+    <string name="network">Network…</string>
+    <string name="modem">Modem…</string>
+    <string name="about">About</string>
+    <string name="about_text">A funworld Photo Play &amp; I.G.O. emulator based on 86Box.\n\nx86 hardware emulation by the 86Box team. All Photo Play-related emulation by Xeon3D / Team HUEG PP.\n\nReleased under the GNU General Public License version 2 or later.</string>
+    <string name="paused">paused</string>
+    <string name="import_image">Import</string>
+    <string name="rescan">Rescan</string>
+    <string name="delete">Delete</string>
+    <string name="no_images">No images yet.\n\nImport a Photo Play or I.G.O. disk image (.img): it is copied into this app\'s folder.</string>
+</resources>

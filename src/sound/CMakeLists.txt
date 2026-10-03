@@ -79,6 +79,9 @@ elseif(OPENAL)
     endif()
 
     include_directories(${OPENAL_INCLUDE_DIR})
+    if(ANDROID)
+        target_link_libraries(86Box OpenSLES) # Android's OpenAL Soft is static, on OpenSL ES
+    endif()
 
     target_sources(snd PRIVATE openal.c)
 else()

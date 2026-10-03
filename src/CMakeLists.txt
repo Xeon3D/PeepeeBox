@@ -24,7 +24,16 @@ if(APPLE)
     set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 endif()
 
-add_executable(86Box
+if(ANDROID)
+    # Android: the emulator is a shared library (libPeepeeBox.so) that the
+    # app loads; its platform layer is android/native.
+    set(PPB_ADD_EXECUTABLE add_library)
+    set(PPB_EXE_KIND SHARED)
+else()
+    set(PPB_ADD_EXECUTABLE add_executable)
+    set(PPB_EXE_KIND)
+endif()
+cmake_language(CALL ${PPB_ADD_EXECUTABLE} 86Box ${PPB_EXE_KIND}
     86box.c
     config.c
     timer.c
@@ -143,9 +152,10 @@ target_link_libraries(86Box
     mdsx_dll
     utils
     vid
-    plat
-    ui
 )
+if(NOT ANDROID)
+    target_link_libraries(86Box plat ui) # the Qt or SDL front end's
+endif()
 
 if(HAIKU)
     target_link_libraries(86Box be)
@@ -295,7 +305,9 @@ endif()
 
 add_subdirectory(osd)
 
-if (QT)
+if(ANDROID)
+    add_subdirectory(${CMAKE_SOURCE_DIR}/android/native android) # the Android app's platform layer
+elseif (QT)
     add_subdirectory(qt)
 else()
     add_compile_definitions(USE_SDL_UI)

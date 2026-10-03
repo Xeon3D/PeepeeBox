@@ -14,6 +14,9 @@ Everything else about the machine is fixed, because on a real cabinet none of it
 was ever a choice. See [`docs/hardware.md`](docs/hardware.md) for the full
 picture and for how the protection works.
 
+It runs on Windows, Linux and macOS, and on Android phones and tablets (arm64,
+see [android/README.md](android/README.md)); every release carries all four.
+
 Credit
 ------
 

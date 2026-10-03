@@ -1,0 +1,15 @@
+# Build outputs (scripts/build.sh)
+/out/
+/app/build/
+/app/src/main/jniLibs/
+/build/
+/.gradle/
+/.kotlin/
+local.properties
+*.apk
+
+# Release signing keys and their passwords: never in the repository
+/release-backup/
+*.keystore
+*.jks
+*signing.properties

@@ -63,6 +63,10 @@
 #include <86box/ui.h>
 #include <86box/timer.h>
 #include <86box/network.h>
+
+#ifdef NO_SLIRP
+int slirp_card_num = 2; /* net_slirp.c's, which is not built (Android) */
+#endif
 #include <86box/net_ne2000.h>
 #include <86box/net_pcnet.h>
 #include <86box/net_wd8003.h>
@@ -253,7 +257,9 @@ network_init(void)
 
     /* Initialize the Pcap system module, if present. */
 
+#ifndef NO_SLIRP
     network_devmap.has_slirp = 1;
+#endif
     i = net_pcap_prepare(&network_devs[network_ndev]);
     if (i > 0) {
         network_devmap.has_pcap = 1;
@@ -506,10 +512,12 @@ network_attach(void *card_drv, uint8_t *mac, NETRXCB rx, NETSETLINKSTATE set_lin
     }
 
     switch (net_type) {
+#ifndef NO_SLIRP
         case NET_TYPE_SLIRP:
             card->host_drv      = net_slirp_drv;
             card->host_drv.priv = card->host_drv.init(card, mac, NULL, net_drv_error);
             break;
+#endif
 
         case NET_TYPE_PCAP:
             card->host_drv      = net_pcap_drv;

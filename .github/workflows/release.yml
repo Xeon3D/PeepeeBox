@@ -1,5 +1,5 @@
-# Build PeepeeBox for Windows, Linux and macOS, and publish the three artifacts as
-# a GitHub Release when the commit is a named one.
+# Build PeepeeBox for Windows, Linux, macOS and Android, and publish the three
+# archives and the APK as one GitHub Release when the commit is a named one.
 #
 # The per-OS jobs deliberately mirror the three CMake (…) CI workflows, which are
 # known to build this tree green -- same dependency lists, same configure flags.
@@ -11,7 +11,13 @@
 #     as-is -- PeepeeBox needs exactly two ROM images, and a blank CMOS stops the
 #     4DPS BIOS on a hard disk error, so both live in this repository;
 #   * macOS builds arm64 with NEW_DYNAREC on, because the CI matrix excludes the
-#     old dynarec on arm64.
+#     old dynarec on arm64;
+#   * Android builds the same tree for arm64 (android/README.md), signed with the
+#     release key from the repository's secrets: PEEPEEBOX_ANDROID_KEYSTORE (the
+#     PKCS12 keystore, base64) and PEEPEEBOX_ANDROID_KEYSTORE_PASSWORD (alias
+#     peepeebox).  Without them it is a debug build, so a fork still builds.  The
+#     updater only fetches the three archives by name, so the APK beside them is
+#     never mistaken for one.
 #
 # Only a commit carrying a v<x.y[.z]> tag is published.  To cut one, push the tag
 # along with the branch:
@@ -40,6 +46,7 @@ on:
       - cmake/**
       - roms/**
       - nvr/**
+      - android/**
       - "**/CMakeLists.txt"
       - CMakePresets.json
       - .github/workflows/release.yml
@@ -255,9 +262,85 @@ jobs:
           name: PeepeeBox-macos-arm64
           path: PeepeeBox-macos-arm64.zip
 
+  android:
+    name: Android (arm64)
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # android/scripts/env.sh: the runner's own SDK and JDK, the rest under ~/mpb-android.
+      - name: Toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y ninja-build
+          echo "MPB_ANDROID=$HOME/mpb-android"   >> "$GITHUB_ENV"
+          echo "MPB_ANDROID_SDK=$ANDROID_HOME"    >> "$GITHUB_ENV"
+          echo "MPB_JAVA_HOME=$JAVA_HOME"         >> "$GITHUB_ENV"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"               "ndk;27.2.12479018" "platforms;android-36" "build-tools;36.1.0" > /dev/null
+
+      - name: Cache the libraries
+        id: deps
+        uses: actions/cache@v4
+        with:
+          path: ~/mpb-android/deps
+          key: android-deps-${{ hashFiles('android/scripts/build-deps.sh') }}
+
+      - name: Libraries
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: bash android/scripts/build-deps.sh
+
+      # Release-signed when the repository has the key; otherwise a debug build, so a
+      # fork still builds.
+      - name: Signing key
+        id: key
+        env:
+          KEYSTORE: ${{ secrets.PEEPEEBOX_ANDROID_KEYSTORE }}
+          PASSWORD: ${{ secrets.PEEPEEBOX_ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEYSTORE" ]; then echo "signed=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          mkdir -p "$MPB_ANDROID"
+          echo "$KEYSTORE" | base64 -d > "$MPB_ANDROID/ppbox-release.keystore"
+          printf 'storeFile=%s
+storePassword=%s
+keyAlias=peepeebox
+keyPassword=%s
+'               "$MPB_ANDROID/ppbox-release.keystore" "$PASSWORD" "$PASSWORD" > "$MPB_ANDROID/ppbox-release-signing.properties"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      # The release number is the version job's, as for the desktop builds.
+      - name: Build
+        env:
+          PEEPEEBOX_RELEASE: ${{ needs.version.outputs.release }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.key.outputs.signed }}" = true ]; then
+            bash android/scripts/build.sh release
+            cp android/out/PeepeeBox-*-android.apk PeepeeBox-android-arm64.apk
+          else
+            bash android/scripts/build.sh
+            cp android/out/PeepeeBox-debug.apk PeepeeBox-android-arm64.apk
+          fi
+
+      - name: Forget the key
+        if: always()
+        run: rm -f "$MPB_ANDROID/ppbox-release.keystore" "$MPB_ANDROID/ppbox-release-signing.properties"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: PeepeeBox-android-arm64
+          path: PeepeeBox-android-arm64.apk
+
   release:
     name: Publish release
-    needs: [version, windows, linux, macos]
+    needs: [version, windows, linux, macos, android]
     # Named versions only.  An untagged push has already done the useful part by
     # building; its binaries are on the run page as artifacts.
     if: needs.version.outputs.tag != ''
@@ -318,9 +401,10 @@ jobs:
               echo "| Windows x64 | Qt 5, statically linked |"
               echo "| Linux x86_64 | Qt 5; needs the usual runtime libraries |"
               echo "| macOS arm64 | Qt 5, new dynarec; unsigned, so Gatekeeper will object |"
+              echo "| Android arm64 | the APK; Android 9 or later |"
             } > notes.md
           fi
-          gh release create "$tag" assets/*.zip \
+          gh release create "$tag" assets/*.zip assets/*.apk \
               --title "$title" \
               --notes-file notes.md \
               --latest

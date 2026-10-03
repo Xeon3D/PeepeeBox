@@ -18,7 +18,6 @@ set(net_sources)
 list(APPEND net_sources
     network.c
     net_pcap.c
-    net_slirp.c
     net_switch.c
     net_dp8390.c
     net_3c501.c
@@ -38,9 +37,16 @@ list(APPEND net_sources
     utils/getline.c
 )
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(SLIRP REQUIRED IMPORTED_TARGET slirp)
-target_link_libraries(86Box PkgConfig::SLIRP)
+if(ANDROID)
+    # Android: no libslirp (it needs glib); fun.net runs over the switch
+    # or the modem's TCP line.
+    add_compile_definitions(NO_SLIRP)
+else()
+    list(APPEND net_sources net_slirp.c)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(SLIRP REQUIRED IMPORTED_TARGET slirp)
+    target_link_libraries(86Box PkgConfig::SLIRP)
+endif()
 
 if(WIN32)
     target_link_libraries(PkgConfig::SLIRP INTERFACE wsock32 ws2_32 iphlpapi)

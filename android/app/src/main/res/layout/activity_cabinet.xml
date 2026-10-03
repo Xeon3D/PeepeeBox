@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The cabinet: app bar, the 4:3 picture centred in black, the action bar. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#000000">
+
+    <Toolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="?android:attr/actionBarSize"
+        android:background="#1B1B1F"
+        android:navigationIcon="@drawable/ic_menu"
+        android:navigationContentDescription="@string/machine_manager"
+        android:titleTextColor="#FFFFFF"
+        android:subtitleTextColor="#B8B8C0" />
+
+    <FrameLayout
+        android:id="@+id/stage"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#000000">
+
+        <io.github.xeon3d.peepeebox.AspectLayout
+            android:id="@+id/aspect"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_gravity="center">
+
+            <SurfaceView
+                android:id="@+id/screen"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+        </io.github.xeon3d.peepeebox.AspectLayout>
+    </FrameLayout>
+
+    <LinearLayout
+        android:id="@+id/actions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#1B1B1F"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp">
+
+        <TextView android:id="@+id/btnCredit" style="@style/ActionButton"
+            android:drawableTop="@drawable/ic_coin" android:text="@string/credit" />
+        <TextView android:id="@+id/btnSetup" style="@style/ActionButton"
+            android:drawableTop="@drawable/ic_operator_setup" android:text="@string/setup" />
+        <TextView android:id="@+id/btnManager" style="@style/ActionButton"
+            android:drawableTop="@drawable/ic_machine_manager" android:text="@string/manager" />
+        <TextView android:id="@+id/btnFullscreen" style="@style/ActionButton"
+            android:drawableTop="@drawable/ic_fullscreen" android:text="@string/fullscreen" />
+        <TextView android:id="@+id/btnMore" style="@style/ActionButton"
+            android:drawableTop="@drawable/ic_more" android:text="@string/more" />
+    </LinearLayout>
+</LinearLayout>
