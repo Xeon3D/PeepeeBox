@@ -288,7 +288,7 @@ jobs:
 
       - name: Cache the libraries
         id: deps
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/mpb-android/deps
           key: android-deps-${{ hashFiles('android/scripts/build-deps.sh') }}
